@@ -1363,15 +1363,16 @@ Rules:
         Route a queue message to the correct stage handler based on the 'stage' field.
         Messages from SAP CPI have no 'stage' field — they default to 'observed'.
         """
-        # Guard: if specialist agents are still initialising, re-queue and back off.
-        # This prevents RuntimeError("MCP agent is not ready") from silently dropping messages.
-        if not self._agents_ready:
-            logger.info("[Orchestrator] Agents not ready — re-queuing message (stage=%s)", message.get("stage", "observed"))
+        stage = message.get("stage", "observed")
+
+        # Guard: only block agent-dependent stages (RCA, Fix, Verify) while agents initialise.
+        # "observed" only needs the classifier (sync, always ready) + HANA — never block it,
+        # otherwise webhooks received before build_agent() completes are silently lost.
+        if not self._agents_ready and stage != "observed":
+            logger.info("[Orchestrator] Agents not ready — re-queuing stage=%s", stage)
             await asyncio.sleep(2)
             await self._put_local_queue_message(message)
             return
-
-        stage = message.get("stage", "observed")
         try:
             if stage == "observed":
                 # ── JSON multimap format ───────────────────────────────────────
