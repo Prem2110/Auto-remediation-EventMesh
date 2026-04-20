@@ -1,0 +1,96 @@
+site_name: SAP CPI Self-Healing Agent
+site_description: Autonomous AI-powered incident management and self-healing system for SAP Cloud Platform Integration
+site_author: Sierra Digital
+site_url: https://prem2110.github.io/Auto-remediation-single-client/
+repo_url: https://github.com/Prem2110/Auto-remediation-single-client
+repo_name: Prem2110/Auto-remediation-single-client
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Prerequisites: getting-started/prerequisites.md
+      - Installation: getting-started/installation.md
+      - Configuration: getting-started/configuration.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - MCP Servers: architecture/mcp-servers.md
+  - Agents:
+      - Overview: agents/index.md
+      - Orchestrator: agents/orchestrator.md
+      - Observer: agents/observer.md
+      - Classifier: agents/classifier.md
+      - RCA Agent: agents/rca.md
+      - Fix Agent: agents/fix.md
+      - Verifier: agents/verifier.md
+  - Pipelines:
+      - Fix Pipeline: pipelines/fix-pipeline.md
+      - Autonomous Loop: pipelines/autonomous-loop.md
+  - API Reference:
+      - Core Endpoints: api/endpoints.md
+      - Smart Monitoring: api/smart-monitoring.md
+  - Database:
+      - Schema Reference: database/schema.md
+  - Event Bus (AEM): aem/event-bus.md
+  - Rules & Standards:
+      - Coding Style: rules/coding-style.md
+      - SAP CPI XML Patterns: rules/iflow-xml-patterns.md
+      - Security: rules/security.md
+      - Testing: rules/testing.md
+  - Deployment: deployment.md

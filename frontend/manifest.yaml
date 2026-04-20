@@ -1,0 +1,7 @@
+---
+applications:
+  - name: Orbit-IS-V1
+    memory: 3G
+    buildpacks:
+      - staticfile_buildpack
+    path: dist

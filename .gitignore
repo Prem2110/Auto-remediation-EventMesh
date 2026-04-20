@@ -1,0 +1,38 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+logs/
+
+# Editor
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Locks
+uv.lock
+.python-version
+
+frontend/node_modules/
+.claude/settings.json
+
+# Solace vendored SDK
+solace/
+solace_pubsubplus-*.dist-info/
+manifest.yml
+frontend/manifest.yml

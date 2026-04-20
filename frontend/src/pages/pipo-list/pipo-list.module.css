@@ -1,0 +1,120 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+  padding: 1.25rem;
+  animation: fade-in 0.3s ease both;
+}
+
+.pageHeader {
+  flex-shrink: 0;
+}
+
+.pageTitle {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--orbit-gray-900, #111827);
+}
+
+.pageMeta {
+  font-size: 0.8rem;
+  color: var(--orbit-gray-600, #4b5563);
+  margin-top: 0.2rem;
+}
+
+/* ── Search bar ─────────────────────────────────────────────────────── */
+.searchBar {
+  flex-shrink: 0;
+}
+
+.searchInput {
+  width: 100%;
+  max-width: 24rem;
+  border: 1px solid var(--orbit-gray-200, #e5e7eb);
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.825rem;
+  outline: none;
+  background: #fff;
+  color: var(--orbit-gray-900, #111827);
+  transition: border-color var(--orbit-transition), box-shadow var(--orbit-transition);
+}
+.searchInput:focus {
+  border-color: var(--orbit-blue, #2563eb);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+
+/* ── Table ──────────────────────────────────────────────────────────── */
+.tableWrapper {
+  flex: 1;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--orbit-gray-200, #e5e7eb);
+  border-radius: var(--orbit-radius, 0.75rem);
+  box-shadow: var(--orbit-shadow-sm);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.825rem;
+}
+
+.table thead {
+  background: var(--orbit-gray-50, #f9fafb);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 700;
+  color: var(--orbit-gray-700, #374151);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 2px solid var(--orbit-gray-200, #e5e7eb);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--orbit-gray-100, #f3f4f6);
+  color: var(--orbit-gray-900, #111827);
+  vertical-align: middle;
+}
+
+.table tbody tr {
+  transition: background var(--orbit-transition);
+}
+.table tbody tr:hover { background: var(--orbit-gray-50, #f9fafb); }
+
+.emptyCell {
+  text-align: center;
+  padding: 3rem;
+  color: var(--orbit-gray-600, #4b5563);
+}
+
+/* ── Loading ────────────────────────────────────────────────────────── */
+.centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  height: 10rem;
+  color: var(--orbit-gray-600, #4b5563);
+  font-size: 0.875rem;
+}
+
+.spinner {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 3px solid var(--orbit-gray-200, #e5e7eb);
+  border-top-color: var(--orbit-blue, #2563eb);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}

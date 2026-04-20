@@ -1,0 +1,1789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAP CPI Self-Healing Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --card:      #20232f;
+      --border:    #2e3148;
+      --accent:    #5b6cf9;
+      --accent2:   #7c8dff;
+      --success:   #22c55e;
+      --warning:   #f59e0b;
+      --danger:    #ef4444;
+      --muted:     #6b7280;
+      --text:      #e2e4ef;
+      --text-sub:  #9ca3af;
+      --radius:    10px;
+      --shadow:    0 4px 24px rgba(0,0,0,.45);
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 0;
+    }
+
+    /* ── Header ─────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    header .logo { font-size:23px; }
+    header h1 { font-size:17px; font-weight: 600; color: var(--text); }
+    header small { font-size:13px; color: var(--muted); }
+    .server-badge {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size:13px;
+      color: var(--text-sub);
+    }
+    .server-badge input {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size:13px;
+      width: 180px;
+    }
+
+    /* ── Agent toggle ────────────────────────────────────── */
+    .agent-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 16px;
+      padding-left: 16px;
+      border-left: 1px solid var(--border);
+    }
+    .agent-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+    .agent-dot.running {
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .agent-dot.stopped { background: var(--danger); }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .5; }
+    }
+    .agent-label { font-size:12px; color: var(--text-sub); min-width: 54px; }
+
+    /* ── Tabs ────────────────────────────────────────────── */
+    nav.tabs {
+      display: flex;
+      gap: 4px;
+      padding: 16px 32px 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    nav.tabs button {
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--text-sub);
+      font-size:14px;
+      font-weight: 500;
+      padding: 8px 18px 12px;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+    nav.tabs button:hover { color: var(--text); }
+    nav.tabs button.active {
+      color: var(--accent2);
+      border-bottom-color: var(--accent2);
+    }
+
+    /* ── Layout ──────────────────────────────────────────── */
+    main { padding: 32px; max-width: 900px; margin: 0 auto; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Card ────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+    .card + .card { margin-top: 20px; }
+    .card h2 {
+      font-size:15px;
+      font-weight: 600;
+      color: var(--text-sub);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 18px;
+    }
+
+    /* ── Form ────────────────────────────────────────────── */
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size:13px; color: var(--text-sub); margin-bottom: 6px; }
+    input[type="text"], textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-size:14px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input[type="text"]:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; font-family: 'Consolas', monospace; min-height: 80px; }
+
+    /* ── Buttons ─────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: none;
+      border-radius: 7px;
+      font-size:14px;
+      font-weight: 600;
+      padding: 9px 20px;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary  { background: var(--accent); color: #fff; }
+    .btn-success  { background: var(--success); color: #fff; }
+    .btn-warning  { background: var(--warning); color: #000; }
+    .btn-danger   { background: var(--danger);  color: #fff; }
+    .btn-ghost    { background: var(--surface); color: var(--text-sub); border: 1px solid var(--border); }
+    .btn-sm       { font-size:13px; padding: 6px 14px; }
+
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+
+    /* ── Status pill ──────────────────────────────────────── */
+    .pill {
+      display: inline-block;
+      font-size:12px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 99px;
+      letter-spacing: .04em;
+    }
+    .pill-blue    { background: #1e3a8a22; color: #60a5fa; border: 1px solid #1d4ed844; }
+    .pill-green   { background: #14532d22; color: var(--success); border: 1px solid #16a34a44; }
+    .pill-yellow  { background: #78350f22; color: var(--warning); border: 1px solid #d9770644; }
+    .pill-red     { background: #7f1d1d22; color: var(--danger); border: 1px solid #b91c1c44; }
+    .pill-grey    { background: #1f293722; color: var(--muted); border: 1px solid #37415144; }
+
+    /* ── Result area ──────────────────────────────────────── */
+    .result-box {
+      margin-top: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      display: none;
+    }
+    .result-box.show { display: block; }
+    .result-box pre {
+      font-family: 'Consolas', monospace;
+      font-size:13px;
+      color: #a5b4fc;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    /* ── Key-value grid ───────────────────────────────────── */
+    .kv { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; font-size:14px; }
+    .kv dt { color: var(--text-sub); font-weight: 500; }
+    .kv dd { color: var(--text); word-break: break-all; }
+
+    /* ── Progress bar ─────────────────────────────────────── */
+    .progress-wrap { margin: 14px 0; }
+    .progress-label { display: flex; justify-content: space-between; font-size:13px; color: var(--text-sub); margin-bottom: 6px; }
+    .progress-track { background: var(--border); border-radius: 99px; height: 6px; overflow: hidden; }
+    .progress-bar   { height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s ease; }
+
+    /* ── Steps list ───────────────────────────────────────── */
+    .steps { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+    .steps li { display: flex; align-items: center; gap: 10px; font-size:14px; color: var(--text-sub); }
+    .steps li.done  { color: var(--success); }
+    .steps li.active { color: var(--accent2); }
+    .steps li .dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      background: var(--border);
+    }
+    .steps li.done  .dot { background: var(--success); }
+    .steps li.active .dot { background: var(--accent2); box-shadow: 0 0 6px var(--accent); }
+
+    /* ── Spinner ──────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent2);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast ────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 28px; right: 28px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 18px;
+      font-size:14px; color: var(--text);
+      box-shadow: var(--shadow);
+      opacity: 0; pointer-events: none;
+      transition: opacity .25s;
+      max-width: 340px;
+      z-index: 999;
+    }
+    #toast.show { opacity: 1; }
+
+    /* ── Confidence bar ───────────────────────────────────── */
+    .conf-bar { display: flex; align-items: center; gap: 10px; }
+    .conf-track { flex: 1; background: var(--border); border-radius: 99px; height: 6px; }
+    .conf-fill  { height: 100%; border-radius: 99px; background: var(--accent); }
+    .conf-pct   { font-size:13px; color: var(--text-sub); min-width: 36px; text-align: right; }
+
+    /* ── Section divider ──────────────────────────────────── */
+    .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+    /* ── Copy button ──────────────────────────────────────── */
+    .copy-btn {
+      float: right;
+      font-size:12px;
+      background: var(--border);
+      border: none;
+      color: var(--text-sub);
+      padding: 3px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .copy-btn:hover { color: var(--text); }
+
+    /* ── Table ────────────────────────────────────────────── */
+    #tk-table tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background .12s;
+    }
+    #tk-table tbody tr:hover { background: var(--surface); }
+    #tk-table td { padding: 9px 10px; color: var(--text); vertical-align: top; }
+    #tk-table td.muted { color: var(--text-sub); }
+    #tk-table td.truncate { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #tk-table td.id-cell { font-family: 'Consolas', monospace; font-size:12px; color: var(--muted); }
+
+    /* ── Scrollbar ────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--surface); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Agent Monitor page ───────────────────────────────── */
+    .agent-control-row {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .agent-big-dot {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+    .agent-big-dot.running {
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .agent-big-dot.stopped { background: var(--danger); }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .config-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .config-item .ci-label { font-size:12px; color: var(--text-sub); margin-bottom: 4px; }
+    .config-item .ci-value { font-size:15px; font-weight: 600; color: var(--text); }
+
+    .activity-feed { display: flex; flex-direction: column; gap: 8px; }
+    .activity-item {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size:13px;
+      transition: border-color .15s;
+    }
+    .activity-item.is-active { border-color: var(--accent); }
+    .activity-item .ai-iflow  { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .activity-item .ai-cause  { font-size:12px; color: var(--text-sub); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .activity-item .ai-time   { font-size:12px; color: var(--muted); white-space: nowrap; }
+    .activity-item .ai-left   { min-width: 0; }
+
+    .approval-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--warning);
+      border-radius: 8px;
+      font-size:13px;
+    }
+    .approval-item .ap-info { flex: 1; min-width: 0; }
+    .approval-item .ap-iflow { font-weight: 600; color: var(--text); }
+    .approval-item .ap-fix   { color: var(--text-sub); font-size:12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .section-header h2 { margin: 0; }
+    .refresh-note { font-size:12px; color: var(--muted); }
+    .empty-state { text-align: center; padding: 28px; color: var(--muted); font-size:14px; }
+
+    /* ── AEM Status panel ─────────────────────────────────── */
+    .aem-conn-row {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    .aem-status-dot {
+      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+      background: var(--muted); transition: background .3s;
+    }
+    .aem-status-dot.on  { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .aem-status-dot.off { background: var(--danger); }
+    @keyframes aem-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+    #aem-autopoll-dot { animation: aem-pulse 1.5s ease-in-out infinite; }
+    .aem-status-label { font-size:15px; font-weight:600; }
+
+    .stage-pipeline {
+      display: flex; align-items: center; gap: 0; margin: 20px 0 8px;
+      overflow-x: auto;
+    }
+    .stage-box {
+      flex: 1; min-width: 90px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px 10px; text-align: center;
+      position: relative;
+    }
+    .stage-box + .stage-box { margin-left: 6px; }
+    .stage-box.has-msgs { border-color: var(--accent); }
+    .stage-box .sb-label { font-size:11px; color: var(--text-sub); text-transform:uppercase; letter-spacing:.05em; }
+    .stage-box .sb-count { font-size:26px; font-weight:700; color: var(--text); margin: 4px 0 2px; }
+    .stage-box .sb-name  { font-size:12px; color: var(--muted); }
+    .stage-arrow { color: var(--border); font-size:18px; flex-shrink:0; padding: 0 2px; margin-bottom:4px; }
+
+    .aem-info-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr));
+      gap: 10px; margin-top: 16px;
+    }
+    .aem-info-item {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px;
+    }
+    .aem-info-item .aii-label { font-size:12px; color: var(--text-sub); margin-bottom:4px; }
+    .aem-info-item .aii-value { font-size:14px; font-weight:600; color: var(--text); word-break:break-all; }
+
+    .aem-event-row {
+      padding: 12px 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; font-size:13px;
+    }
+    .aem-event-row + .aem-event-row { margin-top: 8px; }
+    .aem-event-top { display:flex; align-items:center; gap:10px; justify-content:space-between; }
+    .aem-event-iflow { font-weight:600; color: var(--text); font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .aem-event-meta { display:flex; gap:8px; align-items:center; flex-shrink:0; }
+    .aem-event-time  { font-size:11px; color: var(--muted); white-space:nowrap; }
+    .aem-event-detail { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px 16px; }
+    .aem-event-detail span { font-size:12px; color:var(--text-sub); }
+    .aem-event-detail span b { color:var(--text); font-weight:500; }
+    .aem-event-extra { margin-top:6px; font-size:12px; color:var(--muted); line-height:1.5; }
+    .aem-event-extra.fix { color: var(--success); }
+
+    /* ── Tooltip engine ─────────────────────────────────────── */
+    [data-tooltip] { position: relative; }
+    [data-tooltip]::before,
+    [data-tooltip]::after {
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .18s ease, transform .18s ease;
+      position: absolute;
+      z-index: 9999;
+    }
+    /* bubble */
+    [data-tooltip]::after {
+      content: attr(data-tooltip);
+      bottom: calc(100% + 10px);
+      left: 50%;
+      transform: translateX(-50%) translateY(4px);
+      background: #12141f;
+      color: #e2e4ef;
+      border: 1px solid #3a3d5c;
+      border-radius: 7px;
+      padding: 7px 11px;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      white-space: normal;
+      width: max-content;
+      max-width: 260px;
+      text-align: center;
+      box-shadow: 0 4px 16px rgba(0,0,0,.5);
+    }
+    /* arrow */
+    [data-tooltip]::before {
+      content: '';
+      bottom: calc(100% + 4px);
+      left: 50%;
+      transform: translateX(-50%) translateY(4px);
+      border: 5px solid transparent;
+      border-top-color: #3a3d5c;
+    }
+    [data-tooltip]:hover::after,
+    [data-tooltip]:hover::before {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    /* flip down when near top of viewport */
+    [data-tooltip].tip-down::after {
+      bottom: auto; top: calc(100% + 10px);
+      transform: translateX(-50%) translateY(-4px);
+    }
+    [data-tooltip].tip-down::before {
+      bottom: auto; top: calc(100% + 4px);
+      transform: translateX(-50%) translateY(-4px);
+      border-top-color: transparent;
+      border-bottom-color: #3a3d5c;
+    }
+    [data-tooltip].tip-down:hover::after,
+    [data-tooltip].tip-down:hover::before {
+      transform: translateX(-50%) translateY(0);
+    }
+    /* left-align for edge items */
+    [data-tooltip].tip-left::after  { left: 0; transform: translateX(0) translateY(4px); }
+    [data-tooltip].tip-left:hover::after { transform: translateX(0) translateY(0); }
+    [data-tooltip].tip-right::after { left: auto; right: 0; transform: translateX(0) translateY(4px); }
+    [data-tooltip].tip-right:hover::after { transform: translateX(0) translateY(0); }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">⚙️</span>
+  <div>
+    <h1>SAP CPI Self-Healing Agent</h1>
+    <small>Sierra Digital · Auto-Remediation Console</small>
+  </div>
+  <div class="server-badge">
+    API Base URL
+    <input type="text" id="baseUrl" value="http://localhost:8080" />
+    <div class="agent-toggle">
+      <span class="agent-dot" id="agent-dot"></span>
+      <span class="agent-label" id="agent-label">—</span>
+      <button class="btn btn-sm btn-ghost" id="agent-toggle-btn" onclick="doAgentToggle()" disabled>
+        …
+      </button>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="active" onclick="switchTab('analyse', this)">🔍 Analyse Message</button>
+  <button onclick="switchTab('apply', this)">🔧 Apply Fix</button>
+  <button onclick="switchTab('status', this)">📊 Fix Status</button>
+  <button onclick="switchTab('retry', this)">🔁 Retry Fix</button>
+  <button onclick="switchTab('tickets', this)">🎫 Tickets Created</button>
+  <button onclick="switchTab('agent', this)">🤖 Agent Monitor</button>
+  <button onclick="switchTab('aem', this)">📡 AEM Status</button>
+</nav>
+
+<main>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB 1 — ANALYSE                                       -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="panel active" id="panel-analyse">
+    <div class="card">
+      <h2>Analyse Message</h2>
+      <div class="field">
+        <label>Message GUID <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="a-guid" placeholder="e.g. A1B2C3D4-…" />
+      </div>
+      <div class="field">
+        <label>User ID</label>
+        <input type="text" id="a-user" value="user" />
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="doAnalyse()">
+          <span id="a-spinner" class="spinner" style="display:none"></span>
+          Run Analysis
+        </button>
+      </div>
+    </div>
+
+    <div class="result-box" id="a-result">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <span style="font-size:14px;font-weight:600">Analysis Result</span>
+        <span id="a-status-pill"></span>
+      </div>
+
+      <dl class="kv" id="a-kv"></dl>
+
+      <hr class="divider" />
+
+      <div style="margin-bottom:8px;font-size:13px;color:var(--text-sub)">Diagnosis</div>
+      <p id="a-diagnosis" style="font-size:14px;line-height:1.6;color:var(--text)"></p>
+
+      <hr class="divider" />
+
+      <div style="margin-bottom:8px;font-size:13px;color:var(--text-sub)">Proposed Fix</div>
+      <p id="a-fix" style="font-size:14px;line-height:1.6;color:var(--text)"></p>
+
+      <hr class="divider" />
+
+      <div style="margin-bottom:10px;font-size:13px;color:var(--text-sub)">Confidence</div>
+      <div class="conf-bar">
+        <div class="conf-track"><div class="conf-fill" id="a-conf-fill" style="width:0%"></div></div>
+        <span class="conf-pct" id="a-conf-pct">—</span>
+        <span id="a-conf-label" style="font-size:13px;color:var(--text-sub)"></span>
+      </div>
+
+      <hr class="divider" />
+
+      <div class="actions">
+        <button class="btn btn-success btn-sm" id="a-goto-apply" onclick="gotoApplyFromAnalyse()">
+          → Apply Fix
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="copyId('a-incident-id', 'Incident ID')">
+          Copy Incident ID
+        </button>
+        <span id="a-incident-id" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB 2 — APPLY FIX                                     -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="panel" id="panel-apply">
+    <div class="card">
+      <h2>Apply Fix</h2>
+      <div class="field">
+        <label>Message GUID <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="ap-guid" placeholder="e.g. A1B2C3D4-…" />
+      </div>
+      <div class="field">
+        <label>User ID</label>
+        <input type="text" id="ap-user" value="user" />
+      </div>
+      <div class="field">
+        <label>Override Proposed Fix <span style="color:var(--muted)">(optional)</span></label>
+        <textarea id="ap-fix" placeholder="Leave empty to use RCA-generated fix…"></textarea>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:12px">
+        <label style="margin:0;display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="ap-sync" style="width:auto" />
+          <span style="font-size:14px;color:var(--text-sub)">Wait for result (sync mode — slower)</span>
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn btn-success" onclick="doApply()">
+          <span id="ap-spinner" class="spinner" style="display:none"></span>
+          Apply Fix
+        </button>
+      </div>
+    </div>
+
+    <div class="result-box" id="ap-result">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <span style="font-size:14px;font-weight:600">Apply Fix Result</span>
+        <span id="ap-status-pill"></span>
+      </div>
+      <dl class="kv" id="ap-kv"></dl>
+      <hr class="divider" />
+      <div class="actions">
+        <button class="btn btn-primary btn-sm" id="ap-goto-status" onclick="gotoStatusFromApply()">
+          → Track Fix Status
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB 3 — FIX STATUS                                    -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="panel" id="panel-status">
+    <div class="card">
+      <h2>Fix Status</h2>
+      <div class="field">
+        <label>Incident ID <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="st-id" placeholder="e.g. uuid-…" />
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="doStatus(true)">
+          <span id="st-spinner" class="spinner" style="display:none"></span>
+          Check Status
+        </button>
+        <button class="btn btn-ghost" id="st-poll-btn" onclick="togglePoll()" style="display:none">
+          ⏸ Stop Auto-Poll
+        </button>
+      </div>
+    </div>
+
+    <div class="result-box" id="st-result">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <span style="font-size:14px;font-weight:600">Fix Progress</span>
+        <span id="st-status-pill"></span>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-label">
+          <span id="st-step-label" style="color:var(--text-sub)"></span>
+          <span id="st-step-count" style="color:var(--muted)"></span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-bar" id="st-progress-bar" style="width:0%"></div>
+        </div>
+      </div>
+
+      <ul class="steps" id="st-steps"></ul>
+
+      <hr class="divider" />
+
+      <dl class="kv" id="st-kv"></dl>
+
+      <hr class="divider" />
+
+      <div style="margin-bottom:8px;font-size:13px;color:var(--text-sub)">Recommended Action</div>
+      <p id="st-action" style="font-size:14px;line-height:1.6;color:var(--accent2)"></p>
+
+      <div id="st-retry-wrap" style="margin-top:16px;display:none">
+        <hr class="divider" />
+        <div class="actions">
+          <button class="btn btn-warning btn-sm" onclick="gotoRetryFromStatus()">
+            → Retry Fix
+          </button>
+          <button class="btn btn-success btn-sm" id="st-resolve-btn"
+            onclick="doResolve()"
+            title="Mark as resolved — use when iFlow is confirmed working but deploy confirmation timed out">
+            ✓ Mark as Resolved
+          </button>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-top:8px">
+          Use "Mark as Resolved" only when you have verified the iFlow is working correctly in SAP CPI.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB 4 — RETRY FIX                                     -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="panel" id="panel-retry">
+    <div class="card">
+      <h2>Retry Fix</h2>
+      <div class="field">
+        <label>Incident ID <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="rt-id" placeholder="e.g. uuid-…" />
+      </div>
+      <div class="field">
+        <label>User ID</label>
+        <input type="text" id="rt-user" value="user" />
+      </div>
+      <div class="actions">
+        <button class="btn btn-warning" onclick="doRetry()">
+          <span id="rt-spinner" class="spinner" style="display:none"></span>
+          Retry Fix
+        </button>
+      </div>
+    </div>
+
+    <div class="result-box" id="rt-result">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <span style="font-size:14px;font-weight:600">Retry Result</span>
+        <span id="rt-status-pill"></span>
+      </div>
+      <dl class="kv" id="rt-kv"></dl>
+      <hr class="divider" />
+      <div class="actions">
+        <button class="btn btn-primary btn-sm" id="rt-goto-status" onclick="gotoStatusFromRetry()">
+          → Track Fix Status
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB 5 — TICKETS CREATED                               -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="panel" id="panel-tickets">
+    <div class="card">
+      <h2>Tickets Created</h2>
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:160px;margin:0">
+          <label>Limit</label>
+          <input type="text" id="tk-limit" value="50" style="width:100%" />
+        </div>
+        <div class="actions" style="margin:0">
+          <button class="btn btn-primary" onclick="doTickets()">
+            <span id="tk-spinner" class="spinner" style="display:none"></span>
+            Load Tickets
+          </button>
+          <button class="btn btn-ghost" onclick="doTickets()" title="Refresh">
+            ↻ Refresh
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="result-box" id="tk-result">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <span style="font-size:14px;font-weight:600">Incidents — TICKET_CREATED</span>
+        <span id="tk-count" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+      <div id="tk-empty" style="display:none;text-align:center;padding:32px;color:var(--muted);font-size:14px">
+        No TICKET_CREATED incidents found.
+      </div>
+      <div id="tk-table-wrap" style="overflow-x:auto">
+        <table id="tk-table" style="width:100%;border-collapse:collapse;font-size:13px;display:none">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--text-sub);text-align:left">
+              <th style="padding:8px 10px;font-weight:600">iFlow ID</th>
+              <th style="padding:8px 10px;font-weight:600">Error Type</th>
+              <th style="padding:8px 10px;font-weight:600">Root Cause</th>
+              <th style="padding:8px 10px;font-weight:600">Last Seen</th>
+              <th style="padding:8px 10px;font-weight:600">Incident ID</th>
+              <th style="padding:8px 10px;font-weight:600">Action</th>
+            </tr>
+          </thead>
+          <tbody id="tk-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB 6 — AGENT MONITOR                                -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="panel" id="panel-agent">
+
+    <!-- Control card -->
+    <div class="card">
+      <div class="section-header">
+        <h2>Autonomous Agent</h2>
+        <span id="am-refresh-note" class="refresh-note"></span>
+      </div>
+
+      <div class="agent-control-row">
+        <span class="agent-big-dot" id="am-dot"></span>
+        <div>
+          <div style="font-size:19px;font-weight:700;color:var(--text)" id="am-status-text">—</div>
+          <div style="font-size:13px;color:var(--text-sub);margin-top:2px" id="am-status-sub"></div>
+        </div>
+        <div class="actions" style="margin:0;margin-left:auto">
+          <button class="btn" id="am-toggle-btn" onclick="doAmToggle()" disabled style="min-width:130px">
+            <span id="am-toggle-spinner" class="spinner" style="display:none"></span>
+            <span id="am-toggle-label">…</span>
+          </button>
+          <button class="btn btn-ghost" onclick="doManualTrigger()" id="am-trigger-btn" title="Run one poll cycle now">
+            <span id="am-trigger-spinner" class="spinner" style="display:none"></span>
+            ⚡ Trigger Poll
+          </button>
+        </div>
+      </div>
+
+      <div class="config-grid" id="am-config-grid">
+        <div class="config-item"><div class="ci-label">Poll Interval</div><div class="ci-value" id="am-ci-poll">—</div></div>
+        <div class="config-item"><div class="ci-label">Auto-Fix Confidence</div><div class="ci-value" id="am-ci-autofix">—</div></div>
+        <div class="config-item"><div class="ci-label">Suggest Confidence</div><div class="ci-value" id="am-ci-suggest">—</div></div>
+        <div class="config-item"><div class="ci-label">Auto-Fix All Errors</div><div class="ci-value" id="am-ci-all">—</div></div>
+        <div class="config-item"><div class="ci-label">Auto Deploy</div><div class="ci-value" id="am-ci-deploy">—</div></div>
+      </div>
+    </div>
+
+    <!-- Pending Approvals -->
+    <div class="card" style="margin-top:20px">
+      <div class="section-header">
+        <h2>Pending Approvals</h2>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="am-approval-count" class="refresh-note"></span>
+          <button id="am-approve-all-btn" class="btn btn-success btn-sm" onclick="doApproveAll(true)" style="display:none">✓ Approve All</button>
+          <button id="am-reject-all-btn"  class="btn btn-danger btn-sm"  onclick="doApproveAll(false)" style="display:none">✗ Reject All</button>
+        </div>
+      </div>
+      <div id="am-approvals-list">
+        <div class="empty-state">No pending approvals.</div>
+      </div>
+    </div>
+
+    <!-- Live Activity Feed -->
+    <div class="card" style="margin-top:20px">
+      <div class="section-header">
+        <h2>Recent Activity</h2>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="am-last-refresh" class="refresh-note"></span>
+          <button class="btn btn-ghost btn-sm" onclick="refreshAgentMonitor()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Active now section -->
+      <div id="am-active-section" style="display:none;margin-bottom:18px">
+        <div style="font-size:12px;font-weight:700;color:var(--accent2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px">
+          <span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>
+          &nbsp;In Progress
+        </div>
+        <div class="activity-feed" id="am-active-feed"></div>
+      </div>
+
+      <!-- All recent -->
+      <div style="font-size:12px;font-weight:700;color:var(--text-sub);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px">
+        All Recent
+      </div>
+      <div class="activity-feed" id="am-all-feed">
+        <div class="empty-state">No incidents yet.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB 7 — AEM STATUS                                    -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div class="panel" id="panel-aem">
+
+    <!-- Connection card -->
+    <div class="card">
+      <div class="section-header">
+        <h2
+          data-tooltip="Live connection status to SAP Advanced Event Mesh (Solace PubSub+) over wss:// WebSocket protocol."
+          class="tip-down" style="cursor:default">AEM Connection</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="aem-last-refresh" class="refresh-note"
+            data-tooltip="Timestamp of the last successful status poll from the server."
+            style="cursor:default"></span>
+          <span id="aem-autopoll-badge"
+            data-tooltip="The queue is polled every second automatically. Messages are consumed and routed through the pipeline without any manual action."
+            style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--success);padding:4px 10px;background:#22c55e18;border:1px solid #22c55e44;border-radius:6px;cursor:default">
+            <span id="aem-autopoll-dot" style="width:7px;height:7px;border-radius:50%;background:var(--success);display:inline-block"></span>
+            Auto-consuming
+          </span>
+          <button class="btn btn-ghost btn-sm" onclick="refreshAEM()"
+            data-tooltip="Manually trigger an immediate refresh of AEM connection status, queue depth and stage counters."
+            class="tip-right">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="aem-conn-row">
+        <span class="aem-status-dot" id="aem-dot"
+          data-tooltip="Green = connected to Solace broker. Red = disconnected or AEM_ENABLED=false."></span>
+        <span class="aem-status-label" id="aem-status-label"
+          data-tooltip="Current broker connection state. Set AEM_ENABLED=true in .env to activate."
+          style="cursor:default">—</span>
+      </div>
+
+      <div class="aem-info-grid">
+        <div class="aem-info-item"
+          data-tooltip="The Solace durable exclusive queue this agent subscribes to. All CPI error events from SAP Integration Suite are published here."
+          style="cursor:default">
+          <div class="aii-label">Observer Queue</div>
+          <div class="aii-value" id="aem-queue-name">—</div>
+        </div>
+        <div class="aem-info-item"
+          data-tooltip="Messages currently sitting in the Solace queue, not yet consumed. Queried via SEMP REST API. Should stay at 0 when auto-consuming is active — a non-zero value means the receiver is disconnected."
+          style="cursor:default">
+          <div class="aii-label">Messages in Queue</div>
+          <div class="aii-value" id="aem-queue-depth">0</div>
+        </div>
+        <div class="aem-info-item"
+          data-tooltip="Total CPI error incidents ever received from AEM and stored in the database across all pipeline runs."
+          style="cursor:default">
+          <div class="aii-label">Total Processed</div>
+          <div class="aii-value" id="aem-total-incidents">0</div>
+        </div>
+        <div class="aem-info-item"
+          data-tooltip="Total messages pulled from the Solace queue and acked by the receiver thread since the server started. Resets on server restart."
+          style="cursor:default">
+          <div class="aii-label">Messages Retrieved</div>
+          <div class="aii-value" id="aem-msgs-retrieved">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pipeline stage counters -->
+    <div class="card" style="margin-top:20px">
+      <h2
+        data-tooltip="Live count of incidents currently at each stage of the auto-remediation pipeline. Updates every 5 seconds. A highlighted box (blue border) means incidents are active at that stage."
+        class="tip-down" style="cursor:default">Pipeline Stage Counters</h2>
+      <div class="stage-pipeline">
+        <div class="stage-box" id="sb-observed"
+          data-tooltip="Stage 1 — OBSERVED&#10;Message received from AEM queue. Incident record created in DB.&#10;DB status: DETECTED">
+          <div class="sb-label">Stage 1</div>
+          <div class="sb-count" id="sc-observed">0</div>
+          <div class="sb-name">Observed</div>
+        </div>
+        <span class="stage-arrow">›</span>
+        <div class="stage-box" id="sb-classified"
+          data-tooltip="Stage 2 — CLASSIFIED&#10;Classifier Agent identified the error type. Root Cause Analysis is now running.&#10;DB status: RCA_IN_PROGRESS">
+          <div class="sb-label">Stage 2</div>
+          <div class="sb-count" id="sc-classified">0</div>
+          <div class="sb-name">Classified</div>
+        </div>
+        <span class="stage-arrow">›</span>
+        <div class="stage-box" id="sb-rca"
+          data-tooltip="Stage 3 — RCA COMPLETE&#10;Root cause identified. Fix Agent will now generate a patch for the iFlow.&#10;DB status: RCA_COMPLETE">
+          <div class="sb-label">Stage 3</div>
+          <div class="sb-count" id="sc-rca">0</div>
+          <div class="sb-name">RCA</div>
+        </div>
+        <span class="stage-arrow">›</span>
+        <div class="stage-box" id="sb-fix"
+          data-tooltip="Stage 4 — FIX IN PROGRESS&#10;Fix Agent is applying the patch (update → deploy). May pause here for human approval if confidence is low.&#10;DB statuses: FIX_IN_PROGRESS, FIX_DEPLOYED, AWAITING_APPROVAL">
+          <div class="sb-label">Stage 4</div>
+          <div class="sb-count" id="sc-fix">0</div>
+          <div class="sb-name">Fix</div>
+        </div>
+        <span class="stage-arrow">›</span>
+        <div class="stage-box" id="sb-verified"
+          data-tooltip="Stage 5 — VERIFIED&#10;Fix deployed and confirmed working by the Verifier Agent test run. Pipeline complete.&#10;DB statuses: FIX_VERIFIED, HUMAN_INITIATED_FIX, RETRIED">
+          <div class="sb-label">Stage 5</div>
+          <div class="sb-count" id="sc-verified">0</div>
+          <div class="sb-name">Verified</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Queue messages feed -->
+    <div class="card" style="margin-top:20px">
+      <div class="section-header">
+        <h2
+          data-tooltip="Incidents received from the AEM queue, sorted newest first. Each card shows the iFlow name, error type, error message, root cause and fix summary once available."
+          class="tip-down" style="cursor:default">Queue Messages</h2>
+        <span id="aem-msg-count"
+          data-tooltip="Total incidents in the database. When more exist than are shown, the display reads 'Showing last N of total'."
+          style="font-size:13px;color:var(--muted);cursor:default">0 messages</span>
+      </div>
+      <div id="aem-events-feed">
+        <div class="empty-state">No messages received yet.</div>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────────
+let _pollTimer = null;
+let _lastAnalyseResult = null;
+let _lastApplyIncidentId = null;
+let _lastRetryIncidentId = null;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function base() { return document.getElementById('baseUrl').value.replace(/\/$/, ''); }
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name !== 'status') stopPoll();
+  if (name === 'agent') {
+    refreshAgentMonitor();
+    startAmPoll();
+  } else {
+    stopAmPoll();
+  }
+  if (name === 'aem') {
+    refreshAEM();
+    startAEMPoll();
+  } else {
+    stopAEMPoll();
+  }
+}
+
+function showToast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.textContent = (ok ? '✅ ' : '❌ ') + msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function pillFor(status) {
+  const s = (status || '').toUpperCase();
+  const green  = ['FIX_VERIFIED','AUTO_FIXED','HUMAN_INITIATED_FIX','HUMAN_FIXED','FIX_COMPLETE','RCA_COMPLETE'];
+  const yellow = ['FIX_IN_PROGRESS','RCA_IN_PROGRESS','DETECTED','RETRIED','AWAITING_APPROVAL'];
+  const red    = ['FIX_FAILED','FIX_FAILED_UPDATE','FIX_FAILED_DEPLOY','FIX_FAILED_RUNTIME',
+                  'RCA_FAILED','ARTIFACT_MISSING','REJECTED'];
+  const blue   = ['TICKET_CREATED','VERIFICATION_UNAVAILABLE'];
+  let cls = 'pill-grey';
+  if (green.includes(s))  cls = 'pill-green';
+  if (yellow.includes(s)) cls = 'pill-yellow';
+  if (red.includes(s))    cls = 'pill-red';
+  if (blue.includes(s))   cls = 'pill-blue';
+  return `<span class="pill ${cls}">${s}</span>`;
+}
+
+function renderKV(elId, pairs) {
+  const el = document.getElementById(elId);
+  el.innerHTML = pairs
+    .filter(([,v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `<dt>${k}</dt><dd>${escHtml(String(v))}</dd>`)
+    .join('');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showResult(id) {
+  document.getElementById(id).classList.add('show');
+}
+
+function copyId(elId, label) {
+  const el = document.getElementById(elId);
+  const val = el.dataset.val || el.textContent;
+  if (!val) { showToast('Nothing to copy', false); return; }
+  navigator.clipboard.writeText(val).then(() => showToast(label + ' copied'));
+}
+
+function setSpinner(id, on) {
+  document.getElementById(id).style.display = on ? 'inline-block' : 'none';
+}
+
+async function apiFetch(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(base() + path, opts);
+  const json = await r.json();
+  if (!r.ok) throw Object.assign(new Error(json.detail || JSON.stringify(json)), { status: r.status });
+  return json;
+}
+
+// ─── Tab 1 — Analyse ────────────────────────────────────────────────────────
+async function doAnalyse() {
+  const guid = document.getElementById('a-guid').value.trim();
+  const user = document.getElementById('a-user').value.trim() || 'user';
+  if (!guid) { showToast('Message GUID is required', false); return; }
+
+  setSpinner('a-spinner', true);
+  try {
+    const d = await apiFetch('POST', `/smart-monitoring/messages/${encodeURIComponent(guid)}/analyze`, { user_id: user });
+    _lastAnalyseResult = d;
+
+    document.getElementById('a-status-pill').innerHTML = pillFor(d.status);
+    document.getElementById('a-diagnosis').textContent = d.diagnosis || '—';
+    document.getElementById('a-fix').textContent       = d.proposed_fix || '—';
+
+    const conf = parseFloat(d.confidence || 0) * 100;
+    document.getElementById('a-conf-fill').style.width = conf + '%';
+    document.getElementById('a-conf-pct').textContent  = conf.toFixed(0) + '%';
+    document.getElementById('a-conf-label').textContent = d.confidence_label ? `(${d.confidence_label})` : '';
+
+    const incEl = document.getElementById('a-incident-id');
+    incEl.textContent = d.incident_id || '';
+    incEl.dataset.val = d.incident_id || '';
+
+    renderKV('a-kv', [
+      ['Incident ID',       d.incident_id],
+      ['Message GUID',      d.message_guid],
+      ['Error Type',        d.error_type],
+      ['Affected Component',d.affected_component],
+    ]);
+
+    showResult('a-result');
+    showToast('Analysis complete');
+  } catch (e) {
+    showToast(e.message || 'Request failed', false);
+  } finally {
+    setSpinner('a-spinner', false);
+  }
+}
+
+function gotoApplyFromAnalyse() {
+  if (_lastAnalyseResult) {
+    document.getElementById('ap-guid').value = _lastAnalyseResult.message_guid || '';
+  }
+  switchTab('apply', document.querySelectorAll('nav.tabs button')[1]);
+}
+
+// ─── Tab 2 — Apply Fix ───────────────────────────────────────────────────────
+async function doApply() {
+  const guid = document.getElementById('ap-guid').value.trim();
+  const user = document.getElementById('ap-user').value.trim() || 'user';
+  const fix  = document.getElementById('ap-fix').value.trim();
+  const sync = document.getElementById('ap-sync').checked;
+  if (!guid) { showToast('Message GUID is required', false); return; }
+
+  setSpinner('ap-spinner', true);
+  try {
+    const body = { user_id: user };
+    if (fix) body.proposed_fix = fix;
+
+    const d = await apiFetch('POST', `/smart-monitoring/messages/${encodeURIComponent(guid)}/apply_fix?sync=${sync}`, body);
+    _lastApplyIncidentId = d.incident_id;
+
+    document.getElementById('ap-status-pill').innerHTML = pillFor(d.status);
+
+    renderKV('ap-kv', [
+      ['Incident ID',    d.incident_id],
+      ['Message GUID',   d.message_guid],
+      ['iFlow ID',       d.iflow_id],
+      ['Status',         d.status],
+      ['Fix Applied',    d.fix_applied  !== undefined ? String(d.fix_applied)   : undefined],
+      ['Deploy Success', d.deploy_success !== undefined ? String(d.deploy_success) : undefined],
+      ['Failed Stage',   d.failed_stage],
+      ['Summary',        d.summary],
+      ['Message',        d.message],
+    ]);
+
+    showResult('ap-result');
+    showToast(sync ? 'Fix complete' : 'Fix started in background');
+  } catch (e) {
+    showToast(e.message || 'Request failed', false);
+  } finally {
+    setSpinner('ap-spinner', false);
+  }
+}
+
+function gotoStatusFromApply() {
+  if (_lastApplyIncidentId) {
+    document.getElementById('st-id').value = _lastApplyIncidentId;
+  }
+  switchTab('status', document.querySelectorAll('nav.tabs button')[2]);
+  if (_lastApplyIncidentId) doStatus(true);
+}
+
+// ─── Tab 3 — Fix Status ──────────────────────────────────────────────────────
+const TERMINAL = ['AUTO_FIXED','HUMAN_INITIATED_FIX','HUMAN_FIXED','FIX_VERIFIED',
+                  'FIX_FAILED','FIX_FAILED_UPDATE','FIX_FAILED_DEPLOY','FIX_FAILED_RUNTIME',
+                  'TICKET_CREATED','REJECTED','ARTIFACT_MISSING','VERIFICATION_UNAVAILABLE',
+                  'RCA_INCONCLUSIVE'];
+
+function stopPoll() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  document.getElementById('st-poll-btn').style.display = 'none';
+}
+
+function togglePoll() {
+  if (_pollTimer) {
+    stopPoll();
+    document.getElementById('st-poll-btn').textContent = '▶ Resume Auto-Poll';
+  } else {
+    startPoll();
+  }
+}
+
+function startPoll() {
+  const btn = document.getElementById('st-poll-btn');
+  btn.style.display = 'inline-flex';
+  btn.textContent = '⏸ Stop Auto-Poll';
+  _pollTimer = setInterval(() => doStatus(false), 3000);
+}
+
+async function doStatus(withPoll) {
+  const id = document.getElementById('st-id').value.trim();
+  if (!id) { showToast('Incident ID is required', false); return; }
+
+  setSpinner('st-spinner', true);
+  try {
+    const d = await apiFetch('GET', `/smart-monitoring/incidents/${encodeURIComponent(id)}/fix_status`);
+
+    document.getElementById('st-status-pill').innerHTML = pillFor(d.status);
+
+    // Progress bar
+    const total = d.total_steps || 4;
+    const done  = d.step_index  || 0;
+    const pct   = Math.round((done / total) * 100);
+    document.getElementById('st-progress-bar').style.width = pct + '%';
+    document.getElementById('st-step-label').textContent   = d.current_step || '';
+    document.getElementById('st-step-count').textContent   = `${done} / ${total} steps`;
+
+    // Steps list
+    const stepsDone = d.steps_done || [];
+    const stepsEl   = document.getElementById('st-steps');
+    if (stepsDone.length > 0) {
+      stepsEl.innerHTML = stepsDone.map(s =>
+        `<li class="done"><span class="dot"></span>${escHtml(s)}</li>`
+      ).join('');
+      if (d.current_step && !TERMINAL.includes((d.status||'').toUpperCase())) {
+        stepsEl.innerHTML += `<li class="active"><span class="dot"></span><span class="spinner"></span> ${escHtml(d.current_step)}</li>`;
+      }
+    } else {
+      stepsEl.innerHTML = '';
+    }
+
+    // KV pairs
+    renderKV('st-kv', [
+      ['Incident ID',          d.incident_id],
+      ['iFlow ID',             d.iflow_id],
+      ['Error Type',           d.error_type],
+      ['RCA Confidence',       d.rca_confidence !== undefined ? (parseFloat(d.rca_confidence)*100).toFixed(0)+'%' : undefined],
+      ['Last Failed Stage',    d.last_failed_stage],
+      ['Fix Summary',          d.fix_summary],
+      ['Verification Status',  d.verification_status],
+      ['Resolved At',          d.resolved_at],
+    ]);
+
+    // Recommended action
+    document.getElementById('st-action').textContent = d.recommended_action || '—';
+
+    // Show retry button if failed
+    const isFailed = ['FIX_FAILED','FIX_FAILED_UPDATE','FIX_FAILED_DEPLOY','FIX_FAILED_RUNTIME']
+      .includes((d.status||'').toUpperCase());
+    document.getElementById('st-retry-wrap').style.display = isFailed ? 'block' : 'none';
+
+    showResult('st-result');
+
+    // Auto-poll management
+    const isTerminal = TERMINAL.includes((d.status||'').toUpperCase());
+    if (withPoll && !isTerminal) startPoll();
+    if (isTerminal) { stopPoll(); showToast('Status: ' + d.status); }
+  } catch (e) {
+    stopPoll();
+    showToast(e.message || 'Request failed', false);
+  } finally {
+    setSpinner('st-spinner', false);
+  }
+}
+
+async function doResolve() {
+  const id = document.getElementById('st-id').value.trim();
+  if (!id) { showToast('Incident ID is required', false); return; }
+  if (!confirm(`Mark incident ${id.slice(0,8)}… as manually resolved?\n\nOnly do this if you have confirmed the iFlow is working in SAP CPI.`)) return;
+
+  const btn = document.getElementById('st-resolve-btn');
+  btn.disabled = true;
+  try {
+    const d = await apiFetch('POST', `/smart-monitoring/incidents/${encodeURIComponent(id)}/resolve`);
+    showToast('Incident marked as resolved');
+    // Refresh status display
+    await doStatus(false);
+  } catch (e) {
+    showToast(e.message || 'Could not resolve', false);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function gotoRetryFromStatus() {
+  const id = document.getElementById('st-id').value.trim();
+  if (id) document.getElementById('rt-id').value = id;
+  switchTab('retry', document.querySelectorAll('nav.tabs button')[3]);
+}
+
+// ─── Tab 4 — Retry Fix ───────────────────────────────────────────────────────
+async function doRetry() {
+  const id   = document.getElementById('rt-id').value.trim();
+  const user = document.getElementById('rt-user').value.trim() || 'user';
+  if (!id) { showToast('Incident ID is required', false); return; }
+
+  setSpinner('rt-spinner', true);
+  try {
+    const d = await apiFetch('POST', `/smart-monitoring/incidents/${encodeURIComponent(id)}/retry_fix`, { user_id: user });
+    _lastRetryIncidentId = d.incident_id || id;
+
+    document.getElementById('rt-status-pill').innerHTML = pillFor(d.status);
+
+    renderKV('rt-kv', [
+      ['Incident ID',  d.incident_id],
+      ['iFlow ID',     d.iflow_id],
+      ['Status',       d.status],
+      ['Retry Count',  d.retry_count],
+      ['Message',      d.message],
+    ]);
+
+    showResult('rt-result');
+    showToast('Retry started');
+  } catch (e) {
+    showToast(e.message || 'Request failed', false);
+  } finally {
+    setSpinner('rt-spinner', false);
+  }
+}
+
+// ─── Tab 5 — Tickets Created ─────────────────────────────────────────────────
+async function doTickets() {
+  const limit = parseInt(document.getElementById('tk-limit').value) || 50;
+  setSpinner('tk-spinner', true);
+  try {
+    const d = await apiFetch('GET', `/smart-monitoring/incidents?status=TICKET_CREATED&limit=${limit}`);
+    const items = d.incidents || [];
+
+    document.getElementById('tk-count').textContent = `${items.length} incident${items.length !== 1 ? 's' : ''}`;
+
+    const empty = document.getElementById('tk-empty');
+    const table = document.getElementById('tk-table');
+
+    if (items.length === 0) {
+      empty.style.display = 'block';
+      table.style.display = 'none';
+    } else {
+      empty.style.display = 'none';
+      table.style.display = 'table';
+
+      const tbody = document.getElementById('tk-tbody');
+      tbody.innerHTML = items.map(inc => {
+        const rootCause = inc.root_cause || '—';
+        const lastSeen  = inc.last_seen  ? inc.last_seen.replace('T', ' ').slice(0, 19) : '—';
+        return `
+          <tr>
+            <td class="muted">${escHtml(inc.iflow_id || '—')}</td>
+            <td>${pillFor(inc.error_type)}</td>
+            <td class="truncate" title="${escHtml(rootCause)}">${escHtml(rootCause)}</td>
+            <td class="muted" style="white-space:nowrap">${escHtml(lastSeen)}</td>
+            <td class="id-cell">${escHtml(inc.incident_id || '—')}</td>
+            <td>
+              <button class="btn btn-ghost btn-sm"
+                onclick="gotoStatusFromTickets('${escHtml(inc.incident_id || '')}')">
+                Status
+              </button>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    showResult('tk-result');
+  } catch (e) {
+    showToast(e.message || 'Request failed', false);
+  } finally {
+    setSpinner('tk-spinner', false);
+  }
+}
+
+function gotoStatusFromTickets(incidentId) {
+  if (incidentId) document.getElementById('st-id').value = incidentId;
+  switchTab('status', document.querySelectorAll('nav.tabs button')[2]);
+  if (incidentId) doStatus(false);
+}
+
+function gotoStatusFromRetry() {
+  const id = _lastRetryIncidentId || document.getElementById('rt-id').value.trim();
+  if (id) document.getElementById('st-id').value = id;
+  switchTab('status', document.querySelectorAll('nav.tabs button')[2]);
+  if (id) doStatus(true);
+}
+
+// ─── Agent Monitor ───────────────────────────────────────────────────────────
+let _amPollTimer   = null;
+let _amRunning     = null;
+
+const ACTIVE_STATUSES = new Set([
+  'RCA_IN_PROGRESS','FIX_IN_PROGRESS','FIX_DEPLOYED','DETECTED','AWAITING_APPROVAL'
+]);
+
+function startAmPoll() {
+  if (_amPollTimer) return;
+  _amPollTimer = setInterval(refreshAgentMonitor, 5000);
+}
+function stopAmPoll() {
+  if (_amPollTimer) { clearInterval(_amPollTimer); _amPollTimer = null; }
+}
+
+function _applyAmStatus(running) {
+  _amRunning = running;
+  const dot  = document.getElementById('am-dot');
+  const text = document.getElementById('am-status-text');
+  const sub  = document.getElementById('am-status-sub');
+  const btn  = document.getElementById('am-toggle-btn');
+  const lbl  = document.getElementById('am-toggle-label');
+  const note = document.getElementById('am-refresh-note');
+
+  dot.className = 'agent-big-dot ' + (running ? 'running' : 'stopped');
+  text.textContent = running ? 'Running' : 'Stopped';
+  text.style.color = running ? 'var(--success)' : 'var(--danger)';
+  sub.textContent  = running ? 'Monitoring SAP CPI for failed messages…' : 'Agent is idle — start it to begin monitoring.';
+  btn.className    = 'btn ' + (running ? 'btn-danger' : 'btn-success');
+  lbl.textContent  = running ? '⏹ Stop Agent' : '▶ Start Agent';
+  btn.disabled     = false;
+  note.textContent = running ? 'Auto-refreshing every 5s' : '';
+
+  // Keep header toggle in sync
+  _setAgentUI(running);
+}
+
+async function refreshAgentMonitor() {
+  try {
+    const [statusRes, incRes, approvalRes] = await Promise.all([
+      apiFetch('GET', '/autonomous/status'),
+      apiFetch('GET', '/autonomous/incidents?limit=30'),
+      apiFetch('GET', '/autonomous/pending_approvals').catch(() => ({ approvals: [] })),
+    ]);
+
+    _applyAmStatus(!!statusRes.running);
+
+    // Config tiles
+    document.getElementById('am-ci-poll').textContent    = (statusRes.poll_interval_seconds || '—') + 's';
+    document.getElementById('am-ci-autofix').textContent = statusRes.auto_fix_confidence != null
+      ? (statusRes.auto_fix_confidence * 100).toFixed(0) + '%' : '—';
+    document.getElementById('am-ci-suggest').textContent = statusRes.suggest_fix_confidence != null
+      ? (statusRes.suggest_fix_confidence * 100).toFixed(0) + '%' : '—';
+    document.getElementById('am-ci-all').textContent     = statusRes.auto_fix_all ? 'Yes' : 'No';
+    document.getElementById('am-ci-deploy').textContent  = statusRes.auto_deploy  ? 'Yes' : 'No';
+
+    // Incidents
+    const incidents = (incRes.incidents || []).slice().sort((a, b) =>
+      (b.last_seen || b.created_at || '').localeCompare(a.last_seen || a.created_at || '')
+    );
+    const active = incidents.filter(i => ACTIVE_STATUSES.has((i.status || '').toUpperCase()));
+    const all    = incidents;
+
+    // Active section
+    const activeSection = document.getElementById('am-active-section');
+    const activeFeed    = document.getElementById('am-active-feed');
+    if (active.length > 0) {
+      activeSection.style.display = 'block';
+      activeFeed.innerHTML = active.map(i => buildActivityItem(i, true)).join('');
+    } else {
+      activeSection.style.display = 'none';
+    }
+
+    // All feed
+    const allFeed = document.getElementById('am-all-feed');
+    if (all.length === 0) {
+      allFeed.innerHTML = '<div class="empty-state">No incidents recorded yet.</div>';
+    } else {
+      allFeed.innerHTML = all.map(i => buildActivityItem(i, false)).join('');
+    }
+
+    // Pending approvals
+    const approvals = approvalRes.approvals || approvalRes.pending_approvals || [];
+    const approvalList = document.getElementById('am-approvals-list');
+    document.getElementById('am-approval-count').textContent =
+      approvals.length ? `${approvals.length} waiting` : '';
+    const hasPending = approvals.length > 0;
+    document.getElementById('am-approve-all-btn').style.display = hasPending ? '' : 'none';
+    document.getElementById('am-reject-all-btn').style.display  = hasPending ? '' : 'none';
+    // store current pending ids for bulk actions
+    window._pendingApprovalIds = approvals.map(a => a.incident_id);
+    if (!hasPending) {
+      approvalList.innerHTML = '<div class="empty-state">No pending approvals.</div>';
+    } else {
+      approvalList.innerHTML = approvals.map(a => `
+        <div class="approval-item" id="aprow-${escHtml(a.incident_id)}">
+          <span style="font-size:19px">⚠️</span>
+          <div class="ap-info">
+            <div class="ap-iflow">${escHtml(a.iflow_id || a.incident_id || '—')}</div>
+            <div class="ap-fix">${escHtml(a.proposed_fix || a.root_cause || 'Awaiting approval')}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="btn btn-success btn-sm" onclick="doApprove('${escHtml(a.incident_id)}', true)">✓ Approve</button>
+            <button class="btn btn-danger btn-sm"  onclick="doApprove('${escHtml(a.incident_id)}', false)">✗ Reject</button>
+            <button class="btn btn-ghost btn-sm"   onclick="gotoStatusFromAM('${escHtml(a.incident_id)}')">→ Status</button>
+          </div>
+        </div>`).join('');
+    }
+
+    document.getElementById('am-last-refresh').textContent =
+      'Last updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('am-status-text').textContent = 'Offline';
+    document.getElementById('am-status-sub').textContent  = e.message || 'Cannot reach server';
+  }
+}
+
+function buildActivityItem(inc, isActive) {
+  const status   = (inc.status || '').toUpperCase();
+  const timeStr  = (inc.last_seen || inc.created_at || '').replace('T', ' ').slice(0, 16);
+  const cause    = inc.root_cause || inc.error_type || '—';
+  const active   = isActive || ACTIVE_STATUSES.has(status);
+  return `
+    <div class="activity-item ${active ? 'is-active' : ''}"
+         onclick="gotoStatusFromAM('${escHtml(inc.incident_id || '')}')"
+         style="cursor:pointer" title="Click to view fix status">
+      <div class="ai-left">
+        <div class="ai-iflow">${escHtml(inc.iflow_id || inc.incident_id || '—')}</div>
+        <div class="ai-cause">${escHtml(cause.length > 90 ? cause.slice(0, 90) + '…' : cause)}</div>
+      </div>
+      ${pillFor(status)}
+      <span class="ai-time">${escHtml(timeStr)}</span>
+    </div>`;
+}
+
+async function doAmToggle() {
+  const btn = document.getElementById('am-toggle-btn');
+  btn.disabled = true;
+  setSpinner('am-toggle-spinner', true);
+  try {
+    if (_amRunning) {
+      await apiFetch('POST', '/autonomous/stop');
+      _applyAmStatus(false);
+      stopAmPoll();
+      showToast('Autonomous agent stopped');
+    } else {
+      await apiFetch('POST', '/autonomous/start');
+      _applyAmStatus(true);
+      startAmPoll();
+      showToast('Autonomous agent started');
+    }
+  } catch (e) {
+    showToast(e.message || 'Toggle failed', false);
+    btn.disabled = false;
+  } finally {
+    setSpinner('am-toggle-spinner', false);
+  }
+}
+
+async function doManualTrigger() {
+  const btn = document.getElementById('am-trigger-btn');
+  btn.disabled = true;
+  setSpinner('am-trigger-spinner', true);
+  try {
+    const d = await apiFetch('POST', '/autonomous/manual_trigger');
+    showToast(d.message || 'Poll triggered');
+    setTimeout(refreshAgentMonitor, 2000);
+  } catch (e) {
+    showToast(e.message || 'Trigger failed', false);
+  } finally {
+    btn.disabled = false;
+    setSpinner('am-trigger-spinner', false);
+  }
+}
+
+async function doApprove(incidentId, approved) {
+  // Disable buttons on the row immediately to prevent double-clicks
+  const row = document.getElementById(`aprow-${incidentId}`);
+  if (row) row.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    await apiFetch('POST', `/autonomous/incidents/${encodeURIComponent(incidentId)}/approve`,
+      { approved, user_id: 'user', comment: approved ? 'Approved via monitor' : 'Rejected via monitor' });
+    showToast(approved ? '✓ Fix approved' : '✗ Fix rejected');
+    await refreshAgentMonitor();
+  } catch (e) {
+    if (row) row.querySelectorAll('button').forEach(b => b.disabled = false);
+    showToast(e.message || 'Action failed', false);
+  }
+}
+
+async function doApproveAll(approved) {
+  const ids = window._pendingApprovalIds || [];
+  if (ids.length === 0) return;
+  const word = approved ? 'Approve' : 'Reject';
+  if (!confirm(`${word} all ${ids.length} pending fix(es)?`)) return;
+
+  // Disable both bulk buttons
+  document.getElementById('am-approve-all-btn').disabled = true;
+  document.getElementById('am-reject-all-btn').disabled  = true;
+
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    const row = document.getElementById(`aprow-${id}`);
+    if (row) row.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+      await apiFetch('POST', `/autonomous/incidents/${encodeURIComponent(id)}/approve`,
+        { approved, user_id: 'user', comment: approved ? 'Bulk approved via monitor' : 'Bulk rejected via monitor' });
+      ok++;
+    } catch (_) {
+      fail++;
+    }
+  }
+  showToast(
+    fail === 0
+      ? `${word}d ${ok} fix${ok !== 1 ? 'es' : ''}`
+      : `${ok} ${word.toLowerCase()}d, ${fail} failed`,
+    fail === 0,
+  );
+  await refreshAgentMonitor();
+}
+
+function gotoStatusFromAM(incidentId) {
+  if (!incidentId) return;
+  document.getElementById('st-id').value = incidentId;
+  switchTab('status', document.querySelectorAll('nav.tabs button')[2]);
+  doStatus(false);
+}
+
+// ─── Autonomous Agent Toggle ─────────────────────────────────────────────────
+let _agentRunning = null;
+
+function _setAgentUI(running) {
+  _agentRunning = running;
+  const dot   = document.getElementById('agent-dot');
+  const label = document.getElementById('agent-label');
+  const btn   = document.getElementById('agent-toggle-btn');
+  dot.className   = 'agent-dot ' + (running ? 'running' : 'stopped');
+  label.textContent = running ? 'Running' : 'Stopped';
+  btn.textContent   = running ? '⏹ Stop' : '▶ Start';
+  btn.className     = 'btn btn-sm ' + (running ? 'btn-danger' : 'btn-success');
+  btn.disabled      = false;
+}
+
+async function refreshAgentStatus() {
+  try {
+    const d = await apiFetch('GET', '/autonomous/status');
+    _setAgentUI(!!d.running);
+    // also prime the monitor page state without full refresh
+    _amRunning = !!d.running;
+  } catch {
+    document.getElementById('agent-label').textContent = 'offline';
+    document.getElementById('agent-toggle-btn').textContent = '?';
+  }
+}
+
+async function doAgentToggle() {
+  const btn = document.getElementById('agent-toggle-btn');
+  btn.disabled = true;
+  try {
+    if (_agentRunning) {
+      await apiFetch('POST', '/autonomous/stop');
+      _setAgentUI(false);
+      showToast('Autonomous agent stopped');
+    } else {
+      await apiFetch('POST', '/autonomous/start');
+      _setAgentUI(true);
+      showToast('Autonomous agent started');
+    }
+  } catch (e) {
+    showToast(e.message || 'Toggle failed', false);
+    btn.disabled = false;
+  }
+}
+
+// ─── AEM Status Tab ──────────────────────────────────────────────────────────
+let _aemPollTimer = null;
+
+function startAEMPoll() {
+  if (_aemPollTimer) return;
+  _aemPollTimer = setInterval(refreshAEM, 5000);
+}
+function stopAEMPoll() {
+  if (_aemPollTimer) { clearInterval(_aemPollTimer); _aemPollTimer = null; }
+}
+
+const STAGE_ORDER = ['observed','classified','rca','fix','verified'];
+const STAGE_STATUS_MAP = {
+  DETECTED: 'observed',
+  RCA_IN_PROGRESS: 'classified',
+  RCA_COMPLETE: 'rca',
+  FIX_IN_PROGRESS: 'fix', FIX_DEPLOYED: 'fix', AWAITING_APPROVAL: 'fix',
+  FIX_VERIFIED: 'verified', HUMAN_INITIATED_FIX: 'verified', RETRIED: 'verified',
+  FIX_FAILED: 'fix', FIX_FAILED_UPDATE: 'fix', FIX_FAILED_DEPLOY: 'fix',
+  TICKET_CREATED: 'rca', RCA_FAILED: 'rca',
+};
+
+async function refreshAEM() {
+  try {
+    const [aemRes, incRes] = await Promise.all([
+      apiFetch('GET', '/aem/status'),
+      apiFetch('GET', '/autonomous/incidents?limit=50'),
+    ]);
+
+    // Connection status
+    const enabled = aemRes.aem_enabled;
+    document.getElementById('aem-dot').className = 'aem-status-dot ' + (enabled ? 'on' : 'off');
+    document.getElementById('aem-status-label').textContent = enabled ? 'Connected — SAP Advanced Event Mesh' : 'AEM Disabled';
+
+    document.getElementById('aem-queue-name').textContent        = aemRes.queue_name || '—';
+    document.getElementById('aem-total-incidents').textContent   = aemRes.total_incidents ?? 0;
+    document.getElementById('aem-msgs-retrieved').textContent    = aemRes.messages_retrieved ?? 0;
+
+    const depth   = aemRes.queue_depth;
+    const depthEl = document.getElementById('aem-queue-depth');
+    depthEl.textContent  = depth ?? 0;
+    depthEl.style.color  = (depth > 0) ? 'var(--warning)' : 'var(--success)';
+
+    // Stage counters
+    const sc = aemRes.stage_counts || {};
+    STAGE_ORDER.forEach(stage => {
+      const count = sc[stage] ?? 0;
+      document.getElementById('sc-' + stage).textContent = count;
+      document.getElementById('sb-' + stage).classList.toggle('has-msgs', count > 0);
+    });
+
+    // Queue messages feed — rich cards
+    const incidents = (incRes.incidents || [])
+      .slice()
+      .sort((a, b) => (b.last_seen || b.created_at || '').localeCompare(a.last_seen || a.created_at || ''));
+
+    const feed = document.getElementById('aem-events-feed');
+    const totalProcessed = aemRes.total_incidents ?? 0;
+    const countEl = document.getElementById('aem-msg-count');
+    countEl.textContent = totalProcessed === 0
+      ? '0 messages'
+      : incidents.length < totalProcessed
+        ? `Showing last ${incidents.length} of ${totalProcessed}`
+        : `${totalProcessed} message${totalProcessed !== 1 ? 's' : ''}`;
+
+    if (incidents.length === 0) {
+      feed.innerHTML = '<div class="empty-state">No messages received yet.</div>';
+    } else {
+      feed.innerHTML = incidents.map(inc => {
+        const status    = (inc.status || '').toUpperCase();
+        const timeStr   = (inc.last_seen || inc.created_at || '').replace('T', ' ').slice(0, 16);
+        const errMsg    = inc.error_message ? inc.error_message.slice(0, 120) + (inc.error_message.length > 120 ? '…' : '') : '';
+        const rootCause = inc.root_cause   ? inc.root_cause.slice(0, 150)   + (inc.root_cause.length   > 150 ? '…' : '') : '';
+        const fixSum    = inc.fix_summary  ? inc.fix_summary.slice(0, 150)  + (inc.fix_summary.length  > 150 ? '…' : '') : '';
+
+        return `
+          <div class="aem-event-row">
+            <div class="aem-event-top">
+              <span class="aem-event-iflow">${escHtml(inc.iflow_id || inc.incident_id || '—')}</span>
+              <div class="aem-event-meta">
+                ${pillFor(status)}
+                <span class="aem-event-time">${escHtml(timeStr)}</span>
+              </div>
+            </div>
+            <div class="aem-event-detail">
+              ${inc.error_type  ? `<span><b>Error Type</b> ${escHtml(inc.error_type)}</span>` : ''}
+              ${inc.incident_id ? `<span><b>ID</b> ${escHtml(inc.incident_id.slice(0,8))}…</span>` : ''}
+              ${errMsg          ? `<span><b>Message</b> ${escHtml(errMsg)}</span>` : ''}
+            </div>
+            ${rootCause ? `<div class="aem-event-extra">Root cause: ${escHtml(rootCause)}</div>` : ''}
+            ${fixSum    ? `<div class="aem-event-extra fix">Fix: ${escHtml(fixSum)}</div>` : ''}
+          </div>`;
+      }).join('');
+    }
+
+    document.getElementById('aem-last-refresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('aem-status-label').textContent = 'Offline';
+  }
+}
+
+// ─── Init agent status on load ────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', refreshAgentStatus);
+</script>
+</body>
+</html>

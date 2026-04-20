@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:8080/health)",
+      "Bash(python -c \"from solace.messaging.config.solace_properties import service_properties as SP; print\\([x for x in dir\\(SP\\) if 'CLIENT' in x.upper\\(\\) or 'NAME' in x.upper\\(\\)]\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(npx tsc:*)",
+      "Bash(python -c \"from db.database import get_escalation_tickets; print\\('OK'\\)\")",
+      "Bash(python -c \"import main\")",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(netstat -ano)"
+    ]
+  }
+}
