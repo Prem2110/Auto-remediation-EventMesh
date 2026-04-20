@@ -37,7 +37,6 @@ from db.database import (
     increment_incident_occurrence,
     update_incident,
     create_escalation_ticket,
-    ensure_escalation_tickets_schema,
 )
 from utils.utils import get_hana_timestamp
 

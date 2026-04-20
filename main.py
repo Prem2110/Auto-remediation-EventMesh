@@ -100,9 +100,8 @@ from db.database import (
     create_query_history,
     update_query_history,
     update_incident,
-    ensure_autonomous_incident_schema,
-    ensure_escalation_tickets_schema,
-    ensure_fix_patterns_schema,
+    ensure_em_schema,
+    set_db_source,
 )
 from storage.storage import upload_multiple_files
 from utils.utils import get_hana_timestamp
@@ -138,10 +137,8 @@ _webhook_counter: int = _load_webhook_counter()
 async def lifespan(app: FastAPI):
     global mcp, observer, orchestrator
 
-    # Synchronous schema setup
-    ensure_autonomous_incident_schema()
-    ensure_fix_patterns_schema()
-    ensure_escalation_tickets_schema()
+    # Create Event Mesh tables on startup (no-op if they already exist)
+    ensure_em_schema()
 
     # Create the MCP infrastructure only if servers are configured
     from core.constants import MCP_SERVERS
@@ -932,6 +929,7 @@ async def event_mesh_webhook(event: Dict[str, Any]):
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
 
+    set_db_source("EVENT_MESH")   # inherited by the create_task below
     _webhook_counter += 1
     _ts = get_hana_timestamp()
 

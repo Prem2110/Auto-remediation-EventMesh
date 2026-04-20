@@ -1307,7 +1307,7 @@ Rules:
         raw_body   = msg.get("raw_body") or ""
 
         return {
-            "source_type":    "AEM_QUEUE",
+            "source_type":    "EVENT_MESH",
             "message_guid":   (msg.get("MessageGuid") or msg.get("message_guid") or msg.get("messageGuid") or ""),
             # Only use human-readable name fields for iflow_id so the OData fallback
             # triggers correctly when the name is absent. IntegrationFlowId is a SAP
@@ -1412,7 +1412,7 @@ Rules:
                                 r"\nThe MPL ID for the failed message is\s*:\s*\S+\s*$", "", raw_err
                             ).strip()
                             inc = {
-                                "source_type":    "AEM_QUEUE",
+                                "source_type":    "EVENT_MESH",
                                 "message_guid":   entry.get("MessageGuid", ""),
                                 "iflow_id":       entry.get("IntegrationFlowName", ""),
                                 "artifact_id":    "",
@@ -1453,7 +1453,7 @@ Rules:
                             guid   = guid_m.group(1).strip() if guid_m else ""
                             clean  = re.sub(r"The MPL ID for the failed message is\s*:\s*\S+", "", block).strip()
                             inc = {
-                                "source_type":    "AEM_QUEUE",
+                                "source_type":    "EVENT_MESH",
                                 "message_guid":   guid,
                                 "iflow_id":       "",
                                 "sender":         "",

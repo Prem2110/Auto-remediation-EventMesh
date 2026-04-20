@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TABLE NAMES — SAP Event Mesh app (EM tables only, no legacy AEM tables)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_INCIDENTS_TABLE = os.getenv("HANA_TABLE_EM_INCIDENTS",         "EM_AUTONOMOUS_INCIDENTS")
+_FIX_TABLE       = os.getenv("HANA_TABLE_EM_FIX_PATTERNS",      "EM_FIX_PATTERNS")
+_TICKETS_TABLE   = os.getenv("HANA_TABLE_EM_ESCALATION_TICKETS", "EM_ESCALATION_TICKETS")
+
+
+def set_db_source(source: str) -> None:
+    """No-op — kept for import compatibility. Single EM table set in this app."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CONNECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -93,25 +106,24 @@ def ensure_autonomous_incident_schema():
         "ticket_id":             "NVARCHAR(512)",
         "consecutive_failures":  "INTEGER",
         "auto_escalated":        "INTEGER",
+        "source_type":           "NVARCHAR(64)",
     }
     try:
         conn = get_connection()
         cur  = conn.cursor()
         schema = os.getenv("HANA_SCHEMA", "")
+        tbl = _INCIDENTS_TABLE.upper()
         if schema:
             cur.execute(
-                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS "
-                "WHERE TABLE_NAME='AUTONOMOUS_INCIDENTS' AND SCHEMA_NAME=?",
-                (schema,),
+                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
+                (tbl, schema),
             )
         else:
-            cur.execute(
-                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME='AUTONOMOUS_INCIDENTS'"
-            )
+            cur.execute("SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?", (tbl,))
         existing = {str(r[0]).lower() for r in cur.fetchall()}
         for column_name, column_type in required_columns.items():
             if column_name.lower() not in existing:
-                cur.execute(f'ALTER TABLE autonomous_incidents ADD ("{column_name}" {column_type})')
+                cur.execute(f'ALTER TABLE "{_INCIDENTS_TABLE}" ADD ("{column_name}" {column_type})')
         conn.commit()
         conn.close()
     except Exception as e:
@@ -124,16 +136,14 @@ def _get_autonomous_incident_column_lookup() -> Dict[str, str]:
         conn   = get_connection()
         cur    = conn.cursor()
         schema = os.getenv("HANA_SCHEMA", "")
+        tbl = _INCIDENTS_TABLE.upper()
         if schema:
             cur.execute(
-                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS "
-                "WHERE TABLE_NAME='AUTONOMOUS_INCIDENTS' AND SCHEMA_NAME=?",
-                (schema,),
+                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
+                (tbl, schema),
             )
         else:
-            cur.execute(
-                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME='AUTONOMOUS_INCIDENTS'"
-            )
+            cur.execute("SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?", (tbl,))
         for row in cur.fetchall():
             name = str(row[0])
             lookup[name.lower()] = name
@@ -154,50 +164,120 @@ def ensure_fix_patterns_schema():
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME='FIX_PATTERNS'"
+            "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?",
+            (_FIX_TABLE.upper(),),
         )
         existing = {str(r[0]).lower() for r in cur.fetchall()}
         for col, typ in required.items():
             if col.lower() not in existing:
                 default = " DEFAULT 0" if "INTEGER" in typ else ""
-                cur.execute(f'ALTER TABLE fix_patterns ADD ("{col}" {typ}{default})')
+                cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("{col}" {typ}{default})')
         conn.commit()
         conn.close()
     except Exception as e:
         logger.warning(f"ensure_fix_patterns_schema: {e}")
 
 
-def ensure_escalation_tickets_schema():
-    """Create escalation_tickets table if it doesn't exist."""
+
+def ensure_em_schema():
+    """Create the three Event Mesh–specific tables if they don't exist."""
     try:
         conn = get_connection()
         cur  = conn.cursor()
-        cur.execute(
-            "SELECT COUNT(*) FROM SYS.TABLES WHERE TABLE_NAME='ESCALATION_TICKETS'"
+        schema_q = os.getenv("HANA_SCHEMA", "")
+
+        # ── EM_AUTONOMOUS_INCIDENTS ──────────────────────────────────────────
+        check = (
+            f"SELECT COUNT(*) FROM SYS.TABLES WHERE TABLE_NAME=? AND SCHEMA_NAME=?"
+            if schema_q else
+            "SELECT COUNT(*) FROM SYS.TABLES WHERE TABLE_NAME=?"
         )
-        row = cur.fetchone()
-        if not (row and int(row[0]) > 0):
-            cur.execute(
-                """CREATE TABLE escalation_tickets (
-                    ticket_id         NVARCHAR(100) PRIMARY KEY,
-                    incident_id       NVARCHAR(100),
-                    iflow_id          NVARCHAR(200),
-                    error_type        NVARCHAR(100),
-                    title             NVARCHAR(500),
-                    description       NCLOB,
-                    priority          NVARCHAR(20),
-                    status            NVARCHAR(20) DEFAULT 'OPEN',
-                    assigned_to       NVARCHAR(200),
-                    resolution_notes  NCLOB,
-                    created_at        NVARCHAR(64),
-                    updated_at        NVARCHAR(64),
-                    resolved_at       NVARCHAR(64)
-                )"""
-            )
+        cur.execute(check, (_INCIDENTS_TABLE.upper(), schema_q) if schema_q else (_INCIDENTS_TABLE.upper(),))
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(f"""CREATE TABLE "{_INCIDENTS_TABLE}" (
+                incident_id            NVARCHAR(100),
+                message_guid           NVARCHAR(200),
+                iflow_id               NVARCHAR(500),
+                sender                 NVARCHAR(200),
+                receiver               NVARCHAR(200),
+                status                 NVARCHAR(50) DEFAULT 'DETECTED',
+                error_type             NVARCHAR(100),
+                error_message          NCLOB,
+                root_cause             NCLOB,
+                proposed_fix           NCLOB,
+                rca_confidence         DECIMAL(5,4),
+                affected_component     NVARCHAR(200),
+                fix_summary            NCLOB,
+                comment                NCLOB,
+                correlation_id         NVARCHAR(200),
+                log_start              NVARCHAR(64),
+                log_end                NVARCHAR(64),
+                created_at             NVARCHAR(64),
+                resolved_at            NVARCHAR(64),
+                tags                   NCLOB,
+                incident_group_key     NVARCHAR(64),
+                occurrence_count       INTEGER DEFAULT 1,
+                last_seen              NVARCHAR(64),
+                verification_status    NVARCHAR(64),
+                source_type            NVARCHAR(64),
+                fix_steps              NCLOB,
+                field_changes          NCLOB,
+                fix_plan_generated_at  NVARCHAR(64),
+                retry_count            INTEGER,
+                last_failed_stage      NVARCHAR(64),
+                iflow_snapshot_before  NCLOB,
+                pending_since          NVARCHAR(64),
+                ticket_id              NVARCHAR(512),
+                consecutive_failures   INTEGER DEFAULT 0,
+                auto_escalated         INTEGER DEFAULT 0,
+                integration_flow_name  NVARCHAR(500),
+                artifact_id            NVARCHAR(500)
+            )""")
+            logger.info("[DB] Created table %s", _INCIDENTS_TABLE)
+
+        # ── EM_FIX_PATTERNS ──────────────────────────────────────────────────
+        cur.execute(check, (_FIX_TABLE.upper(), schema_q) if schema_q else (_FIX_TABLE.upper(),))
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(f"""CREATE TABLE "{_FIX_TABLE}" (
+                pattern_id            NVARCHAR(100) PRIMARY KEY,
+                error_signature       NVARCHAR(500),
+                iflow_id              NVARCHAR(200),
+                error_type            NVARCHAR(100),
+                root_cause            NCLOB,
+                fix_applied           NCLOB,
+                outcome               NVARCHAR(50),
+                applied_count         INTEGER DEFAULT 0,
+                last_seen             NVARCHAR(64),
+                success_count         INTEGER DEFAULT 0,
+                replay_success_count  INTEGER DEFAULT 0,
+                key_steps             NVARCHAR(2000)
+            )""")
+            logger.info("[DB] Created table %s", _FIX_TABLE)
+
+        # ── EM_ESCALATION_TICKETS ────────────────────────────────────────────
+        cur.execute(check, (_TICKETS_TABLE.upper(), schema_q) if schema_q else (_TICKETS_TABLE.upper(),))
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(f"""CREATE TABLE "{_TICKETS_TABLE}" (
+                ticket_id         NVARCHAR(100) PRIMARY KEY,
+                incident_id       NVARCHAR(100),
+                iflow_id          NVARCHAR(200),
+                error_type        NVARCHAR(100),
+                title             NVARCHAR(500),
+                description       NCLOB,
+                priority          NVARCHAR(20),
+                status            NVARCHAR(20) DEFAULT 'OPEN',
+                assigned_to       NVARCHAR(200),
+                resolution_notes  NCLOB,
+                created_at        NVARCHAR(64),
+                updated_at        NVARCHAR(64),
+                resolved_at       NVARCHAR(64)
+            )""")
+            logger.info("[DB] Created table %s", _TICKETS_TABLE)
+
         conn.commit()
         conn.close()
     except Exception as e:
-        logger.warning(f"ensure_escalation_tickets_schema: {e}")
+        logger.warning(f"ensure_em_schema: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -435,6 +515,7 @@ def create_incident(incident: Dict):
             "occurrence_count":  incident.get("occurrence_count", 1),
             "last_seen":         incident.get("last_seen") or incident.get("created_at"),
             "verification_status":incident.get("verification_status"),
+            "source_type":       incident.get("source_type"),
         }
         columns, values = [], []
         for logical_name, value in payload.items():
@@ -445,7 +526,7 @@ def create_incident(incident: Dict):
             values.append(value)
         placeholders = ",".join("?" for _ in values)
         cur.execute(
-            f'INSERT INTO autonomous_incidents ({",".join(columns)}) VALUES ({placeholders})',
+            f'INSERT INTO "{_INCIDENTS_TABLE}" ({",".join(columns)}) VALUES ({placeholders})',
             values,
         )
         conn.commit()
@@ -476,7 +557,7 @@ def update_incident(incident_id: str, updates: Dict):
         incident_id_col = _quote_identifier(column_lookup.get("incident_id", "INCIDENT_ID"))
         values.append(incident_id)
         cur.execute(
-            f"UPDATE autonomous_incidents SET {', '.join(assignments)} WHERE {incident_id_col}=?",
+            f'UPDATE "{_INCIDENTS_TABLE}" SET {", ".join(assignments)} WHERE {incident_id_col}=?',
             values,
         )
         conn.commit()
@@ -490,25 +571,17 @@ def get_all_incidents(status: Optional[str] = None, limit: int = 50) -> List[Dic
     try:
         conn = get_connection()
         cur  = conn.cursor()
+        src = f'SELECT * FROM "{_INCIDENTS_TABLE}"
         if status:
             if limit and limit > 0:
-                cur.execute(
-                    "SELECT * FROM autonomous_incidents WHERE status=? ORDER BY created_at DESC LIMIT ?",
-                    (status, limit),
-                )
+                cur.execute(f"{src} WHERE status=? ORDER BY created_at DESC LIMIT ?", (status, limit))
             else:
-                cur.execute(
-                    "SELECT * FROM autonomous_incidents WHERE status=? ORDER BY created_at DESC",
-                    (status,),
-                )
+                cur.execute(f"{src} WHERE status=? ORDER BY created_at DESC", (status,))
         else:
             if limit and limit > 0:
-                cur.execute(
-                    "SELECT * FROM autonomous_incidents ORDER BY created_at DESC LIMIT ?",
-                    (limit,),
-                )
+                cur.execute(f"{src} ORDER BY created_at DESC LIMIT ?", (limit,))
             else:
-                cur.execute("SELECT * FROM autonomous_incidents ORDER BY created_at DESC")
+                cur.execute(f"{src} ORDER BY created_at DESC")
         rows = []
         for d in _rows_to_dicts(cur):
             if isinstance(d.get("tags"), str):
@@ -544,7 +617,7 @@ def get_stage_counts() -> dict:
     try:
         conn = get_connection()
         cur  = conn.cursor()
-        cur.execute("SELECT status, COUNT(*) FROM autonomous_incidents GROUP BY status")
+        cur.execute(f'SELECT status, COUNT(*) FROM "{_INCIDENTS_TABLE}" GROUP BY status')
         for row in cur.fetchall():
             s, n = (row[0] or "").upper(), int(row[1] or 0)
             stage = stage_map.get(s)
@@ -562,9 +635,9 @@ def count_all_incidents(status: Optional[str] = None) -> int:
         conn = get_connection()
         cur  = conn.cursor()
         if status:
-            cur.execute("SELECT COUNT(*) FROM autonomous_incidents WHERE status=?", (status,))
+            cur.execute(f'SELECT COUNT(*) FROM "{_INCIDENTS_TABLE}" WHERE status=?', (status,))
         else:
-            cur.execute("SELECT COUNT(*) FROM autonomous_incidents")
+            cur.execute(f'SELECT COUNT(*) FROM "{_INCIDENTS_TABLE}"')
         row = cur.fetchone()
         conn.close()
         return row[0] if row else 0
@@ -606,7 +679,7 @@ def get_incident_by_id(incident_id: str) -> Optional[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            "SELECT * FROM autonomous_incidents WHERE incident_id=?",
+            f'SELECT * FROM "{_INCIDENTS_TABLE} WHERE incident_id=?",
             (incident_id,),
         )
         rows = _rows_to_dicts(cur)
@@ -624,10 +697,7 @@ def get_incident_by_message_guid(message_guid: str) -> Optional[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            """SELECT * FROM autonomous_incidents
-               WHERE message_guid=?
-               ORDER BY created_at DESC
-               LIMIT 1""",
+            f'SELECT * FROM "{_INCIDENTS_TABLE} WHERE message_guid=? ORDER BY created_at DESC LIMIT 1",
             (message_guid,),
         )
         rows = _rows_to_dicts(cur)
@@ -651,7 +721,7 @@ def get_open_incident_by_signature(iflow_id: str, error_type: str) -> Optional[D
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            f"""SELECT * FROM autonomous_incidents
+            f"""SELECT * FROM "{_INCIDENTS_TABLE}"
                 WHERE iflow_id=?
                   AND error_type=?
                   AND status NOT IN ({placeholders})
@@ -692,10 +762,7 @@ def get_pending_approvals() -> List[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            """SELECT * FROM autonomous_incidents
-               WHERE status='AWAITING_APPROVAL'
-               ORDER BY created_at DESC
-               LIMIT 250"""
+            f'SELECT * FROM "{_INCIDENTS_TABLE} WHERE status='AWAITING_APPROVAL' ORDER BY created_at DESC LIMIT 250"
         )
         rows = [_normalize_incident_dict(d) for d in _rows_to_dicts(cur)]
         conn.close()
@@ -725,7 +792,7 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
         ) if raw_steps else None
 
         cur.execute(
-            'SELECT pattern_id, applied_count, fix_applied, "success_count", "replay_success_count", "key_steps" FROM fix_patterns WHERE error_signature=?',
+            f'SELECT pattern_id, applied_count, fix_applied, "success_count", "replay_success_count", "key_steps" FROM "{_FIX_TABLE}" WHERE error_signature=?',
             (sig,),
         )
         rows = _rows_to_dicts(cur)
@@ -738,7 +805,7 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
             # Only overwrite key_steps when this fix succeeded (preserve last successful steps)
             new_steps   = key_steps_json if (outcome == "SUCCESS" and key_steps_json) else existing.get("key_steps")
             cur.execute(
-                """UPDATE fix_patterns
+                f"""UPDATE "{_FIX_TABLE}"
                    SET applied_count=?, outcome=?, last_seen=?,
                        "success_count"=?, "replay_success_count"=?, "key_steps"=?
                    WHERE pattern_id=?""",
@@ -746,7 +813,7 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
             )
         else:
             cur.execute(
-                """INSERT INTO fix_patterns
+                f"""INSERT INTO "{_FIX_TABLE}"
                    (pattern_id, error_signature, iflow_id, error_type,
                     root_cause, fix_applied, outcome, applied_count, last_seen,
                     "success_count", "replay_success_count", "key_steps")
@@ -780,7 +847,7 @@ def get_recent_incident_by_group_key(group_key: str, within_seconds: int = 60) -
         cur          = conn.cursor()
         placeholders = ",".join("?" for _ in terminal)
         cur.execute(
-            f"""SELECT * FROM autonomous_incidents
+            f"""SELECT * FROM "{_INCIDENTS_TABLE}"
                WHERE incident_group_key=?
                  AND status NOT IN ({placeholders})
                  AND created_at >= ?
@@ -807,7 +874,7 @@ def get_similar_patterns(error_signature: str) -> List[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            """SELECT * FROM fix_patterns
+            f"""SELECT * FROM "{_FIX_TABLE}"
                WHERE error_signature=? AND outcome='SUCCESS'
                ORDER BY
                  CAST(COALESCE("success_count", 0) AS REAL) /
@@ -837,7 +904,7 @@ def create_escalation_ticket(data: Dict) -> str:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            """INSERT INTO escalation_tickets
+            f"""INSERT INTO "{_TICKETS_TABLE}"
                (ticket_id, incident_id, iflow_id, error_type, title,
                 description, priority, status, assigned_to,
                 resolution_notes, created_at, updated_at, resolved_at)
@@ -884,7 +951,7 @@ def get_escalation_tickets(
             params.append(incident_id)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         cur.execute(
-            f"SELECT * FROM escalation_tickets {where} ORDER BY created_at DESC LIMIT ?",
+            f"SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY created_at DESC LIMIT ?",
             (*params, limit),
         )
         rows = _rows_to_dicts(cur)
@@ -900,7 +967,7 @@ def get_escalation_ticket_by_id(ticket_id: str) -> Optional[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            "SELECT * FROM escalation_tickets WHERE ticket_id=?",
+            "SELECT * FROM "{_TICKETS_TABLE}" WHERE ticket_id=?",
             (ticket_id,),
         )
         rows = _rows_to_dicts(cur)
@@ -921,7 +988,7 @@ def update_escalation_ticket(ticket_id: str, updates: Dict):
         assignments = ", ".join(f'"{k}"=?' for k in updates)
         values      = list(updates.values()) + [ticket_id]
         cur.execute(
-            f'UPDATE escalation_tickets SET {assignments} WHERE "ticket_id"=?',
+            f'UPDATE "{_TICKETS_TABLE}" SET {assignments} WHERE "ticket_id"=?',
             values,
         )
         conn.commit()
