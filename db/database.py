@@ -571,7 +571,7 @@ def get_all_incidents(status: Optional[str] = None, limit: int = 50) -> List[Dic
     try:
         conn = get_connection()
         cur  = conn.cursor()
-        src = f'SELECT * FROM "{_INCIDENTS_TABLE}"
+        src = f'SELECT * FROM "{_INCIDENTS_TABLE}"'
         if status:
             if limit and limit > 0:
                 cur.execute(f"{src} WHERE status=? ORDER BY created_at DESC LIMIT ?", (status, limit))
@@ -679,7 +679,7 @@ def get_incident_by_id(incident_id: str) -> Optional[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            f'SELECT * FROM "{_INCIDENTS_TABLE} WHERE incident_id=?",
+            f'SELECT * FROM "{_INCIDENTS_TABLE}" WHERE incident_id=?',
             (incident_id,),
         )
         rows = _rows_to_dicts(cur)
@@ -697,7 +697,7 @@ def get_incident_by_message_guid(message_guid: str) -> Optional[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            f'SELECT * FROM "{_INCIDENTS_TABLE} WHERE message_guid=? ORDER BY created_at DESC LIMIT 1",
+            f'SELECT * FROM "{_INCIDENTS_TABLE}" WHERE message_guid=? ORDER BY created_at DESC LIMIT 1',
             (message_guid,),
         )
         rows = _rows_to_dicts(cur)
@@ -762,7 +762,8 @@ def get_pending_approvals() -> List[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            f'SELECT * FROM "{_INCIDENTS_TABLE} WHERE status='AWAITING_APPROVAL' ORDER BY created_at DESC LIMIT 250"
+            f'SELECT * FROM "{_INCIDENTS_TABLE}" WHERE status=? ORDER BY created_at DESC LIMIT 250',
+            ("AWAITING_APPROVAL",),
         )
         rows = [_normalize_incident_dict(d) for d in _rows_to_dicts(cur)]
         conn.close()
@@ -951,7 +952,7 @@ def get_escalation_tickets(
             params.append(incident_id)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         cur.execute(
-            f"SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY created_at DESC LIMIT ?",
+            f'SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY created_at DESC LIMIT ?',
             (*params, limit),
         )
         rows = _rows_to_dicts(cur)
@@ -967,7 +968,7 @@ def get_escalation_ticket_by_id(ticket_id: str) -> Optional[Dict]:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            "SELECT * FROM "{_TICKETS_TABLE}" WHERE ticket_id=?",
+            f'SELECT * FROM "{_TICKETS_TABLE}" WHERE ticket_id=?',
             (ticket_id,),
         )
         rows = _rows_to_dicts(cur)
