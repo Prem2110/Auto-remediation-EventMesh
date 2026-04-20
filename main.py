@@ -989,7 +989,7 @@ async def autonomous_debug():
             "SAP_HUB_CLIENT_ID":     "SET" if os.getenv("SAP_HUB_CLIENT_ID")     else "NOT SET",
             "SAP_HUB_CLIENT_SECRET": "SET" if os.getenv("SAP_HUB_CLIENT_SECRET") else "NOT SET",
         },
-        "autonomous_running": observer.is_running if observer else False,
+        "autonomous_running": orchestrator.is_running if orchestrator else False,
         "auto_fix_all":       AUTO_FIX_ALL_CPI_ERRORS,
         "auto_deploy":        AUTO_DEPLOY_AFTER_FIX,
         "fetch_test":  None,
