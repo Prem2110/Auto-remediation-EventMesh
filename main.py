@@ -205,9 +205,6 @@ async def lifespan(app: FastAPI):
         if AUTONOMOUS_ENABLED:
             logger.info("[Startup] All agents ready — orchestrator loop already running.")
 
-    # Event Mesh delivers via HTTP webhook push — no AMQP client needed at startup.
-    _aem_enabled = os.getenv("AEM_ENABLED", "false").lower() == "true"
-
     # Start the orchestrator loop immediately so the UI shows "Running" from boot.
     # Webhook events are dispatched directly to _route_stage from the HTTP handler.
     if AUTONOMOUS_ENABLED:

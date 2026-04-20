@@ -38,7 +38,6 @@ MAX_MEMORY_SESSIONS          = int(os.getenv("MAX_MEMORY_SESSIONS", "500"))
 FIX_PROGRESS_TTL_SECONDS     = int(os.getenv("FIX_PROGRESS_TTL_SECONDS", "7200"))
 MAX_FIX_PROGRESS_ENTRIES     = int(os.getenv("MAX_FIX_PROGRESS_ENTRIES", "1000"))
 LOCAL_QUEUE_MAXSIZE          = int(os.getenv("LOCAL_QUEUE_MAXSIZE", "1000"))
-SOLACE_INBOUND_QUEUE_MAXSIZE = int(os.getenv("SOLACE_INBOUND_QUEUE_MAXSIZE", "1000"))
 
 # ─────────────────────────────────────────────
 # SAP POLLING CONFIG

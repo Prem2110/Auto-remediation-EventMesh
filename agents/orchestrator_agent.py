@@ -42,7 +42,6 @@ from agents.fix_agent import FixAgent
 from agents.rca_agent import RCAAgent
 from agents.verifier_agent import VerifierAgent
 from aem.event_bus import event_bus
-# solace_client imported lazily inside _AEM_ENABLED branches — not available in CF (no solace package)
 from core.constants import (
     ACTION_HINTS,
     AUTO_FIX_ALL_CPI_ERRORS,
@@ -79,10 +78,7 @@ logger = logging.getLogger(__name__)
 _SAP_TENANT          = os.getenv("SAP_HUB_TENANT_URL", "")
 _TICKET_ASSIGNEE     = os.getenv("TICKET_DEFAULT_ASSIGNEE", "")
 
-# AEM — single queue drives the whole pipeline
-_AEM_ENABLED        = os.getenv("AEM_ENABLED", "false").lower() == "true"
-_AEM_OBSERVER_QUEUE = os.getenv("AEM_OBSERVER_QUEUE", "sap.cpi.autofix.observer.out")
-_AEM_OBSERVER_TOPIC = os.getenv("AEM_OBSERVER_TOPIC", "sap/cpi/autofix/observer/out")
+# AEM — pipeline uses HTTP webhook push; local queue buffers during agent init
 
 
 class OrchestratorAgent:
@@ -1325,33 +1321,17 @@ Rules:
         }
 
     async def _fetch_from_aem_queue(self) -> Optional[Dict[str, Any]]:
-        """
-        Pop one message from the inbound queue.
-        - AEM_ENABLED=true  → drains from solace_client (fed by background receiver thread).
-        - AEM_ENABLED=false → drains from in-process asyncio.Queue.
-        """
-        if _AEM_ENABLED:
-            from aem.solace_client import solace_client  # noqa: PLC0415
-            return await solace_client.get_message()
+        """Pop one message from the in-process queue (buffered during agent init)."""
         try:
             return self._local_queue.get_nowait()
         except asyncio.QueueEmpty:
             return None
 
     async def _publish_to_aem_queue(self, stage: str, incident_id: str, payload: Dict[str, Any]) -> None:
-        """
-        Publish a stage-transition message back to the AEM queue via its topic.
-        - AEM_ENABLED=true  → Solace PubSub+ Web Messaging (wss://).
-        - AEM_ENABLED=false → put into in-process asyncio.Queue.
-        """
+        """Put a stage-transition message into the in-process queue."""
         message = {"stage": stage, "incident_id": incident_id, **payload}
-        if _AEM_ENABLED:
-            from aem.solace_client import solace_client  # noqa: PLC0415
-            await solace_client.publish(_AEM_OBSERVER_TOPIC, message)
-            logger.info("[AEM] Published stage='%s' incident='%s'", stage, incident_id)
-        else:
-            await self._put_local_queue_message(message)
-            logger.debug("[AEM] Local queue: stage='%s' incident='%s'", stage, incident_id)
+        await self._put_local_queue_message(message)
+        logger.debug("[AEM] Queued: stage='%s' incident='%s'", stage, incident_id)
 
     async def _put_local_queue_message(self, message: Dict[str, Any]) -> None:
         """Keep the in-process queue bounded by dropping the oldest message on overflow."""
@@ -1593,8 +1573,7 @@ Rules:
     # ────────────────────────────────────────────
 
     async def _autonomous_loop(self) -> None:
-        mode = f"Solace Web Messaging  queue={_AEM_OBSERVER_QUEUE}" if _AEM_ENABLED else "local in-process queue"
-        logger.info("[Orchestrator] Autonomous loop started  mode=%s", mode)
+        logger.info("[Orchestrator] Autonomous loop started  mode=local in-process queue")
 
         _BATCH_SIZE          = 20    # max messages to drain per tick
         _IDLE_SLEEP          = 0.1   # seconds to sleep when queue is empty
@@ -1661,15 +1640,6 @@ Rules:
         if self._autonomous_running:
             return False
         self._autonomous_running = True
-
-        # Start Solace receiver only if not already running (may have been
-        # started earlier in main.py lifespan before agent init completed)
-        if _AEM_ENABLED:
-            from aem.solace_client import solace_client  # noqa: PLC0415
-            rt = solace_client._receiver_thread
-            if rt is None or not rt.is_alive():
-                loop = asyncio.get_running_loop()
-                solace_client.start_receiver(loop)
 
         async def _guarded():
             try:
