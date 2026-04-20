@@ -42,7 +42,7 @@ from agents.fix_agent import FixAgent
 from agents.rca_agent import RCAAgent
 from agents.verifier_agent import VerifierAgent
 from aem.event_bus import event_bus
-from aem.solace_client import solace_client
+# solace_client imported lazily inside _AEM_ENABLED branches — not available in CF (no solace package)
 from core.constants import (
     ACTION_HINTS,
     AUTO_FIX_ALL_CPI_ERRORS,
@@ -1331,6 +1331,7 @@ Rules:
         - AEM_ENABLED=false → drains from in-process asyncio.Queue.
         """
         if _AEM_ENABLED:
+            from aem.solace_client import solace_client  # noqa: PLC0415
             return await solace_client.get_message()
         try:
             return self._local_queue.get_nowait()
@@ -1345,6 +1346,7 @@ Rules:
         """
         message = {"stage": stage, "incident_id": incident_id, **payload}
         if _AEM_ENABLED:
+            from aem.solace_client import solace_client  # noqa: PLC0415
             await solace_client.publish(_AEM_OBSERVER_TOPIC, message)
             logger.info("[AEM] Published stage='%s' incident='%s'", stage, incident_id)
         else:
@@ -1663,6 +1665,7 @@ Rules:
         # Start Solace receiver only if not already running (may have been
         # started earlier in main.py lifespan before agent init completed)
         if _AEM_ENABLED:
+            from aem.solace_client import solace_client  # noqa: PLC0415
             rt = solace_client._receiver_thread
             if rt is None or not rt.is_alive():
                 loop = asyncio.get_running_loop()
