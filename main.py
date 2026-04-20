@@ -114,6 +114,21 @@ mcp:          Optional[MultiMCP]          = None
 observer:     Optional[ObserverAgent]     = None
 orchestrator: Optional[OrchestratorAgent] = None
 
+# ─────────────────────────────────────────────
+# EVENT MESH WEBHOOK COUNTER
+# ─────────────────────────────────────────────
+_WEBHOOK_LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "event_mesh_webhook.log")
+os.makedirs(os.path.dirname(_WEBHOOK_LOG_PATH), exist_ok=True)
+
+def _load_webhook_counter() -> int:
+    try:
+        with open(_WEBHOOK_LOG_PATH, "r", encoding="utf-8") as f:
+            return sum(1 for line in f if line.strip())
+    except FileNotFoundError:
+        return 0
+
+_webhook_counter: int = _load_webhook_counter()
+
 
 # ─────────────────────────────────────────────
 # LIFESPAN
@@ -913,11 +928,35 @@ async def event_mesh_webhook(event: Dict[str, Any]):
     dispatches based on the 'stage' field (defaults to 'observed' for new
     CPI error events).
     """
+    global _webhook_counter
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+
+    _webhook_counter += 1
+    _ts = get_hana_timestamp()
+
+    # Extract a human-readable identifier from the multimap envelope if present
+    try:
+        messages = event.get("multimap:Messages", {})
+        first_msg = next(iter(messages.values()), [{}])
+        first_item = first_msg[0] if isinstance(first_msg, list) else first_msg
+        logs_block = first_item.get("MessageProcessingLogs", first_item)
+        _guid      = logs_block.get("MessageGuid", "")
+        _iflow     = logs_block.get("IntegrationFlowName", "")
+    except Exception:
+        _guid, _iflow = "", ""
+
+    _log_line = (
+        f"[{_ts}] count={_webhook_counter}"
+        f" guid={_guid or 'n/a'}"
+        f" iflow={_iflow or 'n/a'}\n"
+    )
+    with open(_WEBHOOK_LOG_PATH, "a", encoding="utf-8") as _lf:
+        _lf.write(_log_line)
+
     asyncio.create_task(orchestrator._route_stage(event))
-    logger.info("[EventMesh] Webhook received, dispatched to _route_stage")
-    return {"status": "accepted"}
+    logger.info("[EventMesh] Webhook received #%d, dispatched to _route_stage", _webhook_counter)
+    return {"status": "accepted", "count": _webhook_counter}
 
 
 # ─────────────────────────────────────────────
