@@ -84,22 +84,30 @@ EVENT_MESH_CLIENT_SECRET = os.getenv("EVENT_MESH_CLIENT_SECRET", "")
 REMEDIATION_POLICIES: Dict[str, Dict] = {
     "MAPPING_ERROR":         {"action": "AUTO_FIX",       "replay_after_fix": True},
     "DATA_VALIDATION":       {"action": "AUTO_FIX",       "replay_after_fix": True},
-    "AUTH_ERROR":            {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "SSL_ERROR":             {"action": "TICKET_CREATED", "replay_after_fix": False},
+    "AUTH_CONFIG_ERROR":     {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "AUTH_ERROR":            {"action": "APPROVAL",       "replay_after_fix": False},
     "CONNECTIVITY_ERROR":    {"action": "RETRY",          "replay_after_fix": True},
     "ADAPTER_CONFIG_ERROR":  {"action": "AUTO_FIX",       "replay_after_fix": True},
     "BACKEND_ERROR":         {"action": "TICKET_CREATED", "replay_after_fix": False},
     "SFTP_ERROR":            {"action": "TICKET_CREATED", "replay_after_fix": False},
+    "DUPLICATE_ERROR":       {"action": "TICKET_CREATED", "replay_after_fix": False},
+    "PAYLOAD_SIZE_ERROR":    {"action": "TICKET_CREATED", "replay_after_fix": False},
     "UNKNOWN_ERROR":         {"action": "APPROVAL",       "replay_after_fix": False},
 }
 
 ACTION_HINTS: Dict[str, str] = {
     "MAPPING_ERROR":        "Agent is auto-fixing the message mapping — redeploy will follow automatically.",
     "DATA_VALIDATION":      "Agent is auto-fixing payload validation — redeploy will follow automatically.",
-    "AUTH_ERROR":           "Agent is auto-fixing the credential/certificate configuration — redeploy will follow automatically.",
+    "SSL_ERROR":            "SSL/TLS certificate error — certificate renewal or trust store update required. A ticket has been created.",
+    "AUTH_CONFIG_ERROR":    "Wrong credential alias or security material reference inside iFlow — agent is fixing the adapter config and redeploying.",
+    "AUTH_ERROR":           "Authentication failed — could not determine if iFlow config or credentials are at fault. Awaiting human review.",
     "CONNECTIVITY_ERROR":   "Transient network issue — the agent will retry the iFlow automatically.",
     "ADAPTER_CONFIG_ERROR": "iFlow receiver adapter is misconfigured (HTTP 4xx) — agent is fixing the endpoint URL, method, or headers.",
     "BACKEND_ERROR":        "Backend service returned HTTP 5xx — the iFlow is working correctly. Backend team must investigate and restore the service.",
     "SFTP_ERROR":           "SFTP server-side issue — verify the target directory exists and the SFTP user has write/read access. Re-trigger the iFlow once resolved.",
+    "DUPLICATE_ERROR":      "Duplicate record rejected by backend — idempotency issue requires backend or source-system fix. A ticket has been created.",
+    "PAYLOAD_SIZE_ERROR":   "Message payload exceeds size limit — splitting or infrastructure change required. A ticket has been created.",
     "UNKNOWN_ERROR":        "Error could not be classified automatically — awaiting human review before any fix is applied.",
 }
 
@@ -149,9 +157,23 @@ FALLBACK_FIX_BY_ERROR_TYPE: Dict[str, str] = {
         "Apply as a property-level change on the existing step — do NOT add new structural components. "
         "Call validate_iflow_xml, then update-iflow, then deploy-iflow."
     ),
+    "SSL_ERROR": (
+        "SSL/TLS certificate errors cannot be fixed by changing iFlow XML. "
+        "Required actions: (1) renew the expired certificate, "
+        "(2) update the trust store in SAP BTP, "
+        "(3) verify the certificate chain is complete. "
+        "A support ticket has been created."
+    ),
+    "AUTH_CONFIG_ERROR": (
+        "Locate the receiver adapter in the iFlow XML. "
+        "Find the <ifl:property name='credentialName'> or equivalent security material reference. "
+        "Update the credential alias value to match the correct alias in BTP Security Material. "
+        "Call validate_iflow_xml, then update-iflow, then deploy-iflow."
+    ),
     "AUTH_ERROR": (
-        "Verify the credential alias, OAuth configuration, certificates, and security material used by the receiver "
-        "adapter. Refresh expired credentials or certificates, update the adapter config, and redeploy."
+        "Authentication failure — could not determine from the error message whether the issue "
+        "is a wrong credential alias in the iFlow (fixable) or expired/invalid credentials (infra). "
+        "Human review required before any fix is applied."
     ),
     "ADAPTER_CONFIG_ERROR": (
         "The iFlow is sending a malformed or incorrect request (HTTP 4xx). "
@@ -173,6 +195,19 @@ FALLBACK_FIX_BY_ERROR_TYPE: Dict[str, str] = {
         "(2) create any missing directories on the SFTP server, "
         "(3) confirm the SFTP user has write permission to the target path. "
         "Once the server-side issue is resolved, re-trigger the iFlow manually."
+    ),
+    "DUPLICATE_ERROR": (
+        "Duplicate record errors are caused by idempotency issues in the backend or source system. "
+        "The iFlow cannot resolve duplicate keys — the backend team must handle deduplication. "
+        "A support ticket has been created."
+    ),
+    "PAYLOAD_SIZE_ERROR": (
+        "The message payload exceeds the configured size limit. "
+        "This cannot be fixed by editing iFlow XML — options are: "
+        "(1) split the payload in a preceding system, "
+        "(2) request a limit increase from the backend team, "
+        "(3) implement pagination in the source. "
+        "A support ticket has been created."
     ),
     "UNKNOWN_ERROR": (
         "Inspect the message processing log, identify the failing iFlow component, correct the relevant step "
@@ -371,12 +406,27 @@ ERROR_TYPE_FIX_GUIDANCE: Dict[str, str] = {
         "- If XSD files are referenced, verify the XSD structure still matches the mapping.\n"
         "- Update field names, re-link structures, and validate before deploying."
     ),
+    "SSL_ERROR": (
+        "=== SSL_ERROR GUIDANCE ===\n"
+        "- SSL/TLS certificate errors CANNOT be resolved by editing iFlow XML.\n"
+        "- The certificate is expired, the trust store is missing the CA, or the chain is broken.\n"
+        "- Required actions: renew the certificate, update the SAP BTP trust store, verify the chain.\n"
+        "- Escalate to the infra/security team — do NOT attempt an iFlow fix."
+    ),
+    "AUTH_CONFIG_ERROR": (
+        "=== AUTH_CONFIG_ERROR GUIDANCE ===\n"
+        "- The credential alias or security material reference inside the iFlow adapter is wrong.\n"
+        "- Open the receiver adapter in the iFlow XML and find the credentialName / security material property.\n"
+        "- Update the alias value to match the correct entry in BTP Security Material.\n"
+        "- Do NOT hardcode credentials — use the alias name only.\n"
+        "- Validate with validate_iflow_xml, then update-iflow, then deploy-iflow."
+    ),
     "AUTH_ERROR": (
         "=== AUTH_ERROR GUIDANCE ===\n"
-        "- Inspect the receiver adapter's security configuration (credential alias, OAuth, certificate).\n"
-        "- Look for expired tokens, wrong credential alias names, or missing security material.\n"
-        "- Update the credential alias or adapter config — do NOT hardcode credentials.\n"
-        "- Redeploy after fixing the security configuration."
+        "- Authentication failed but the root cause is ambiguous (could be iFlow config or actual credentials).\n"
+        "- If the error references a specific credential alias → treat as AUTH_CONFIG_ERROR and fix the alias.\n"
+        "- If the error mentions expired token / wrong password → escalate; credentials must be refreshed in BTP.\n"
+        "- Do NOT attempt an iFlow fix without confirming the credential alias is the issue."
     ),
     "DATA_VALIDATION": (
         "=== DATA_VALIDATION GUIDANCE ===\n"
@@ -405,7 +455,74 @@ ERROR_TYPE_FIX_GUIDANCE: Dict[str, str] = {
         "The proposed_fix may describe structural changes as conceptual guidance — "
         "implement ONLY the adapter property portion, skip any 'add Router' or 'add Exception Subprocess' instructions."
     ),
+    "DUPLICATE_ERROR": (
+        "=== DUPLICATE_ERROR GUIDANCE ===\n"
+        "- The backend rejected the message because a record with the same key already exists.\n"
+        "- This is an idempotency / deduplication issue in the backend or source system.\n"
+        "- iFlow XML changes CANNOT resolve duplicate key violations.\n"
+        "- Escalate to the backend/source-system team to handle deduplication logic."
+    ),
+    "PAYLOAD_SIZE_ERROR": (
+        "=== PAYLOAD_SIZE_ERROR GUIDANCE ===\n"
+        "- The message payload exceeds the size limit of the backend or CPI runtime.\n"
+        "- iFlow XML changes CANNOT increase system size limits.\n"
+        "- Options: split the payload at the source, implement pagination, or request a limit increase.\n"
+        "- Escalate to the integration architect or backend team."
+    ),
 }
+
+FIX_OPERATION_PROMPT_TEMPLATE = """
+YOU ARE AN SAP CPI DIAGNOSIS AGENT.
+Your ONLY job: read the iFlow XML below and return a structured fix operation.
+DO NOT call update-iflow or deploy-iflow. The fix will be applied programmatically.
+
+=== INCIDENT CONTEXT ===
+iFlow ID:          {iflow_id}
+Error Type:        {error_type}
+Raw SAP Error:     {error_message}
+RCA — Root Cause:  {root_cause}
+RCA — Fix Spec:    {proposed_fix}
+Affected Component:{affected_component}
+{pattern_history}
+{sap_notes}
+{error_type_guidance}
+
+=== iFlow XML (pre-fetched — do NOT call get-iflow unless XML is missing below) ===
+{original_xml}
+
+=== YOUR TASK ===
+1. Read the XML above.
+2. Identify the minimal change needed to resolve the error.
+3. Return EXACTLY ONE JSON object or array — no markdown, no preamble, no extra text.
+
+Option A — update an existing property value (most common):
+{{"change_type": "update_property", "target_component": "<exact id= from XML>",
+  "field": "<exact <key> text>", "old_value": "<current value — copy exactly>", "new_value": "<corrected value>"}}
+
+Option B — add a missing property:
+{{"change_type": "add_property", "target_component": "<exact id= from XML>",
+  "field": "<key to add>", "old_value": "", "new_value": "<value>"}}
+
+Option C — update an XML attribute on the element itself:
+{{"change_type": "update_attribute", "target_component": "<exact id= from XML>",
+  "field": "<attribute name>", "old_value": "<current value>", "new_value": "<corrected value>"}}
+
+Option D — XPath / Groovy expression inside a property (same as A but explicit):
+{{"change_type": "update_expression", "target_component": "<exact id= from XML>",
+  "field": "<property key>", "old_value": "<current expression — copy exactly>", "new_value": "<corrected expression>"}}
+
+Option E — structural change required (add/remove steps, new channels):
+{{"change_type": "structural", "target_component": "", "field": "", "old_value": "", "new_value": "",
+  "reason": "<why structural change is needed>"}}
+
+For multiple changes: return a JSON array [{{}}, {{}}]
+
+CRITICAL:
+- target_component MUST be the exact id= attribute value from the XML (e.g. "ReceiverHTTP_1")
+- old_value MUST be copied verbatim from the XML — do NOT paraphrase
+- If you cannot find the exact component or confirm the field, return change_type="structural"
+- Return ONLY JSON — no explanation, no markdown fences
+"""
 
 FIX_AND_DEPLOY_PROMPT_TEMPLATE = """
 YOU ARE A SAP CPI SELF-HEALING AGENT. Fix and deploy the broken iFlow described below.
@@ -478,6 +595,7 @@ STEP 1: Call get-iflow tool with iFlow ID: "{iflow_id}"
          c. For each component, note: its type, its ID, and what it is configured to do.
          d. Identify which specific component is most likely responsible for the error,
             based on the error type "{error_type}" and affected component "{affected_component}".
+{targeted_component_hint}
          e. Read that component's current configuration in the XML carefully.
          Only proceed to STEP 1.5 (or STEP 2 if skipped) after completing this analysis.
 
@@ -496,6 +614,7 @@ STEP 1.5 — PAYLOAD INSPECTION (run this step if the error involves XPath, Groo
 
 STEP 2: Based on your iFlow analysis from STEP 1 and the RCA diagnosis above,
          determine the minimal, precise XML change needed to fix the error.
+{targeted_component_hint}
          Apply ONLY that change, then call update-iflow with the modified iFlow.
          → CRITICAL: The 'filepath' in the files array MUST be the EXACT path of the .iflw file
            as it appeared in the get-iflow response (e.g. "src/main/resources/scenarioflows/

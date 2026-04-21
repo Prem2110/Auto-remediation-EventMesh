@@ -54,15 +54,29 @@ class ClassifierAgent:
         if "permission denied" in msg and any(k in msg for k in ["sftp", "ssh", "ftp"]):
             return {"error_type": "SFTP_ERROR", "confidence": 0.92, "tags": ["sftp", "filesystem"]}
 
-        # ── Auth / cert — before numeric HTTP code checks ──
+        # ── SSL / TLS — before AUTH; cert renewal is infra, not an iFlow change ──
+        if any(k in msg for k in [
+            "ssl handshake", "tls handshake", "sslhandshakeexception",
+            "pkix path", "certificate expired", "certificate has expired",
+            "handshake_failure", "ssl alert", "sslexception",
+        ]):
+            return {"error_type": "SSL_ERROR", "confidence": 0.93, "tags": ["ssl", "cert"]}
+
+        # ── Auth config inside iFlow — wrong credential alias / security material ref ──
+        if any(k in msg for k in [
+            "credential alias", "no security artifact", "security material not found",
+            "credential reference", "security material", "no credential",
+        ]):
+            return {"error_type": "AUTH_CONFIG_ERROR", "confidence": 0.91, "tags": ["auth", "config"]}
+
+        # ── Auth / credential — ambiguous; route to APPROVAL not AUTO_FIX ──
         if any(k in msg for k in [
             "unauthorized", "invalid credentials", "credential",
-            "certificate", "ssl handshake", "tls handshake",
             "token expired", "access token", "oauth",
         ]):
-            return {"error_type": "AUTH_ERROR", "confidence": 0.93, "tags": ["auth", "cert"]}
+            return {"error_type": "AUTH_ERROR", "confidence": 0.93, "tags": ["auth"]}
         if any(k in msg for k in ["401", "403"]) and not any(k in msg for k in ["sftp", "ssh"]):
-            return {"error_type": "AUTH_ERROR", "confidence": 0.91, "tags": ["auth", "cert"]}
+            return {"error_type": "AUTH_ERROR", "confidence": 0.91, "tags": ["auth"]}
 
         # ── Mapping / schema ──
         if any(k in msg for k in [
@@ -109,11 +123,28 @@ class ClassifierAgent:
         ]):
             return {"error_type": "ADAPTER_CONFIG_ERROR", "confidence": 0.83, "tags": ["adapter", "4xx"]}
 
+        # ── Duplicate / idempotency ──
+        if any(k in msg for k in [
+            "duplicate entry", "record already exists", "duplicate key",
+            "already processed", "idempotency", "unique constraint",
+            "duplicate record", "violates unique",
+        ]):
+            return {"error_type": "DUPLICATE_ERROR", "confidence": 0.88, "tags": ["duplicate", "idempotency"]}
+
+        # ── Payload too large ──
+        if any(k in msg for k in [
+            "413", "payload too large", "request entity too large",
+            "message size", "size limit exceeded", "content too large",
+        ]):
+            return {"error_type": "PAYLOAD_SIZE_ERROR", "confidence": 0.88, "tags": ["payload", "size"]}
+
         # ── Weak signals — broad keywords last ──
         if any(k in msg for k in ["mapping", "field", "structure"]):
             return {"error_type": "MAPPING_ERROR", "confidence": 0.72, "tags": ["mapping", "schema"]}
-        if any(k in msg for k in ["expired", "ssl", "tls"]):
-            return {"error_type": "AUTH_ERROR", "confidence": 0.70, "tags": ["auth", "cert"]}
+        if any(k in msg for k in ["expired", "tls"]):
+            return {"error_type": "AUTH_ERROR", "confidence": 0.70, "tags": ["auth"]}
+        if "ssl" in msg:
+            return {"error_type": "SSL_ERROR", "confidence": 0.70, "tags": ["ssl", "cert"]}
 
         return {"error_type": "UNKNOWN_ERROR", "confidence": 0.50, "tags": []}
 
@@ -159,10 +190,37 @@ class ClassifierAgent:
                 f"Payload validation failed because required or type-safe input data is missing "
                 f"or invalid. Error: {error_message}"
             )
+        if error_type == "SSL_ERROR":
+            return (
+                f"SSL/TLS handshake or certificate validation failed. "
+                f"The certificate may be expired or the trust store is misconfigured — "
+                f"this requires infra/certificate renewal, not an iFlow change. "
+                f"Error: {error_message}"
+            )
+        if error_type == "AUTH_CONFIG_ERROR":
+            return (
+                f"The credential alias or security material reference inside the iFlow adapter "
+                f"is incorrect or missing. Update the credential alias in the receiver adapter "
+                f"configuration and redeploy. "
+                f"Error: {error_message}"
+            )
         if error_type == "AUTH_ERROR":
             return (
-                f"Authentication or certificate configuration is invalid or expired for the "
-                f"target connection. Error: {error_message}"
+                f"Authentication failed — could not determine whether the issue is a wrong "
+                f"credential alias in the iFlow (fixable) or expired/invalid credentials (infra). "
+                f"Human review required. Error: {error_message}"
+            )
+        if error_type == "DUPLICATE_ERROR":
+            return (
+                f"The backend rejected the message because an identical record already exists. "
+                f"This is an idempotency issue — the iFlow cannot resolve duplicate records. "
+                f"Error: {error_message}"
+            )
+        if error_type == "PAYLOAD_SIZE_ERROR":
+            return (
+                f"The message payload exceeds the size limit accepted by the backend or CPI runtime. "
+                f"Splitting the payload or increasing backend limits requires design changes beyond iFlow XML. "
+                f"Error: {error_message}"
             )
         if error_type == "ADAPTER_CONFIG_ERROR":
             return (
@@ -295,8 +353,10 @@ class ClassifierAgent:
                 tools.append(get_iflow_tool)
 
         system_prompt = (
-            "You classify SAP CPI errors into: MAPPING_ERROR, DATA_VALIDATION, AUTH_ERROR, "
-            "CONNECTIVITY_ERROR, ADAPTER_CONFIG_ERROR, BACKEND_ERROR, SFTP_ERROR, UNKNOWN_ERROR. "
+            "You classify SAP CPI errors into: MAPPING_ERROR, DATA_VALIDATION, "
+            "SSL_ERROR, AUTH_CONFIG_ERROR, AUTH_ERROR, "
+            "CONNECTIVITY_ERROR, ADAPTER_CONFIG_ERROR, BACKEND_ERROR, "
+            "SFTP_ERROR, DUPLICATE_ERROR, PAYLOAD_SIZE_ERROR, UNKNOWN_ERROR. "
             "Use lookup_error_pattern for a fast rule-based baseline, search_similar_past_errors "
             "for historical context, and get-iflow only if the error message alone is ambiguous. "
             "Return structured JSON: {\"error_type\": \"...\", \"confidence\": 0.0, \"tags\": []}."

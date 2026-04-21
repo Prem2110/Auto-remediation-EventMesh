@@ -8,7 +8,9 @@
       "Bash(python -c \"from db.database import get_escalation_tickets; print\\('OK'\\)\")",
       "Bash(python -c \"import main\")",
       "Bash(echo \"Exit: $?\")",
-      "Bash(netstat -ano)"
+      "Bash(netstat -ano)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('core/xml_patcher.py'\\).read\\(\\)\\); ast.parse\\(open\\('agents/fix_agent.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/constants.py'\\).read\\(\\)\\); print\\('All 3 files parse OK'\\)\")"
     ]
   }
 }

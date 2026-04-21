@@ -389,7 +389,7 @@ class ObserverAgent:
 
         system_prompt = (
             "You are an SAP CPI monitoring agent. "
-            f"Use fetch_failed_messages to consume new failures from the AEM queue "
+            f"Use fetch_failed_messages to consume new failures from the Event mesh queue "
             f"'{_AEM_OBSERVER_QUEUE}'. If the queue is empty the tool returns a WARNING — "
             "report it and do not proceed further. "
             "Mark each consumed incident with mark_incident_in_progress. "

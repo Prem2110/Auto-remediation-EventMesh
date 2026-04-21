@@ -35,9 +35,11 @@ from core.constants import (
     CPI_IFLOW_XML_PATTERNS,
     ERROR_TYPE_FIX_GUIDANCE,
     FIX_AND_DEPLOY_PROMPT_TEMPLATE,
+    FIX_OPERATION_PROMPT_TEMPLATE,
     GROOVY_STRIPE_HTTP_ADAPTER,
     GROOVY_WOOCOMMERCE_HTTP_ADAPTER,
 )
+from core.xml_patcher import PatcherError, apply_fix_operations
 from core.validators import _extract_iflow_file, _fix_ctx
 from db.database import get_similar_patterns
 from utils.utils import get_hana_timestamp
@@ -56,9 +58,10 @@ class FixAgent:
     """
 
     def __init__(self, mcp, error_fetcher=None):
-        self._mcp          = mcp
-        self.error_fetcher = error_fetcher   # SAPErrorFetcher, injected after construction
-        self._agent        = None            # filtered agent (fix tools only)
+        self._mcp               = mcp
+        self.error_fetcher      = error_fetcher   # SAPErrorFetcher, injected after construction
+        self._agent             = None            # filtered agent (fix tools only)
+        self._diagnosis_agent   = None            # read-only agent for structured fix operations
 
     def set_error_fetcher(self, error_fetcher) -> None:
         self.error_fetcher = error_fetcher
@@ -104,8 +107,6 @@ CRITICAL — execute these steps IN ORDER for every fix task:
 5. Call deploy-iflow — MANDATORY after every successful update. NEVER stop after update.
 
 Must do:
-- Use this script for Stripe Groovy: {GROOVY_STRIPE_HTTP_ADAPTER}
-- Use this script for WooCommerce Groovy: {GROOVY_WOOCOMMERCE_HTTP_ADAPTER}
 - Report actual tool responses — never fabricate success.
 - Return structured JSON at the end:
   {{"fix_applied": true/false, "deploy_success": true/false, "summary": "..."}}
@@ -115,8 +116,24 @@ Must do:
             system_prompt=system_prompt,
             deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or None,
         )
+
+        # Diagnosis-only agent: get-iflow only (no update/deploy).
+        # Used in Phase 1 to derive a structured operation JSON from the iFlow XML.
+        _diag_tools = [t for t in [get_iflow_tool] if t]
+        if _diag_tools:
+            self._diagnosis_agent = await self._mcp.build_agent(
+                tools=_diag_tools,
+                system_prompt=(
+                    "You are a read-only SAP CPI iFlow analyser. "
+                    "You MAY call get-iflow if the XML is not in the prompt. "
+                    "Return ONLY a JSON fix operation — no markdown, no tool calls other than get-iflow."
+                ),
+                deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or None,
+            )
+
         logger.info(
-            "[Fix] Agent ready — 1 local @tool + %d MCP tools.", len(mcp_tools)
+            "[Fix] Agent ready — 1 local @tool + %d MCP tools (diagnosis_agent=%s).",
+            len(mcp_tools), self._diagnosis_agent is not None,
         )
 
     # ── tool output success detectors ────────────────────────────────────────
@@ -430,6 +447,145 @@ Must do:
             f"Check SAP CPI monitoring: {_SAP_TENANT}/itspaces/shell/monitor/messages"
         )
 
+    # ── _get_fix_operation ────────────────────────────────────────────────────
+
+    async def _get_fix_operation(
+        self,
+        iflow_id: str,
+        error_type: str,
+        error_message: str,
+        proposed_fix: str,
+        root_cause: str,
+        affected_component: str,
+        original_xml: str,
+        pattern_history: str,
+        sap_notes: str,
+        error_type_guidance: str,
+    ) -> List[Dict]:
+        """
+        Phase 1 — ask the diagnosis-only agent to return a structured fix operation.
+        The iFlow XML is injected directly so the agent rarely needs to call get-iflow.
+        Returns a list of operation dicts (may be empty if parsing fails).
+        """
+        agent = self._diagnosis_agent
+        if agent is None:
+            logger.debug("[FIX] No diagnosis agent — skipping structured path.")
+            return []
+
+        xml_snippet = (original_xml or "")[:10000]
+        prompt = FIX_OPERATION_PROMPT_TEMPLATE.format(
+            iflow_id=iflow_id,
+            error_type=error_type,
+            error_message=(error_message or "")[:500],
+            proposed_fix=proposed_fix or "",
+            root_cause=root_cause or "",
+            affected_component=affected_component or "",
+            original_xml=xml_snippet,
+            pattern_history=pattern_history or "",
+            sap_notes=sap_notes or "",
+            error_type_guidance=error_type_guidance or "",
+        )
+        try:
+            result = await asyncio.wait_for(
+                agent.ainvoke(
+                    {"messages": [{"role": "user", "content": prompt}]},
+                    config={"recursion_limit": 6},
+                ),
+                timeout=120.0,
+            )
+            final_msg = result["messages"][-1]
+            answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+            clean     = re.sub(r"```(?:json)?|```", "", answer).strip()
+            parsed    = json.loads(clean)
+            ops: List[Dict] = parsed if isinstance(parsed, list) else [parsed]
+            logger.info(
+                "[FIX] Structured operation(s) from diagnosis agent: %d op(s) for iflow=%s",
+                len(ops), iflow_id,
+            )
+            return ops
+        except asyncio.TimeoutError:
+            logger.warning("[FIX] Diagnosis agent timed out for iflow=%s — falling back.", iflow_id)
+        except Exception as exc:
+            logger.warning("[FIX] _get_fix_operation failed for iflow=%s: %s", iflow_id, exc)
+        return []
+
+    # ── _apply_structured_fix ─────────────────────────────────────────────────
+
+    async def _apply_structured_fix(
+        self,
+        iflow_id: str,
+        operations: List[Dict],
+        original_xml: str,
+        original_filepath: str,
+    ) -> Dict[str, Any]:
+        """
+        Phase 2 — apply the structured operations via the patcher, then call
+        update-iflow and deploy-iflow directly (no LLM free-XML rewriting).
+        Returns a result dict compatible with evaluate_fix_result output.
+        """
+        from core.validators import _check_iflow_xml  # noqa: PLC0415
+
+        # Apply all operations via the patcher
+        try:
+            patched_xml = apply_fix_operations(original_xml, operations)
+        except PatcherError as exc:
+            return {
+                "success": False, "fix_applied": False, "deploy_success": False,
+                "failed_stage": "patcher",
+                "summary": f"Structured patcher failed: {exc}",
+                "technical_details": str(exc),
+            }
+
+        # Validate patched XML before touching SAP
+        errors = _check_iflow_xml(original_xml, patched_xml)
+        if errors:
+            return {
+                "success": False, "fix_applied": False, "deploy_success": False,
+                "failed_stage": "validation",
+                "summary": f"Patched XML failed structural validation: {errors[0]}",
+                "technical_details": " | ".join(errors),
+            }
+
+        # Call update-iflow directly
+        update_result = await self._mcp.execute_integration_tool(
+            "update-iflow",
+            {"id": iflow_id, "files": [{"filepath": original_filepath, "content": patched_xml}]},
+        )
+        update_out = str(update_result.get("output", ""))
+        if not self._update_succeeded(update_out):
+            return {
+                "success": False, "fix_applied": False, "deploy_success": False,
+                "failed_stage": "update",
+                "summary": f"update-iflow failed after structured patch: {update_out[:200]}",
+                "technical_details": update_out,
+            }
+
+        # Call deploy-iflow directly
+        deploy_result = await self._mcp.execute_integration_tool(
+            "deploy-iflow", {"id": iflow_id}
+        )
+        deploy_out = str(deploy_result.get("output", ""))
+        deploy_ok  = self._deploy_succeeded(deploy_out)
+
+        op_summary = "; ".join(
+            f"{op.get('change_type')} '{op.get('field')}' on '{op.get('target_component')}'"
+            for op in operations
+        )
+        if deploy_ok:
+            logger.info("[FIX] Structured fix succeeded: iflow=%s ops=[%s]", iflow_id, op_summary)
+            return {
+                "success": True, "fix_applied": True, "deploy_success": True,
+                "failed_stage": None,
+                "summary": f"Structured fix applied and deployed. Changes: {op_summary}",
+                "technical_details": op_summary,
+            }
+        return {
+            "success": False, "fix_applied": True, "deploy_success": False,
+            "failed_stage": "deploy",
+            "summary": f"Patch applied but deploy failed: {deploy_out[:200]}",
+            "technical_details": deploy_out,
+        }
+
     # ── ask_fix_and_deploy ────────────────────────────────────────────────────
 
     async def ask_fix_and_deploy(
@@ -490,32 +646,14 @@ Must do:
             logger.info("[FIX_DEPLOY] Vector store returned %d SAP note(s) for iflow=%s", len(_notes), iflow_id)
 
         error_type_guidance = ERROR_TYPE_FIX_GUIDANCE.get(error_type or "", "")
-        prompt = FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
-            iflow_id=iflow_id,
-            error_type=error_type or "UNKNOWN",
-            error_message=(error_message or "")[:500],
-            message_guid=message_guid or "N/A",
-            root_cause=root_cause or error_message,
-            proposed_fix=proposed_fix or f"Investigate and fix the error: {error_message}",
-            affected_component=affected_component or "unknown",
-            pattern_history=pattern_history,
-            sap_notes=sap_notes,
-            error_type_guidance=error_type_guidance,
-            groovy_rules=CPI_IFLOW_GROOVY_RULES,
-            iflow_xml_patterns=CPI_IFLOW_XML_PATTERNS,
-        )
-        messages  = [{"role": "user", "content": prompt}]
-        tracker   = TestExecutionTracker(user_id, f"fix:{iflow_id}", timestamp)
-        logger_cb = StepLogger(tracker, progress_fn=progress_fn)
 
-        # Capture original iFlow XML for rollback AND set _fix_ctx for the validator.
-        # This ensures validate_before_update_iflow has the snapshot even on the /query path.
+        # ── Pre-fetch iFlow XML: shared by patcher, validator, and rollback ──
         _original_xml: Optional[str] = None
         _original_filepath: Optional[str] = None
         try:
             _get_result = await self._mcp.execute_integration_tool("get-iflow", {"id": iflow_id})
             if _get_result.get("success"):
-                _out = _get_result.get("output", "")
+                _out     = _get_result.get("output", "")
                 _out_str = _out if isinstance(_out, str) else json.dumps(_out)
                 _fp, _xml = _extract_iflow_file(_out_str)
                 if _fp and _xml:
@@ -530,6 +668,65 @@ Must do:
                     _original_xml = _out_str
         except Exception as _pre_exc:
             logger.debug("[FIX_DEPLOY] Pre-fetch for rollback/snapshot failed (non-fatal): %s", _pre_exc)
+
+        # ── PHASE 1: Structured fix path (programmatic XML surgery) ─────────
+        if _original_xml and _original_filepath:
+            _operations   = await self._get_fix_operation(
+                iflow_id=iflow_id,
+                error_type=error_type or "UNKNOWN",
+                error_message=error_message or "",
+                proposed_fix=proposed_fix or "",
+                root_cause=root_cause or "",
+                affected_component=affected_component or "",
+                original_xml=_original_xml,
+                pattern_history=pattern_history,
+                sap_notes=sap_notes,
+                error_type_guidance=error_type_guidance,
+            )
+            _is_structural = any(op.get("change_type") == "structural" for op in _operations)
+            if _operations and not _is_structural:
+                _struct_result = await self._apply_structured_fix(
+                    iflow_id=iflow_id,
+                    operations=_operations,
+                    original_xml=_original_xml,
+                    original_filepath=_original_filepath,
+                )
+                if _struct_result.get("success"):
+                    self._mcp.update_memory(session_id, f"Fix {iflow_id}", _struct_result["summary"])
+                    logger.info("[FIX] Structured path succeeded: iflow=%s", iflow_id)
+                    return {**_struct_result, "steps": []}
+                logger.warning(
+                    "[FIX] Structured path failed (stage=%s) — falling back to free-XML agent: %s",
+                    _struct_result.get("failed_stage"), _struct_result.get("summary"),
+                )
+
+        # ── PHASE 2: Free-XML fallback (LLM rewrites full XML) ──────────────
+        _comp = (affected_component or "").strip()
+        targeted_component_hint = (
+            f'            → CONFIRMED failing component: "{_comp}"\n'
+            f'              Search for id="{_comp}" in the XML and go directly to this step.\n'
+            f"              Limit your change to this component — do not modify anything else."
+            if _comp and _comp.lower() != "unknown"
+            else "            → No specific component confirmed — infer from error type and iFlow structure."
+        )
+        prompt = FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
+            iflow_id=iflow_id,
+            error_type=error_type or "UNKNOWN",
+            error_message=(error_message or "")[:500],
+            message_guid=message_guid or "N/A",
+            root_cause=root_cause or error_message,
+            proposed_fix=proposed_fix or f"Investigate and fix the error: {error_message}",
+            affected_component=affected_component or "unknown",
+            targeted_component_hint=targeted_component_hint,
+            pattern_history=pattern_history,
+            sap_notes=sap_notes,
+            error_type_guidance=error_type_guidance,
+            groovy_rules=CPI_IFLOW_GROOVY_RULES,
+            iflow_xml_patterns=CPI_IFLOW_XML_PATTERNS,
+        )
+        messages  = [{"role": "user", "content": prompt}]
+        tracker   = TestExecutionTracker(user_id, f"fix:{iflow_id}", timestamp)
+        logger_cb = StepLogger(tracker, progress_fn=progress_fn)
 
         result: Optional[Dict] = None
         for attempt in range(3):
