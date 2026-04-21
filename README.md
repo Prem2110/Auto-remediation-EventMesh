@@ -1,11 +1,11 @@
 # SAP CPI Self-Healing Agent
 
-[![Python Version](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688.svg)](https://fastapi.tiangolo.com/)
 [![LangChain](https://img.shields.io/badge/LangChain-0.3%2B-brightgreen.svg)](https://langchain.com/)
 [![HANA Cloud](https://img.shields.io/badge/SAP%20HANA-Cloud-blue.svg)](https://www.sap.com/products/technology-platform/hana.html)
 
-An intelligent, autonomous SAP Cloud Platform Integration (CPI) monitoring and self-healing system powered by AI. The system automatically detects failed integration messages via **Solace PubSub+ AEM queue** or direct SAP CPI polling, performs AI-driven Root Cause Analysis through a **multi-agent pipeline**, and applies fixes to iFlows — with no manual intervention required.
+An intelligent, autonomous SAP Cloud Platform Integration (CPI) monitoring and self-healing system powered by AI. The system automatically detects failed integration messages via **SAP Advanced Event Mesh (AEM) REST Delivery** or direct SAP CPI polling, performs AI-driven Root Cause Analysis through a **multi-agent pipeline**, and applies fixes to iFlows — with no manual intervention required.
 
 ---
 
@@ -26,7 +26,7 @@ uv run python vectorize_docs.py
 # 4. Start the server (development — hot reload)
 APP_ENV=development uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 
-# 4. Start the server (production)
+# 5. Start the server (production)
 uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
@@ -38,9 +38,9 @@ API docs: `http://localhost:8080/docs`
 
 ### Core Capabilities
 
-- **Autonomous Error Detection** — Receives failed CPI messages in real-time from Solace PubSub+ AEM queue (`FailedLogscapturing_Schedule` iFlow → AEM → self-healing agent). Falls back to direct SAP CPI polling when AEM is disabled
-- **SAP Multimap XML Parsing** — Parses the SAP CPI multimap XML format (`<multimap:Messages><multimap:Message1><Error>…</Error></multimap:Message1></multimap:Messages>`). One Solace message may contain N `<Error>` blocks — each is split into an independent incident
-- **OData iFlow Name Resolution** — Extracts the MPL ID (GUID) from each `<Error>` block and calls `GET /api/v1/MessageProcessingLogs('{guid}')` to resolve `IntegrationFlowName`, `Sender`, `Receiver`, `LogStart`, `LogEnd`
+- **Autonomous Error Detection** — Receives failed CPI events via SAP AEM REST Delivery webhook (`POST /aem/events`). Falls back to direct SAP CPI OData polling when AEM is disabled
+- **SAP AEM Event Bus** — In-process publish/subscribe bus with dual-mode operation: pure in-memory (default, no external dependency) or REST delivery to SAP AEM. Pipeline stages emit events on canonical topics (`sap/cpi/remediation/{stage}/{incident_id}`)
+- **OData iFlow Name Resolution** — Extracts the MPL ID (GUID) from each error and calls `GET /api/v1/MessageProcessingLogs('{guid}')` to resolve `IntegrationFlowName`, `Sender`, `Receiver`, `LogStart`, `LogEnd`
 - **Multi-Agent Pipeline** — Dedicated specialist agents (Observer → Classifier → RCA → Fix → Verifier) coordinated by an OrchestratorAgent; each agent has its own filtered tool set and LLM deployment
 - **AI Root Cause Analysis (RCA)** — LangChain agent analyses errors using message logs, actual iFlow configuration (`get-iflow`), top-5 SAP notes from vector store, HANA knowledge base, and rule-based classifier with priority-ordered keyword matching
 - **Self-Healing Fix Pipeline** — Downloads iFlow config, applies a reasoned fix, updates and deploys — with automatic unlock handling, 600 s agent timeout, per-stage failure diagnosis, and retry logic
@@ -53,7 +53,7 @@ API docs: `http://localhost:8080/docs`
 - **Live Fix Progress** — In-memory step tracker provides granular pipeline progress without HANA polling
 - **Locked Artifact Handling** — Automatic unlock via DELETE /checkout, POST /CancelCheckout, MCP unlock tools
 - **Recurring Incident Correlation** — Deduplicates by signature and resumes fix flow for recurring failures
-- **iFlow Rollback** — Restore iFlow to pre-fix snapshot via `update-iflow` + `deploy-iflow`
+- **Runtime Auto-Fix Toggle** — Enable/disable autonomous fixing at runtime via API without service restart
 - **Dashboard + Observability** — React frontend with Dashboard, Observability, Pipeline, Orchestrator, Agent Cards, Test Suite, Migration Wizard, and PiPo List tabs
 
 ---
@@ -72,7 +72,7 @@ API docs: `http://localhost:8080/docs`
 │                               │                                           │
 │   ┌───────────────────────────▼──────────────────────────────────────┐  │
 │   │                      OrchestratorAgent                            │  │
-│   │   Routes AEM messages → Classifier → RCA → Fix → Verifier        │  │
+│   │   Routes AEM events → Classifier → RCA → Fix → Verifier          │  │
 │   │   Manages autonomous loop, dedup, escalation, fix progress        │  │
 │   └──────┬──────────┬──────────┬──────────┬──────────────────────────┘  │
 │          │          │          │          │                               │
@@ -96,12 +96,13 @@ API docs: `http://localhost:8080/docs`
  └──────────────────┘  └──────────────┘  └──────────────────┘
 
 Inbound:
-┌────────────────────────────────────────────────┐
-│  Solace PubSub+ AEM Queue (wss://)             │
-│  FailedLogscapturing_Schedule → multimap XML   │
-│  Background receiver thread → asyncio.Queue   │
-│  → OrchestratorAgent._route_stage()           │
-└────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│  SAP Advanced Event Mesh (AEM) — REST Delivery         │
+│  POST /aem/events  ← AEM queue consumer pushes JSON    │
+│  event_bus.publish(topic, event)                        │
+│  → registered in-process handlers                       │
+│  → OrchestratorAgent.process_detected_error()          │
+└────────────────────────────────────────────────────────┘
 
 External Services:
 ┌──────────────────────┐  ┌───────────────────┐  ┌──────────────────────┐
@@ -117,7 +118,7 @@ External Services:
 
 | Agent | Role | Tool Set |
 |---|---|---|
-| `OrchestratorAgent` | Coordinates the full pipeline; drains AEM queue; manages dedup, escalation, circuit breaker | All specialist agents as LangChain `@tool` wrappers |
+| `OrchestratorAgent` | Coordinates the full pipeline; drains AEM event queue; manages dedup, escalation, circuit breaker | All specialist agents as LangChain `@tool` wrappers |
 | `ObserverAgent` | Holds `SAPErrorFetcher` for OData metadata calls; manages approval timeouts | CPI OData API via `error_fetcher` |
 | `ClassifierAgent` | Rule-based keyword classifier (priority-ordered) | No LLM — pure Python |
 | `RCAAgent` | Root cause analysis | `get-iflow`, `get_message_logs` (read-only MCP tools) + vector store |
@@ -132,17 +133,28 @@ External Services:
 | `mcp_testing` | Test execution, iFlow validation, test reports |
 | `documentation_mcp` | SAP standard docs, spec generation, templates |
 
+### AEM Event Bus
+
+The `aem/event_bus.py` module implements a dual-mode publish/subscribe bus:
+
+| Mode | When | Behaviour |
+|---|---|---|
+| In-memory (default) | `AEM_ENABLED=false` | `publish()` calls registered Python handlers directly — zero network I/O |
+| REST Delivery | `AEM_ENABLED=true` | `publish()` POSTs the event JSON to `AEM_REST_URL/{topic}` with Basic auth; in-process handlers also fire |
+
+Topic convention: `sap/cpi/remediation/{stage}/{incident_id}` where stage is one of `observed`, `classified`, `rca`, `fix`, `verified`.
+
 ---
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.13+
 - SAP BTP account with Integration Suite access
 - SAP AI Core deployment (LLM + `text-embedding-3-large` embedding model)
 - SAP HANA Cloud database instance
 - AWS S3 bucket (for file uploads and iFlow example storage)
 - The three MCP servers deployed and reachable
-- **Solace PubSub+ broker** (AEM) — required if `AEM_ENABLED=true`
+- **SAP Advanced Event Mesh** — required if `AEM_ENABLED=true` (REST Delivery Endpoint)
 - Playwright Chromium browser (for `scrape_sap_docs.py` utility only — not needed for the running app)
 
 ---
@@ -218,14 +230,12 @@ HANA_SCHEMA=your_schema
 HANA_TABLE_VECTOR=SAP_HELP_DOCS
 HANA_TABLE_SAP_DOCS=SAP_HELP_DOCS
 
-# ── AEM / Solace PubSub+ ── [REQUIRED if AEM_ENABLED=true] ───────────
-AEM_ENABLED=true                                 # false = use local in-process queue
-AEM_HOST=wss://your-broker.messaging.solace.cloud:443
-AEM_VPN=your-message-vpn
-AEM_USERNAME=your-solace-user
-AEM_PASSWORD=your-solace-password
-AEM_OBSERVER_QUEUE=sap.cpi.autofix.observer.out  # queue to consume from
-AEM_OBSERVER_TOPIC=sap/cpi/autofix/observer/out  # topic to publish stage events to
+# ── SAP Advanced Event Mesh (AEM) ── [REQUIRED if AEM_ENABLED=true] ──
+AEM_ENABLED=false               # true = forward events to AEM REST endpoint
+AEM_REST_URL=https://your-aem-broker/QUEUE/cpi-remediation
+AEM_USERNAME=your-aem-user
+AEM_PASSWORD=your-aem-password
+AEM_QUEUE_PREFIX=cpi-remediation   # queue name prefix for topic routing
 
 # ── AWS S3 Object Store ── [REQUIRED for file uploads & iFlow examples]
 BUCKET_NAME=your_bucket_name
@@ -307,15 +317,14 @@ API docs available at:
 
 ## BTP Cloud Foundry Deployment
 
-The project ships with all required CF deployment files.
+The project ships with CF deployment files.
 
 ### Files
 
 | File | Purpose |
 |---|---|
-| `manifest.yml` | `cf push` configuration — 2 GB memory, 1 instance, `uvicorn main:app --port $PORT` |
-| `Procfile` | CF startup command |
-| `runtime.txt` | Python 3.12 buildpack selection |
+| `Procfile` | CF startup command — `web: python main.py` |
+| `runtime.txt` | Python buildpack selection |
 | `.cfignore` | Excludes `.env`, `.venv/`, logs, stale files from push |
 | `requirements.txt` | Complete pip dependency list for CF Python buildpack |
 
@@ -329,7 +338,7 @@ cf target -o <your-org> -s <your-space>
 # Set all required environment variables (or use BTP Cockpit → Environment Variables)
 cf set-env sap-cpi-self-healing-agent HANA_HOST <value>
 cf set-env sap-cpi-self-healing-agent LLM_DEPLOYMENT_ID <value>
-# ... (all other vars from the manifest.yml env section)
+# ... (all other required vars from .env section above)
 
 # Deploy
 cf push
@@ -351,26 +360,28 @@ auto-remediation/
 ├── main.py                         # FastAPI app, lifespan, all HTTP endpoints
 ├── smart_monitoring.py             # /smart-monitoring/* router
 ├── smart_monitoring_dashboard.py   # /dashboard/* router
-├── generate_dashboard_pdf.py       # PDF report export
 │
 ├── agents/
 │   ├── base.py                     # Shared base classes (StepLogger, TestExecutionTracker)
 │   ├── classifier_agent.py         # Rule-based error classifier (no LLM)
 │   ├── observer_agent.py           # ObserverAgent + SAPErrorFetcher (OData calls)
-│   ├── orchestrator_agent.py       # Top-level coordinator — routes AEM messages through pipeline
+│   ├── orchestrator_agent.py       # Top-level coordinator — routes events through pipeline
 │   ├── rca_agent.py                # Root Cause Analysis (LLM + vector store)
 │   ├── fix_agent.py                # iFlow fix + deploy pipeline
-│   └── verifier_agent.py          # Post-fix testing + message replay
+│   └── verifier_agent.py           # Post-fix testing + message replay
 │
 ├── aem/
-│   ├── solace_client.py            # Solace PubSub+ wss:// client (async wrapper + receiver thread)
-│   └── event_bus.py                # In-process AEM event bus for webhook path
+│   └── event_bus.py                # Dual-mode AEM event bus (in-memory + REST delivery)
 │
 ├── core/
 │   ├── mcp_manager.py              # MultiMCP — connect, discover, execute, build_agent
 │   ├── constants.py                # All config constants, prompts, remediation policies
 │   ├── state.py                    # FIX_PROGRESS in-memory store
 │   └── validators.py               # iFlow XML validator (pre-update-iflow gate)
+│
+├── config/
+│   ├── config.py                   # Settings loaded from .env
+│   └── runtime_config.json         # Runtime-mutable config (e.g. auto-fix enabled flag)
 │
 ├── db/
 │   └── database.py                 # SAP HANA Cloud abstraction (all table CRUD)
@@ -383,7 +394,7 @@ auto-remediation/
 │   ├── utils.py                    # HANA timestamp helpers
 │   ├── logger_config.py            # Rotating file logger + stdout handler
 │   ├── vector_store.py             # HANA SAP_HELP_DOCS cosine similarity search
-│   └── xsd_handler.py             # XSD parsing and validation
+│   └── xsd_handler.py              # XSD parsing and validation
 │
 ├── frontend/                       # React + Vite frontend app
 │   └── src/pages/
@@ -399,12 +410,11 @@ auto-remediation/
 ├── rules/                          # Coding standards
 ├── scrape_sap_docs.py              # Playwright-based SAP Notes scraper (utility, not deployed)
 ├── vectorize_docs.py               # SAP_HELP_DOCS vectorization (utility, not deployed)
-├── manifest.yml                    # BTP CF deployment manifest
 ├── Procfile                        # CF startup command
-├── runtime.txt                     # Python 3.12 for CF buildpack
+├── runtime.txt                     # Python version for CF buildpack
 ├── .cfignore                       # CF push exclusions
 ├── requirements.txt                # Production pip dependencies
-├── pyproject.toml                  # Full dependency spec
+├── pyproject.toml                  # Full dependency spec (requires Python >=3.13)
 └── CLAUDE.md                       # Claude Code project instructions
 ```
 
@@ -419,44 +429,49 @@ FastAPI lifespan starts
   │
   ├─ DB schema migration (ensure_*_schema)
   ├─ All agents created and wired (observer ↔ orchestrator, error_fetcher → fix/verifier)
-  ├─ Solace client connected + receiver thread started (if AEM_ENABLED=true)
-  ├─ Orchestrator loop started immediately (UI shows "Running" from boot)
   │
   └─ _init_background() [async task]:
        ├─ mcp.connect() → discover_tools() → build_agent()
-       ├─ All specialist agents build in parallel
-       ├─ orchestrator.build_agent(observer=observer)
-       └─ AEM webhook subscription registered
-            │
-            └─ Agent ready — messages that arrived before this point
-               were buffered in solace_client._inbound and are now processed
+       ├─ All specialist agents build their filtered tool sets
+       ├─ If AUTONOMOUS_ENABLED=true → observer.start()
+       └─ Agent ready — incoming /aem/events webhook calls are queued
+                        and processed once the orchestrator is initialised
 ```
 
-### AEM Message Flow
+### AEM Event Flow (REST Delivery)
 
 ```
-SAP CPI FailedLogscapturing_Schedule iFlow
-  │  publishes SAP multimap XML to Solace queue
+SAP CPI or upstream system
+  │  publishes error event to AEM queue
   ▼
-Solace receiver thread (daemon)
-  │  polls queue every 1 s
-  │  get_payload_as_bytes() fallback for binary payloads
+SAP AEM REST Delivery
+  │  POSTs JSON to POST /aem/events
   ▼
-asyncio.Queue (solace_client._inbound, max 500)
+aem_webhook() handler
+  │  validates topic field
   ▼
-OrchestratorAgent._autonomous_loop()
-  │  drains up to 20 messages per tick
-  ▼
-_route_stage(message)
+event_bus.publish(topic, event)
   │
-  ├─ raw_body starts with "<"?  →  SAP multimap XML path
-  │    ├─ re.findall(<Error>…</Error>)  — N blocks
-  │    ├─ extract MPL ID GUID from each block text
-  │    ├─ OData: GET /MessageProcessingLogs('{guid}')
-  │    │         resolves IntegrationFlowName, Sender, Receiver
-  │    └─ process_detected_error(inc) × N
+  ├─ AEM_ENABLED=true  → POST to AEM_REST_URL/{topic}  (fire-and-forget)
   │
-  └─ JSON message  →  _normalize_aem_message()  →  process_detected_error()
+  └─ always → _dispatch_local()
+       │  calls all in-process handlers registered for topic
+       ▼
+  OrchestratorAgent handler
+       │
+       └─ process_detected_error(normalized_event)
+```
+
+### Autonomous Polling Flow (AEM_ENABLED=false)
+
+```
+ObserverAgent._poll_loop() [runs every POLL_INTERVAL_SECONDS]
+  │
+  ├─ fetch_failed_messages()        — OData: MessageProcessingLogs?$filter=Status eq 'FAILED'
+  ├─ dedupe_raw_failed_messages()   — burst dedup by signature + window
+  ├─ fetch_error_details(guid)      — OData: per-message detail + error text
+  ├─ normalize()                    — standard incident dict
+  └─ orchestrator.process_detected_error(normalized) × N
 ```
 
 ### RCA Engine
@@ -536,12 +551,20 @@ Error detected → process_detected_error()
 | `POST` | `/query` | Chat with fix-intent detection (supports file uploads) |
 | `POST` | `/fix` | Direct iFlow fix by iflow_id + error message |
 | `GET` | `/get_all_history` | Query history for a user |
+| `GET` | `/get_testsuite_logs` | Test suite log entries for a user |
+
+### AEM Webhook
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/aem/events` | SAP AEM REST Delivery entry point — dispatches event to all registered in-process handlers |
 
 ### Smart Monitoring
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/smart-monitoring/messages` | List failed CPI messages |
+| `GET` | `/smart-monitoring/messages` | List failed CPI messages (filterable) |
+| `GET` | `/smart-monitoring/messages/paginated` | List failed CPI messages with cursor-based pagination |
 | `GET` | `/smart-monitoring/messages/{guid}` | Full detail (6 tabs) for one message |
 | `POST` | `/smart-monitoring/messages/{guid}/analyze` | Trigger AI RCA (returns 503 if agents still init) |
 | `POST` | `/smart-monitoring/messages/{guid}/apply_fix` | Apply and deploy fix |
@@ -571,21 +594,31 @@ Error detected → process_detected_error()
 | `POST` | `/autonomous/start` | Start autonomous monitoring loop |
 | `POST` | `/autonomous/stop` | Stop loop |
 | `GET` | `/autonomous/status` | Loop status and config |
-| `GET` | `/autonomous/incidents` | All incidents (optional status filter) |
+| `GET` | `/autonomous/incidents` | All incidents (optional `?status=` filter) |
 | `GET` | `/autonomous/incidents/{id}` | Incident detail by ID or message GUID |
 | `GET` | `/autonomous/incidents/{id}/view_model` | Enriched incident view with OData metadata |
+| `GET` | `/autonomous/incidents/{id}/fix_progress` | In-memory fix progress for an incident |
+| `GET` | `/autonomous/incidents/{id}/fix_patterns` | Matched historical fix patterns for an incident |
 | `POST` | `/autonomous/incidents/{id}/approve` | Approve or reject a pending fix |
-| `POST` | `/autonomous/incidents/{id}/generate_fix` | Generate and apply fix |
+| `POST` | `/autonomous/incidents/{id}/generate_fix` | Generate and apply fix (sync or background) |
+| `POST` | `/autonomous/incidents/{id}/retry_rca` | Re-run RCA for an incident |
+| `GET` | `/autonomous/pending_approvals` | List all incidents awaiting human approval |
 | `POST` | `/autonomous/manual_trigger` | Manual one-shot error polling |
 | `POST` | `/autonomous/test_incident` | Inject synthetic test incident |
-| `GET` | `/autonomous/tools` | List all loaded MCP tools |
+| `GET` | `/autonomous/tools` | List all loaded MCP tools (optional `?server=` filter) |
+| `GET` | `/autonomous/cpi/errors` | Combined CPI error inventory (messages + runtime artifacts) |
+| `GET` | `/autonomous/cpi/messages/errors` | Failed CPI message processing logs |
+| `GET` | `/autonomous/cpi/runtime_artifacts/errors` | Runtime artifact errors |
+| `GET` | `/autonomous/cpi/runtime_artifacts/{id}` | Runtime artifact detail + error info |
 | `GET` | `/autonomous/db_test` | Test HANA connectivity |
+| `GET` | `/autonomous/debug` | Autonomous config + live fetch test |
+| `GET` | `/autonomous/debug2` | Raw OAuth token + OData connectivity test |
 
 ### Auto-Fix Configuration
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/config/auto-fix` | Current auto-fix config |
+| `GET` | `/api/config/auto-fix` | Current auto-fix config (source: runtime or env) |
 | `POST` | `/api/config/auto-fix` | Enable/disable at runtime |
 | `POST` | `/api/config/auto-fix/reset` | Reset to `.env` default |
 
@@ -675,7 +708,7 @@ Populated by `scrape_sap_docs.py`, vectorized by `vectorize_docs.py`. Used for s
 - SQL queries use parameterised statements — no string interpolation
 - API responses never expose stack traces or internal error details
 - `AUTO_FIX_CONFIDENCE=0.90` gates autonomous deployments
-- Auto-fix toggled at runtime via API — no service restart required
+- Auto-fix toggled at runtime via `/api/config/auto-fix` — no service restart required
 - S3 uses separate read / write credentials
 - Locked artifact detection prevents concurrent edit conflicts
 
@@ -708,13 +741,19 @@ curl http://localhost:8080/autonomous/cpi/errors
 # Inject synthetic test incident
 curl -X POST http://localhost:8080/autonomous/test_incident
 
-# Debug autonomous config
+# Debug autonomous config + fetch test
 curl http://localhost:8080/autonomous/debug
 
+# Raw OAuth + OData connectivity test
+curl http://localhost:8080/autonomous/debug2
+
 # Enable auto-fix at runtime
-curl -X POST http://localhost:8080/api/config/auto-fix \
+curl -X POST "http://localhost:8080/api/config/auto-fix?enabled=true"
+
+# Send a test AEM event
+curl -X POST http://localhost:8080/aem/events \
   -H "Content-Type: application/json" \
-  -d '{"enabled": true}'
+  -d '{"topic": "sap/cpi/remediation/observed/test-001", "incident_id": "test-001"}'
 ```
 
 ---
@@ -724,21 +763,21 @@ curl -X POST http://localhost:8080/api/config/auto-fix \
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `iFlow name shows as blank in Observability` | OData metadata call failed — check `SAP_HUB_*` env vars | Verify credentials and tenant URL; check `logs/mcp.log` for OData errors |
-| `Solace receiver not connecting` | Wrong `AEM_HOST`, `AEM_VPN`, or credentials | Check Solace broker URL format (`wss://host:443`); verify `AEM_USERNAME`/`AEM_PASSWORD` |
+| `POST /aem/events returns 400` | Event body missing `topic` field | Ensure the AEM REST Delivery payload includes `"topic": "..."` |
 | `recent-failures-table returns empty` | HANA not reachable | Check `HANA_HOST`/`HANA_PASSWORD`; table is read directly — no MCP dependency |
 | `503 on /analyze right after boot` | MCP agents still initialising (takes 30–60 s) | Wait for `[Startup] All agents ready` in logs, then retry |
 | `iFlow fix applied but deploy fails locked` | iFlow checked out in browser | Use `POST /retry_fix` — automatic unlock is attempted |
-| `Solace message payload None` | Binary payload from SAP multimap | Already handled — falls back to `get_payload_as_bytes()` with UTF-8 decode |
 | `HANA connection refused` | Wrong host/port or IP not whitelisted | Check HANA Cloud instance → Allowed Connections |
 | `LLM deployment not found` | Wrong `LLM_DEPLOYMENT_ID` | Verify deployment ID in SAP AI Core Launchpad |
 | `cf push fails — memory exceeded` | Not enough memory in BTP quota | Request quota increase or reduce to `1536M` and monitor |
 | `VEC_VECTOR IS NULL after vectorize` | Script interrupted mid-run | Re-run `vectorize_docs.py` — it skips already-vectorized rows |
+| `AEM events not reaching orchestrator` | `AEM_ENABLED=true` but `AEM_REST_URL` unset | Set `AEM_REST_URL` or set `AEM_ENABLED=false` to use in-memory bus |
 
 ---
 
 ## Further Reading
 
 - [CLAUDE.md](CLAUDE.md) — Claude Code project standards and agent instructions
+- [ROUTES_DOCUMENTATION.md](ROUTES_DOCUMENTATION.md) — Full API route reference
 - [rules/coding-style.md](rules/coding-style.md) — naming conventions and architecture rules
 - [rules/security.md](rules/security.md) — security standards for SAP BTP
-- [manifest.yml](manifest.yml) — BTP CF deployment configuration

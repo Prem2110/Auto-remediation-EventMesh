@@ -15,7 +15,7 @@ This document lists all HTTP API routes exposed by the SAP CPI Self-Healing Agen
 
 | Route | Method | Description |
 |-------|--------|-------------|
-| `/` | GET | Health check — returns `{"status": "running", "version": "4.0.0"}` |
+| `/` | GET | Health check — returns `{"status": "running", "service": "CPI MCP Servers + Autonomous Ops", "version": "4.0.0"}` |
 
 ---
 
@@ -169,6 +169,8 @@ This document lists all HTTP API routes exposed by the SAP CPI Self-Healing Agen
 |-------|--------|-------------|
 | `/aem/status` | GET | AEM connectivity, SEMP queue depth, Solace counters, and pipeline stage counts |
 | `/aem/events` | POST | Webhook entry point for Solace REST Delivery Point (RDP). Accepts raw event JSON and dispatches to orchestrator pipeline. |
+| `/event-mesh/status` | GET | Alias of `/aem/status` (legacy) |
+| `/event-mesh/events` | POST | Alias of `/aem/events` (legacy) |
 
 ### `/aem/status` Response
 ```json
@@ -216,6 +218,12 @@ Mounted from `smart_monitoring.py`.
 | `/smart-monitoring/incidents` | GET | List all incidents from DB | On-demand |
 | `/smart-monitoring/incidents/{incident_id}/fix_status` | GET | Poll fix application status | 5s (during fix) |
 | `/smart-monitoring/total-errors` | GET | Count of failed messages from SAP CPI | On-demand |
+| `/smart-monitoring/incidents/{incident_id}/retry_fix` | POST | Retry applying a fix for an incident | On-demand |
+| `/smart-monitoring/incidents/{incident_id}/resolve` | POST | Mark an incident as resolved (manual close) | On-demand |
+| `/smart-monitoring/incidents/{incident_id}/rollback` | POST | Roll back a previously applied fix (if supported) | On-demand |
+| `/smart-monitoring/escalations` | GET | List escalation tickets | On-demand |
+| `/smart-monitoring/escalations/{ticket_id}` | GET | Get escalation ticket detail | On-demand |
+| `/smart-monitoring/escalations/{ticket_id}` | PATCH | Update escalation ticket fields (e.g., status/assignee/notes) | On-demand |
 
 ### Request Bodies
 
@@ -250,6 +258,8 @@ Mounted from `smart_monitoring_dashboard.py`.
 
 | Route | Method | Description | Refresh |
 |-------|--------|-------------|---------|
+| `/dashboard/test` | GET | Simple test endpoint | On-demand |
+| `/dashboard/all` | GET | All dashboard widget data in a single response (aggregated) | 60s |
 | `/dashboard/kpi-cards` | GET | Top-level KPI cards (total incidents, auto-fix rate, avg resolution time, etc.) | 60s |
 | `/dashboard/error-distribution` | GET | Error type breakdown for pie/donut chart | 60s |
 | `/dashboard/status-distribution` | GET | Incident status breakdown (summary) | 60s |
