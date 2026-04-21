@@ -146,10 +146,8 @@ export async function fetchDashboardAll(): Promise<Record<string, unknown>> {
 export interface AgentStatus {
   pipeline_running: boolean;
   started_at: string | null;
-  aem_connected: boolean;
   agents: Record<string, string>;
   message?: string;
-  pipeline_type?: "specialist" | "aem";
   autonomous_running?: boolean;
   tool_distribution?: Record<string, string[]>;
 }
@@ -157,19 +155,6 @@ export interface AgentStatus {
 interface AutonomousStatusResponse {
   running: boolean;
   poll_interval_seconds?: number;
-}
-
-interface AemStatusResponse {
-  aem_enabled?: boolean;
-  receiver_connected?: boolean;
-  queue_name?: string;
-  queue_depth?: number | null;
-  messages_retrieved?: number;
-  messages_published?: number;
-  messages_dropped?: number;
-  stage_counts?: Record<string, number>;
-  total_incidents?: number;
-  semp_error?: string | null;
 }
 
 interface ToolsResponse {
@@ -198,11 +183,7 @@ export async function fetchToolDistribution(): Promise<Record<string, string[]>>
 }
 
 export async function fetchPipelineStatus(): Promise<AgentStatus> {
-  const [autonomous, aem] = await Promise.all([
-    request<AutonomousStatusResponse>(`${_BASE}/autonomous/status`),
-    requestMaybe<AemStatusResponse>(`${_BASE}/aem/status`),
-  ]);
-
+  const autonomous = await request<AutonomousStatusResponse>(`${_BASE}/autonomous/status`);
   const running = autonomous.running;
   const agents = {
     observer: running ? "running" : "idle",
@@ -215,10 +196,8 @@ export async function fetchPipelineStatus(): Promise<AgentStatus> {
   return {
     pipeline_running: running,
     started_at: null,
-    aem_connected: Boolean(aem?.aem_enabled && aem?.receiver_connected),
     agents,
     message: running ? "Autonomous pipeline running" : "Autonomous pipeline stopped",
-    pipeline_type: "specialist",
     autonomous_running: running,
   };
 }
@@ -232,27 +211,6 @@ export async function startPipeline(): Promise<{ message: string; status: AgentS
 export async function stopPipeline(): Promise<{ message: string }> {
   await request(`${_BASE}/autonomous/stop`, { method: "POST" });
   return { message: "Pipeline stopped" };
-}
-
-export async function fetchQueueStats(): Promise<unknown> {
-  const data = await request<AemStatusResponse>(`${_BASE}/aem/status`);
-  if (!data?.aem_enabled) {
-    return { warning: "AEM is disabled in backend configuration." };
-  }
-  return {
-    receiver_connected: data.receiver_connected ?? false,
-    queues: {
-      [data.queue_name ?? "observer_queue"]: {
-        queue_depth: data.queue_depth ?? 0,
-        messages_retrieved: data.messages_retrieved ?? 0,
-        messages_published: data.messages_published ?? 0,
-        messages_dropped: data.messages_dropped ?? 0,
-      },
-    },
-    stage_counts: data.stage_counts ?? {},
-    total_incidents: data.total_incidents ?? 0,
-    semp_error: data.semp_error ?? null,
-  };
 }
 
 export async function searchKnowledge(
@@ -283,6 +241,25 @@ export async function searchKnowledge(
     .slice(0, topK);
 
   return { query: errorMessage, results: scored, count: scored.length };
+}
+
+export async function fetchTickets(): Promise<{ tickets: unknown[] }> {
+  return request(`${_BASE}/autonomous/tickets`);
+}
+
+export async function fetchPendingApprovals(): Promise<{ pending: unknown[] }> {
+  return request(`${_BASE}/autonomous/pending_approvals`);
+}
+
+export async function approveIncident(
+  incidentId: string,
+  approved: boolean,
+  comment = ""
+): Promise<unknown> {
+  return request(`${_BASE}/autonomous/incidents/${incidentId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ approved, comment }),
+  });
 }
 
 export async function fetchPipelineTrace(

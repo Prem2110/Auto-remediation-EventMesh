@@ -10,7 +10,8 @@
       "Bash(echo \"Exit: $?\")",
       "Bash(netstat -ano)",
       "Bash(python -c ' *)",
-      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('core/xml_patcher.py'\\).read\\(\\)\\); ast.parse\\(open\\('agents/fix_agent.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/constants.py'\\).read\\(\\)\\); print\\('All 3 files parse OK'\\)\")"
+      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('core/xml_patcher.py'\\).read\\(\\)\\); ast.parse\\(open\\('agents/fix_agent.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/constants.py'\\).read\\(\\)\\); print\\('All 3 files parse OK'\\)\")",
+      "Bash(grep -E \"\\(^[^/]*\\\\.py$|aem/|agents/|core/|db/\\)\")"
     ]
   }
 }

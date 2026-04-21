@@ -8,8 +8,9 @@ import {
   generateFixPatch,
   applyMessageFix,
   fetchFixStatus,
-  fetchPipelineStatus,
-  fetchQueueStats,
+  fetchTickets,
+  fetchPendingApprovals,
+  approveIncident,
 } from "../../services/api.ts";
 import type {
   IMonitorMessage,
@@ -343,11 +344,7 @@ export default function Observability() {
   // Fetch tickets
   const { data: ticketsData, isLoading: ticketsLoading, refetch: refetchTickets } = useQuery({
     queryKey: ["escalation-tickets"],
-    queryFn: async () => {
-      const response = await fetch("/api/autonomous/tickets");
-      if (!response.ok) throw new Error("Failed to fetch tickets");
-      return response.json();
-    },
+    queryFn: fetchTickets,
     refetchInterval: 30_000,
     enabled: mainTab === "tickets",
   });
@@ -355,36 +352,10 @@ export default function Observability() {
   // Fetch approvals
   const { data: approvalsData, isLoading: approvalsLoading, refetch: refetchApprovals } = useQuery({
     queryKey: ["pending-approvals"],
-    queryFn: async () => {
-      const response = await fetch("/api/autonomous/pending_approvals");
-      if (!response.ok) throw new Error("Failed to fetch approvals");
-      return response.json();
-    },
+    queryFn: fetchPendingApprovals,
     refetchInterval: 30_000,
     enabled: mainTab === "approvals",
   });
-
-  const { data: pipelineData } = useQuery({
-    queryKey: ["pipeline-status"],
-    queryFn:  fetchPipelineStatus,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
-  });
-
-  const { data: queueRaw } = useQuery({
-    queryKey: ["queue-stats"],
-    queryFn:  fetchQueueStats,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
-    enabled:  pipelineData?.aem_connected ?? false,
-  });
-
-  const aemConnected = pipelineData?.aem_connected ?? false;
-  const qs           = (queueRaw ?? {}) as Record<string, unknown>;
-  const aemQueues    = (qs.queues ?? {}) as Record<string, { queue_depth: number; messages_retrieved: number }>;
-  const aemDepth     = Object.values(aemQueues).reduce((s, q) => s + (q.queue_depth ?? 0), 0);
-  const stageCounts  = (qs.stage_counts ?? {}) as Record<string, number>;
-  const sempError    = qs.semp_error as string | null;
 
   const STATUS_GROUP: Record<string, string[]> = {
     FAILED:     ["FAILED", "FIX_FAILED", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED"],
@@ -433,16 +404,8 @@ export default function Observability() {
   const handleApprove = useCallback(async (incidentId: string) => {
     setApprovalActionError(null);
     try {
-      const response = await fetch(`/api/autonomous/incidents/${incidentId}/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approved: true, comment: "Approved via UI" }),
-      });
-      if (response.ok) {
-        refetchApprovals();
-      } else {
-        setApprovalActionError(`Approval failed — server returned ${response.status}. Please try again.`);
-      }
+      await approveIncident(incidentId, true, "Approved via UI");
+      refetchApprovals();
     } catch {
       setApprovalActionError("Approval failed — network error. Please check your connection.");
     }
@@ -451,16 +414,8 @@ export default function Observability() {
   const handleReject = useCallback(async (incidentId: string) => {
     setApprovalActionError(null);
     try {
-      const response = await fetch(`/api/autonomous/incidents/${incidentId}/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approved: false, comment: "Rejected via UI" }),
-      });
-      if (response.ok) {
-        refetchApprovals();
-      } else {
-        setApprovalActionError(`Rejection failed — server returned ${response.status}. Please try again.`);
-      }
+      await approveIncident(incidentId, false, "Rejected via UI");
+      refetchApprovals();
     } catch {
       setApprovalActionError("Rejection failed — network error. Please check your connection.");
     }
@@ -683,24 +638,6 @@ export default function Observability() {
      ════════════════════════════════════════════════════════════════════ */
   return (
     <div className={styles.page}>
-
-      {/* ── AEM Status Banner ── */}
-      <div className={styles.aemBanner} data-connected={String(aemConnected)} data-semp-error={String(!!sempError)}>
-        <span className={styles.aemDot} />
-        <span className={styles.aemBannerLabel}>
-          {aemConnected ? "AEM Connected" : "AEM Offline"}
-        </span>
-        {aemConnected && (
-          <>
-            <span className={styles.aemSep}>·</span>
-            <span className={styles.aemStat} data-tip="Total messages waiting in the AEM queue for pipeline processing">Queue: <strong>{aemDepth}</strong></span>
-            {Object.entries(stageCounts).map(([stage, n]) => (
-              <span key={stage} className={styles.aemStage} data-tip={`${n} incident${n !== 1 ? "s" : ""} currently at the ${stage} stage`}>{stage}: {n}</span>
-            ))}
-            {sempError && <span className={styles.aemError} data-tip="SEMP (Solace Element Management Protocol) REST API error — queue statistics may be inaccurate">SEMP: {sempError}</span>}
-          </>
-        )}
-      </div>
 
       {/* ── Main Tab Navigation ── */}
       <div className={styles.mainTabBar}>

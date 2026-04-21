@@ -115,7 +115,7 @@ export default function Dashboard() {
   const chartOpts = { refetchInterval: 60_000, retry: 3, retryDelay: 3_000 } as const;
   const tableOpts = { retry: 2, retryDelay: 2_000, placeholderData: keepPreviousData };
 
-  // ─ Fetch consolidated dashboard data (charts, KPIs, AEM stats) ────────────────
+  // ─ Fetch consolidated dashboard data (charts, KPIs) ─────────────────────────
   const { data: dashData, isLoading: dashLoading } = useQuery({
     queryKey: ["dash-all"],
     queryFn: fetchDashboardAll,
@@ -148,14 +148,6 @@ export default function Dashboard() {
   const iflowData = (dash.top_iflows ?? []) as { iflow_name: string; failure_count: number }[];
   const timelineData = (dash.timeline ?? []) as { time: string; count: number }[];
   
-  const aem = (dash.aem ?? {}) as Record<string, unknown>;
-  const aemEnabled = !aem.warning;
-  const aemSempError = aem.semp_error as string | null;
-  const aemQueues = (aem.queues ?? {}) as Record<string, { queue_depth: number; messages_retrieved: number }>;
-  const aemQueueDepth = Object.values(aemQueues).reduce((s, q) => s + (q.queue_depth ?? 0), 0);
-  const aemStageRaw = (aem.stage_counts ?? {}) as Record<string, number>;
-  const aemStageData = Object.entries(aemStageRaw).map(([stage, count]) => ({ stage, count }));
-
   // Extract paginated table data
   const failuresResp = failuresData as PaginatedMessagesResponse | undefined;
   const recentFails = (failuresResp?.messages ?? []) as Record<string, unknown>[];
@@ -174,30 +166,6 @@ export default function Dashboard() {
   return (
     <div className={styles.page}>
       <h2 className={styles.pageTitle}>Smart Monitoring</h2>
-
-      {/* ── AEM Status Banner ── */}
-      {!dashLoading && (
-        <div className={styles.aemBanner} data-enabled={aemEnabled}>
-          <span className={styles.aemDot} />
-          <span className={styles.aemLabel} data-tip={aemEnabled ? "Advanced Event Mesh is connected — incidents sourced via Solace pub/sub messaging" : "AEM is disabled — using direct SAP CPI polling"}>
-            {aemEnabled ? "AEM Connected" : "AEM Disabled"}
-          </span>
-          {aemEnabled && (
-            <>
-              <span className={styles.aemSep}>|</span>
-              <span className={styles.aemStat} data-tip="Total messages waiting across all AEM queues for processing">Queue depth: <strong>{aemQueueDepth}</strong></span>
-              {Object.entries(aemQueues).map(([name, q]) => (
-                <span key={name} className={styles.aemStat} data-tip={`Queue "${name}": ${q.queue_depth} waiting, ${q.messages_retrieved} retrieved this session`}>
-                  {name}: <strong>{q.queue_depth}</strong> queued · <strong>{q.messages_retrieved}</strong> retrieved
-                </span>
-              ))}
-              {aemSempError && (
-                <span className={styles.aemError} data-tip="SEMP (Solace Element Management Protocol) REST API error — queue statistics may be inaccurate">SEMP: {aemSempError}</span>
-              )}
-            </>
-          )}
-        </div>
-      )}
 
       {/* ── KPI Cards ── */}
       <div className={styles.kpiRow}>
@@ -304,26 +272,6 @@ export default function Dashboard() {
           </ResponsiveContainer>
         )}
       </div>
-
-      {/* ── AEM Pipeline Stage Counts ── */}
-      {aemEnabled && (
-        <div className={styles.chartBlock}>
-          <SectionTitle title="AEM Pipeline Stage Counts" />
-          {dashLoading ? <SkeletonChart /> : aemStageData.length === 0 ? (
-            <div className={styles.emptyCell}>No stage data — pipeline not yet running</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={aemStageData} margin={{ left: 10, right: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="stage" tick={{ fontSize: 12 }} />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="count" name="Incidents" fill="#845ef7" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      )}
 
       {/* ── Recent Failed Messages with Pagination ── */}
       <div className={styles.tableBlock}>

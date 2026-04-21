@@ -5,7 +5,6 @@ import {
   fetchToolDistribution,
   startPipeline,
   stopPipeline,
-  fetchQueueStats,
   fetchPipelineTrace,
   searchKnowledge,
 } from "../../services/api.ts";
@@ -22,29 +21,7 @@ const SPECIALIST_AGENTS: Record<string, { emoji: string; label: string; desc: st
   verifier:   { emoji:"✅",  label:"Verifier",   desc:"Test fixed iFlow + replay failed messages for end-to-end verification", tools:"1 local + 3-4 MCP", gradient:"linear-gradient(135deg,#4c0519 0%,#be123c 100%)", accent:"#fb7185" },
 };
 
-// Legacy 9-agent metadata (AEM pipeline)
-const AEM_AGENTS: Record<string, { emoji: string; label: string; desc: string; tools: string; gradient: string; accent: string }> = {
-  observer:     { emoji:"👁️",  label:"Observer",     desc:"Subscribes to AEM integration/errors/# (polls in dev mode)", tools:"", gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
-  classifier:   { emoji:"🏷️",  label:"Classifier",   desc:"Error type, confidence, severity — zero LLM cost",        tools:"", gradient:"linear-gradient(135deg,#1e1b4b 0%,#7c3aed 100%)", accent:"#a78bfa" },
-  orchestrator: { emoji:"🎯",  label:"Orchestrator",  desc:"Routes by confidence; fan-out to RCA + Knowledge",        tools:"", gradient:"linear-gradient(135deg,#134e4a 0%,#0f766e 100%)", accent:"#2dd4bf" },
-  rca:          { emoji:"🧠",  label:"RCA",           desc:"Root cause analysis via SAP AI Core (parallel)",          tools:"", gradient:"linear-gradient(135deg,#064e3b 0%,#059669 100%)", accent:"#34d399" },
-  knowledge:    { emoji:"📚",  label:"Knowledge",     desc:"HANA vector similarity search ≥0.75",                     tools:"", gradient:"linear-gradient(135deg,#78350f 0%,#d97706 100%)", accent:"#fbbf24" },
-  aggregator:   { emoji:"🔀",  label:"Aggregator",    desc:"Merges RCA + Knowledge results",                          tools:"", gradient:"linear-gradient(135deg,#1e3a5f 0%,#0284c7 100%)", accent:"#38bdf8" },
-  fixer:        { emoji:"🔧",  label:"Fixer",         desc:"Patch generation + risk assessment (LOW/MEDIUM/HIGH)",    tools:"", gradient:"linear-gradient(135deg,#312e81 0%,#6d28d9 100%)", accent:"#c084fc" },
-  executor:     { emoji:"🚀",  label:"Executor",      desc:"Deploy via SAP IS API — AUTO / APPROVAL / TICKET",       tools:"", gradient:"linear-gradient(135deg,#4c0519 0%,#be123c 100%)", accent:"#fb7185" },
-  learner:      { emoji:"🎓",  label:"Learner",       desc:"KB update, outcome recording, Classifier feedback",       tools:"", gradient:"linear-gradient(135deg,#1c1917 0%,#854d0e 100%)", accent:"#fbbf24" },
-};
-
 const SPECIALIST_ORDER = ["observer", "classifier", "rca", "fixer", "verifier"];
-const AEM_ORDER = ["observer", "classifier", "orchestrator", "rca", "knowledge", "aggregator", "fixer", "executor", "learner"];
-
-const STAGE_TIPS: Record<string, string> = {
-  observed:   "Incidents picked up from the SAP CPI message processing log",
-  classified: "Error type and severity determined by the rule-based classifier",
-  rca:        "Root cause analysis completed via SAP AI Core",
-  fix:        "Patch generated and deployed via the SAP Integration Suite API",
-  verified:   "Fix confirmed through automated integration test execution",
-};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TraceIncident {
@@ -78,7 +55,7 @@ export default function Pipeline() {
   const { data: pipelineData } = useQuery({
     queryKey: ["pipeline-status"],
     queryFn: fetchPipelineStatus,
-    refetchInterval: 15_000,   // was 4s — status changes rarely
+    refetchInterval: 15_000,
   });
 
   // Tools never change after startup — fetch once, cache for 10 minutes
@@ -87,13 +64,6 @@ export default function Pipeline() {
     queryFn: fetchToolDistribution,
     staleTime: 10 * 60 * 1000,
     refetchInterval: false,
-  });
-
-  const { data: queueStats } = useQuery({
-    queryKey: ["queue-stats"],
-    queryFn: fetchQueueStats,
-    refetchInterval: 30_000,   // was 8s — queue depth doesn't need sub-second precision
-    enabled: pipelineData?.pipeline_running ?? false,
   });
 
   const { data: traceData } = useQuery({
@@ -134,20 +104,10 @@ export default function Pipeline() {
   const running = pipelineData?.pipeline_running ?? false;
   const agentStatuses = pipelineData?.agents ?? {};
   const incidents: TraceIncident[] = (traceData?.incidents ?? []) as TraceIncident[];
-  const isSpecialist = pipelineData?.pipeline_type === "specialist";
   const toolDistribution = toolDist ?? pipelineData?.tool_distribution;
 
-  // ── AEM queue stats derivations ──────────────────────────────────────────
-  const qs                  = (queueStats as Record<string, unknown>) ?? {};
-  const aemQueues           = (qs.queues  ?? {}) as Record<string, { queue_depth: number; messages_retrieved: number; messages_published: number; messages_dropped: number }>;
-  const aemStages           = (qs.stage_counts ?? {}) as Record<string, number>;
-  const aemTotal            = (qs.total_incidents as number) ?? 0;
-  const aemSempError        = qs.semp_error as string | null;
-  const aemHasStats         = Boolean(queueStats && !(qs.warning));
-  const aemReceiverConnected = (qs.receiver_connected as boolean) ?? false;
-
-  const AGENT_META = isSpecialist ? SPECIALIST_AGENTS : AEM_AGENTS;
-  const STAGE_ORDER = isSpecialist ? SPECIALIST_ORDER : AEM_ORDER;
+  const AGENT_META = SPECIALIST_AGENTS;
+  const STAGE_ORDER = SPECIALIST_ORDER;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -158,10 +118,7 @@ export default function Pipeline() {
         <div>
           <h1 className={styles.pageTitle}>Auto-Remediation Pipeline</h1>
           <p className={styles.pageSubtitle}>
-            {isSpecialist
-              ? "5 specialist agents · Per-agent tools · SAP AI Core · HANA vector search"
-              : "9-agent AEM pipeline · SAP AI Core · HANA vector search"
-            }
+            5 specialist agents · Per-agent tools · SAP AI Core · HANA vector search
           </p>
         </div>
         <div className={styles.headerRight}>
@@ -171,14 +128,8 @@ export default function Pipeline() {
           >
             {running ? "● Running" : "○ Stopped"}
           </span>
-          {isSpecialist && running && (
+          {running && (
             <span className={styles.aemBadge} data-tip="5-agent specialist mode — each agent has a curated, minimal tool set for safety and efficiency">Specialist</span>
-          )}
-          {!isSpecialist && pipelineData?.aem_connected && (
-            <span className={styles.aemBadge} data-tip="Advanced Event Mesh (Solace PubSub+) is active — queue receiver is connected and consuming messages">AEM Connected</span>
-          )}
-          {!isSpecialist && !pipelineData?.aem_connected && aemHasStats && (
-            <span className={styles.aemBadge} style={{ background: "#7f1d1d", color: "#fca5a5" }} data-tip="AEM is enabled but the queue receiver is disconnected — automatic reconnect is in progress">AEM Reconnecting…</span>
           )}
           <button
             className={`${styles.toggleBtn} ${running ? styles.toggleBtnStop : styles.toggleBtnStart}`}
@@ -193,7 +144,7 @@ export default function Pipeline() {
 
       {/* ── Agent flow ── */}
       <div className={styles.sectionLabel} data-tip="Agents run in sequence: Observer detects → Classifier categorizes → RCA analyzes → Fixer deploys → Verifier confirms">
-        {isSpecialist ? "Agent Flow — Each agent gets only the tools it needs" : "Agent Flow"}
+        Agent Flow — Each agent gets only the tools it needs
       </div>
       <div className={styles.agentFlow}>
         {STAGE_ORDER.map((key, i) => {
@@ -218,7 +169,7 @@ export default function Pipeline() {
                     {isRunning ? "Running" : running ? "Stopped" : "Idle"}
                   </span>
                   <span className={styles.agentDesc}>{meta.desc}</span>
-                  {isSpecialist && meta.tools && (
+                  {meta.tools && (
                     <span className={styles.agentDesc} style={{fontSize:"0.65rem", opacity:0.8, marginTop:"0.15rem"}}>
                       {meta.tools}{toolCount !== undefined ? ` (${String(toolCount)} MCP)` : ""}
                     </span>
@@ -232,76 +183,6 @@ export default function Pipeline() {
           );
         })}
       </div>
-
-      {/* ── Queue stats ── */}
-      {aemHasStats && (
-        <>
-          <div className={styles.sectionLabel}>
-            AEM Queue Stats
-            {aemTotal > 0 && (
-              <span className={styles.sectionCount}>{aemTotal} total incidents</span>
-            )}
-            {!aemReceiverConnected && (
-              <span
-                className={styles.aemSempError}
-                style={{ marginLeft: "0.75rem", animation: "pulse 1.5s infinite" }}
-                data-tip="The Solace queue receiver dropped its connection and is automatically reconnecting with exponential backoff. No messages are being consumed until it reconnects."
-              >
-                ⚠ Receiver reconnecting…
-              </span>
-            )}
-          </div>
-
-          {/* Queue cards */}
-          <div className={styles.queueGrid}>
-            {Object.entries(aemQueues).map(([qName, stats]) => (
-              <div key={qName} className={styles.queueCard}>
-                <span className={styles.queueName}>{qName}</span>
-                <div className={styles.queueStats}>
-                  <span className={styles.queueStat}>
-                    <span className={`${styles.queueStatKey} tooltip-right`} data-tip="queue depth — messages currently waiting in AEM. Red means a processing backlog exists; the pipeline is falling behind.">queue depth</span>
-                    <span className={`${styles.queueStatVal} ${stats.queue_depth > 0 ? styles.queueStatValAlert : ""}`}>
-                      {stats.queue_depth}
-                    </span>
-                  </span>
-                  <span className={styles.queueStat}>
-                    <span className={`${styles.queueStatKey} tooltip-right`} data-tip="consumed — messages pulled from the AEM queue this session. Each SAP CPI error event enters the pipeline here.">consumed</span>
-                    <span className={styles.queueStatVal}>{stats.messages_retrieved}</span>
-                  </span>
-                  <span className={styles.queueStat}>
-                    <span className={`${styles.queueStatKey} tooltip-right`} data-tip={`published — stage-transition messages sent back to the AEM topic this session. Each pipeline stage (classify → RCA → fix → verify) publishes back to advance the incident. published ÷ consumed ≈ ${stats.messages_retrieved > 0 ? (stats.messages_published / stats.messages_retrieved).toFixed(1) : "—"} stages per incident on average. If published >> consumed the pipeline is doing many stage transitions per error.`}>published</span>
-                    <span className={styles.queueStatVal}>{stats.messages_published}</span>
-                  </span>
-                  {stats.messages_dropped > 0 && (
-                    <span className={styles.queueStat}>
-                      <span className={`${styles.queueStatKey} tooltip-right`} data-tip="dropped — messages lost due to internal buffer overflow (capacity: 1000). This means errors arrived faster than the pipeline could process them. Increase SOLACE_INBOUND_QUEUE_MAXSIZE in .env to raise the buffer limit.">dropped</span>
-                      <span className={`${styles.queueStatVal} ${styles.queueStatValAlert}`}>{stats.messages_dropped}</span>
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Stage pipeline counts */}
-          {Object.keys(aemStages).length > 0 && (
-            <div className={styles.aemStagesRow}>
-              {(["observed", "classified", "rca", "fix", "verified"] as const).map((stage, i, arr) => (
-                <span key={stage} className={styles.aemStageItem}>
-                  <span className={styles.aemStageName} data-tip={STAGE_TIPS[stage]}>{stage}</span>
-                  <span className={`${styles.aemStageCount} ${(aemStages[stage] ?? 0) > 0 ? styles.aemStageCountActive : ""}`}>
-                    {aemStages[stage] ?? 0}
-                  </span>
-                  {i < arr.length - 1 && <span className={styles.aemStageArrow}>→</span>}
-                </span>
-              ))}
-              {aemSempError && (
-                <span className={styles.aemSempError} data-tip="SEMP (Solace Element Management Protocol) REST API error — queue statistics may be unreliable">SEMP: {aemSempError}</span>
-              )}
-            </div>
-          )}
-        </>
-      )}
 
       {/* ── Knowledge search ── */}
       <div className={styles.sectionLabel} data-tip="Search past incidents for similar error patterns and their proven fixes">Knowledge Base Search</div>
