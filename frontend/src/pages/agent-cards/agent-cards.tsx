@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { fetchPipelineStatus, fetchQueueStats, startPipeline, stopPipeline } from "../../services/api.ts";
+import { fetchPipelineStatus, startPipeline, stopPipeline } from "../../services/api.ts";
 import _styles from "./agent-cards.module.css";
 const styles = _styles as Record<string, string>;
 
@@ -25,21 +25,8 @@ export default function AgentCards() {
     refetchInterval: 5_000,
   });
 
-  const { data: queueRaw } = useQuery({
-    queryKey: ["queue-stats"],
-    queryFn:  fetchQueueStats,
-    refetchInterval: 8_000,
-    enabled:  pipelineData?.pipeline_running ?? false,
-  });
-
   const pipelineRunning = pipelineData?.pipeline_running ?? false;
   const agentStatuses   = pipelineData?.agents ?? {};
-
-  const qs = (queueRaw ?? {}) as Record<string, unknown>;
-  const aemEnabled    = pipelineData?.aem_connected ?? false;
-  const aemQueues     = (qs.queues ?? {}) as Record<string, { queue_depth: number; messages_retrieved: number }>;
-  const aemQueueDepth = Object.values(aemQueues).reduce((s, q) => s + (q.queue_depth ?? 0), 0);
-  const stageCounts   = (qs.stage_counts ?? {}) as Record<string, number>;
 
   async function handlePipelineToggle() {
     setToggling(true);
@@ -69,19 +56,6 @@ export default function AgentCards() {
           <span className={`${styles.pipelineBadge} ${pipelineRunning ? styles.pipelineBadgeOn : styles.pipelineBadgeOff}`}>
             {pipelineRunning ? "● Running" : "○ Stopped"}
           </span>
-          {aemEnabled && (
-            <span className={styles.pipelineAem}>AEM Connected</span>
-          )}
-          {aemEnabled && pipelineRunning && aemQueueDepth > 0 && (
-            <span className={styles.pipelineAem}>Queue: {aemQueueDepth}</span>
-          )}
-          {aemEnabled && pipelineRunning && Object.keys(stageCounts).length > 0 && (
-            <span className={styles.pipelineAemStages}>
-              {Object.entries(stageCounts).map(([stage, n]) => (
-                <span key={stage} className={styles.stageChip}>{stage}: {n}</span>
-              ))}
-            </span>
-          )}
         </div>
         <div className={styles.pipelineStripRight}>
           <button

@@ -9,7 +9,7 @@ import {
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAppStore } from "../../store/app-store.ts";
-import { sendChatMessage, fetchPipelineStatus, fetchQueueStats } from "../../services/api.ts";
+import { sendChatMessage, fetchPipelineStatus } from "../../services/api.ts";
 import type { IHistoryEntry } from "../../types/index.ts";
 import styles from "./orchestrator.module.css";
 
@@ -47,20 +47,7 @@ export default function Orchestrator() {
     queryFn:  fetchPipelineStatus,
     refetchInterval: 10_000,
   });
-  const { data: queueRaw } = useQuery({
-    queryKey: ["queue-stats"],
-    queryFn:  fetchQueueStats,
-    refetchInterval: 15_000,
-    enabled:  pipelineData?.aem_connected ?? false,
-  });
-
-  const aemConnected  = pipelineData?.aem_connected ?? false;
-  const pipelineOn    = pipelineData?.pipeline_running ?? false;
-  const qs            = (queueRaw ?? {}) as Record<string, unknown>;
-  const aemQueues     = (qs.queues ?? {}) as Record<string, { queue_depth: number; messages_retrieved: number }>;
-  const aemDepth      = Object.values(aemQueues).reduce((s, q) => s + (q.queue_depth ?? 0), 0);
-  const stageCounts   = (qs.stage_counts ?? {}) as Record<string, number>;
-  const sempError     = qs.semp_error as string | null;
+  const pipelineOn = pipelineData?.pipeline_running ?? false;
 
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
@@ -132,28 +119,16 @@ export default function Orchestrator() {
   return (
     <div className={styles.page}>
 
-      {/* ── AEM Status Bar ── */}
-      <div className={styles.aemBar} data-connected={String(aemConnected)}>
+      {/* ── Pipeline Status Bar ── */}
+      <div className={styles.aemBar} data-connected={String(pipelineOn)}>
         <span className={styles.aemBarDot} />
         <span className={styles.aemBarLabel}>
-          {aemConnected ? "AEM Connected" : "AEM Offline"}
+          Event Mesh Pipeline
         </span>
         <span className={styles.aemBarSep}>·</span>
         <span className={styles.aemBarItem}>
           Pipeline: <strong>{pipelineOn ? "Running" : "Stopped"}</strong>
         </span>
-        {aemConnected && (
-          <>
-            <span className={styles.aemBarSep}>·</span>
-            <span className={styles.aemBarItem}>Queue depth: <strong>{aemDepth}</strong></span>
-            {Object.entries(stageCounts).map(([stage, n]) => (
-              <span key={stage} className={styles.aemBarStage}>{stage}: {n}</span>
-            ))}
-            {sempError && (
-              <span className={styles.aemBarError}>SEMP error: {sempError}</span>
-            )}
-          </>
-        )}
       </div>
 
       {/* ── Welcome ── */}
