@@ -140,6 +140,39 @@ const CARD_TIPS: Record<string, string> = {
 // Explicit ordered keys for the 4 summary cards — never rely on STATUS_CONFIG insertion order
 const SUMMARY_CARD_KEYS = ["FAILED", "SUCCESS", "PROCESSING", "RETRY"] as const;
 
+/* ── Error type reference data ────────────────────────────────────────── */
+type ErrorTypeMeta = { label: string; description: string; action: "AUTO_FIX" | "TICKET_CREATED" | "APPROVAL" | "RETRY"; dot: string };
+
+const ERROR_TYPE_META: Record<string, ErrorTypeMeta> = {
+  MAPPING_ERROR:        { label: "Mapping Error",        description: "Message mapping structural issue — source/target field mismatch or wrong XSD.",                          action: "AUTO_FIX",       dot: "#22c55e" },
+  DATA_VALIDATION:      { label: "Data Validation",      description: "Payload fails schema validation — missing required field or wrong data type.",                             action: "AUTO_FIX",       dot: "#22c55e" },
+  AUTH_CONFIG_ERROR:    { label: "Auth Config Error",    description: "Wrong credential alias or security material reference inside the iFlow.",                                  action: "AUTO_FIX",       dot: "#22c55e" },
+  ADAPTER_CONFIG_ERROR: { label: "Adapter Config Error", description: "Receiver adapter misconfigured — endpoint URL or protocol settings wrong (HTTP 4xx).",                    action: "AUTO_FIX",       dot: "#22c55e" },
+  GROOVY_ERROR:         { label: "Groovy Error",         description: "Groovy script step threw an uncaught exception — logic or null-reference bug.",                           action: "AUTO_FIX",       dot: "#22c55e" },
+  SCRIPT_ERROR:         { label: "Script Error",         description: "Script step execution failure — syntax error or missing variable.",                                        action: "AUTO_FIX",       dot: "#22c55e" },
+  SOAP_ERROR:           { label: "SOAP Error",           description: "SOAP adapter configuration issue — WSDL mismatch or SOAPAction header wrong.",                            action: "AUTO_FIX",       dot: "#22c55e" },
+  ODATA_ERROR:          { label: "OData Error",          description: "OData adapter error — entity set path or query options misconfigured.",                                   action: "AUTO_FIX",       dot: "#22c55e" },
+  ROUTING_ERROR:        { label: "Routing Error",        description: "Message routing misconfiguration — router condition does not match any branch.",                           action: "AUTO_FIX",       dot: "#22c55e" },
+  PROPERTY_ERROR:       { label: "Property Error",       description: "Exchange property referenced in a step does not exist or has the wrong name.",                             action: "AUTO_FIX",       dot: "#22c55e" },
+  SSL_ERROR:            { label: "SSL Error",            description: "SSL/TLS certificate error — certificate expired, untrusted CA, or wrong trust store.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  BACKEND_ERROR:        { label: "Backend Error",        description: "Backend service returned HTTP 5xx — the target system is down or returning errors.",                       action: "TICKET_CREATED", dot: "#ef4444" },
+  SFTP_ERROR:           { label: "SFTP Error",           description: "SFTP server-side issue — check directory path, permissions, and server availability.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  DUPLICATE_ERROR:      { label: "Duplicate Error",      description: "Duplicate record rejected by the target system — idempotency issue requires a source-side fix.",           action: "TICKET_CREATED", dot: "#ef4444" },
+  PAYLOAD_SIZE_ERROR:   { label: "Payload Size Error",   description: "Payload exceeds the size limit — message splitting or infrastructure change required.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  IDOC_ERROR:           { label: "IDoc Error",           description: "IDoc processing failure in SAP ERP — SAP Basis or functional team must investigate.",                      action: "TICKET_CREATED", dot: "#ef4444" },
+  RESOURCE_ERROR:       { label: "Resource Error",       description: "Out-of-memory or CPU exhaustion on the integration node — infrastructure team needed.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  AUTH_ERROR:           { label: "Auth Error",           description: "Authentication failed but cause is ambiguous — could be credentials or iFlow config.",                     action: "APPROVAL",       dot: "#f59e0b" },
+  UNKNOWN_ERROR:        { label: "Unknown Error",        description: "Error could not be classified by the rule engine or LLM — human review required before any fix.",         action: "APPROVAL",       dot: "#f59e0b" },
+  CONNECTIVITY_ERROR:   { label: "Connectivity Error",   description: "Transient network issue — connection refused or timed out. Agent retries automatically.",                  action: "RETRY",          dot: "#3b82f6" },
+};
+
+const ACTION_GROUPS: { key: ErrorTypeMeta["action"]; icon: string; label: string; desc: string; color: string; bg: string }[] = [
+  { key: "AUTO_FIX",       icon: "⚡", label: "Auto-Fix",          desc: "Agent resolves automatically — no manual action needed",  color: "#15803d", bg: "#f0fdf4" },
+  { key: "TICKET_CREATED", icon: "🎫", label: "Ticket Created",     desc: "Escalated to a human team — a ticket has been created",   color: "#b91c1c", bg: "#fff5f5" },
+  { key: "APPROVAL",       icon: "👤", label: "Awaiting Approval",  desc: "Agent needs human sign-off before applying any fix",      color: "#92400e", bg: "#fffbeb" },
+  { key: "RETRY",          icon: "🔄", label: "Retry",              desc: "Transient issue — agent retries the iFlow automatically", color: "#1e40af", bg: "#eff6ff" },
+];
+
 /* ── Field-change highlight component ────────────────────────────────── */
 function FieldChangeHighlight({ changes }: { changes: IFieldChange[] }) {
   if (!changes?.length) return null;
@@ -329,6 +362,7 @@ function ErrorExplanationCard({ exp }: { exp: IErrorExplanation }) {
 export default function Observability() {
   // Main tab state
   const [mainTab, setMainTab] = useState<MainTabKey>("messages");
+  const [guideOpen, setGuideOpen] = useState(false);
   
   const [filters, setFilters] = useState<IFilterState>(INITIAL_FILTERS);
   const [selectedGuid, setSelectedGuid] = useState<string | null>(null);
@@ -720,6 +754,39 @@ export default function Observability() {
         >
           ✅ Approvals ({approvals.length})
         </button>
+      </div>
+
+      {/* ── Error Type Guide ── */}
+      <div className={styles.errorGuide}>
+        <button className={styles.errorGuideToggle} onClick={() => setGuideOpen((o) => !o)}>
+          <span>📖 Error Type Guide</span>
+          <span className={styles.errorGuideChevron}>{guideOpen ? "▲" : "▼"}</span>
+        </button>
+        {guideOpen && (
+          <div className={styles.errorGuideBody}>
+            {ACTION_GROUPS.map((group) => {
+              const types = Object.entries(ERROR_TYPE_META).filter(([, m]) => m.action === group.key);
+              return (
+                <div key={group.key} className={styles.errorGuideGroup}>
+                  <div className={styles.errorGuideGroupHeader} style={{ color: group.color, background: group.bg }}>
+                    <span className={styles.errorGuideGroupIcon}>{group.icon}</span>
+                    <span className={styles.errorGuideGroupLabel}>{group.label}</span>
+                    <span className={styles.errorGuideGroupDesc}>{group.desc}</span>
+                  </div>
+                  <div className={styles.errorGuideCards}>
+                    {types.map(([type, meta]) => (
+                      <div key={type} className={styles.errorGuideCard} style={{ borderLeft: `3px solid ${meta.dot}` }}>
+                        <span className={styles.errorGuideCardType}>{type}</span>
+                        <span className={styles.errorGuideCardLabel}>{meta.label}</span>
+                        <p className={styles.errorGuideCardDesc}>{meta.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════
