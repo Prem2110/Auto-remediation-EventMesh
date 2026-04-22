@@ -107,6 +107,7 @@ def ensure_autonomous_incident_schema():
         "consecutive_failures":  "INTEGER",
         "auto_escalated":        "INTEGER",
         "source_type":           "NVARCHAR(64)",
+        "designtime_artifact_id": "NVARCHAR(500)",
     }
     try:
         conn = get_connection()
@@ -231,7 +232,8 @@ def ensure_em_schema():
                 consecutive_failures   INTEGER DEFAULT 0,
                 auto_escalated         INTEGER DEFAULT 0,
                 integration_flow_name  NVARCHAR(500),
-                artifact_id            NVARCHAR(500)
+                artifact_id            NVARCHAR(500),
+                designtime_artifact_id NVARCHAR(500)
             )""")
             logger.info("[DB] Created table %s", _INCIDENTS_TABLE)
 
@@ -516,6 +518,7 @@ def create_incident(incident: Dict):
             "last_seen":         incident.get("last_seen") or incident.get("created_at"),
             "verification_status":incident.get("verification_status"),
             "source_type":       incident.get("source_type"),
+            "designtime_artifact_id": incident.get("designtime_artifact_id", ""),
         }
         columns, values = [], []
         for logical_name, value in payload.items():

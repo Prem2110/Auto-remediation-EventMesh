@@ -192,7 +192,10 @@ Rules:
         if agent is None:
             return {"success": False, "skipped": True, "summary": "MCP agent not ready."}
 
-        iflow_id     = incident.get("iflow_id", "")
+        iflow_id     = (
+            incident.get("designtime_artifact_id")
+            or incident.get("iflow_id", "")
+        )
         error_type   = incident.get("error_type", "")
         error_msg    = incident.get("error_message", "")
         proposed_fix = incident.get("proposed_fix", "")
@@ -201,8 +204,8 @@ Rules:
 
 iFlow ID:     {iflow_id}
 Error type:   {error_type}
-Original error (truncated): {error_msg[:400]}
-Applied fix:  {proposed_fix[:400]}
+Original error: {error_msg}
+Applied fix:  {proposed_fix}
 
 INSTRUCTIONS — execute in order, stop early if a step gives a definitive result:
 1. Call check_iflow_runtime_status for iflow_id='{iflow_id}'.

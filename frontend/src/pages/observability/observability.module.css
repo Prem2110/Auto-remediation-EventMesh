@@ -1142,6 +1142,20 @@
   cursor: not-allowed;
 }
 
+.approvalsHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tabDescription {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 .emptyState {
   text-align: center;
   padding: 4rem 2rem;

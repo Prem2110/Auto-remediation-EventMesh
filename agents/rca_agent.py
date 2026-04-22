@@ -166,7 +166,10 @@ Return exactly:
     # ── main entry point ─────────────────────────────────────────────────────
 
     async def run_rca(self, incident: Dict[str, Any]) -> Dict[str, Any]:
-        iflow_id      = incident.get("iflow_id", "")
+        iflow_id      = (
+            incident.get("designtime_artifact_id")
+            or incident.get("iflow_id", "")
+        )
         error_message = incident.get("error_message", "")
         message_guid  = incident.get("message_guid", "")
         error_type    = incident.get("error_type", "UNKNOWN")

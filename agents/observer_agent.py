@@ -247,6 +247,40 @@ class SAPErrorFetcher:
             logger.error("[SAP Poller] fetch_runtime_artifact_detail error: %s", exc)
             return {}
 
+    async def fetch_designtime_artifact_id(self, iflow_name: str) -> str:
+        """Resolve a display name to the technical design-time artifact Id."""
+        if not iflow_name:
+            return ""
+        try:
+            safe_name = iflow_name.replace("'", "''")
+            payload = await self._get_json(
+                "/api/v1/IntegrationDesigntimeArtifacts",
+                params={
+                    "$filter": f"Name eq '{safe_name}'",
+                    "$select": "Id,Name",
+                    "$format": "json",
+                },
+            )
+            results = self._extract_results(payload)
+            if results:
+                resolved = results[0].get("Id", "")
+                if resolved:
+                    logger.info(
+                        "[SAP Poller] Resolved designtime artifact: '%s' → '%s'",
+                        iflow_name, resolved,
+                    )
+                    return resolved
+            logger.warning(
+                "[SAP Poller] No designtime artifact found for name='%s'", iflow_name,
+            )
+            return ""
+        except Exception as exc:
+            logger.error(
+                "[SAP Poller] fetch_designtime_artifact_id failed for '%s': %s",
+                iflow_name, exc,
+            )
+            return ""
+
     async def fetch_runtime_artifact_error_detail(self, artifact_id: str) -> str:
         try:
             return (

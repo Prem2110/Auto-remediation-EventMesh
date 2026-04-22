@@ -702,7 +702,7 @@ Issue:
 - iFlow: {iflow_id}
 - Error Type: {error_type}
 - Root Cause: {root_cause}
-- Error Message: {error_message[:400]}
+- Error Message: {error_message}
 - Proposed Fix: {proposed_fix}
 - Affected Component: {affected_component}
 {fc_hint}
@@ -1223,7 +1223,7 @@ async def explain_error(
 
 iFlow: {iflow_id}
 Error Type: {error_type}
-Error Message: {error_message[:700]}
+Error Message: {error_message}
 
 Return ONLY valid JSON — no markdown fences, no extra text:
 {{
@@ -1688,7 +1688,7 @@ async def rollback_fix(
             prompt = (
                 f"ROLLBACK — restore iFlow '{iflow_id}' to its pre-fix state.\n"
                 f"Call update-iflow with iFlow ID '{iflow_id}' and the following original content:\n"
-                f"{snapshot[:8000]}\n"
+                f"{snapshot}\n"
                 f"Then call deploy-iflow with iFlow ID '{iflow_id}'.\n"
                 f"Return ONLY valid JSON:\n"
                 f'{{"fix_applied": true, "deploy_success": true/false, "summary": "<one sentence>"}}'
@@ -1746,9 +1746,9 @@ async def smart_monitoring_chat(
                 f"[CONTEXT]\n"
                 f"iFlow: {incident.get('iflow_id', 'N/A')}\n"
                 f"Error Type: {incident.get('error_type', 'N/A')}\n"
-                f"Error: {(incident.get('error_message', '') or '')[:300]}\n"
-                f"Root Cause: {(incident.get('root_cause', '') or '')[:300]}\n"
-                f"Proposed Fix: {(incident.get('proposed_fix', '') or '')[:300]}\n\n"
+                f"Error: {incident.get('error_message', '') or ''}\n"
+                f"Root Cause: {incident.get('root_cause', '') or ''}\n"
+                f"Proposed Fix: {incident.get('proposed_fix', '') or ''}\n\n"
                 f"[USER QUESTION]\n"
             )
 

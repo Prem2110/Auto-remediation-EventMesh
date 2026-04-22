@@ -695,6 +695,33 @@ Rules:
             "consecutive_failures": 0,
             "auto_escalated":     0,
         }
+        _iflow_display = normalized.get("iflow_id", "")
+        _dt_id = ""
+        if _iflow_display and self._observer and self._observer.error_fetcher:
+            _dt_id = await self._observer.error_fetcher.fetch_designtime_artifact_id(
+                _iflow_display
+            )
+        incident["designtime_artifact_id"] = _dt_id
+
+        # ── Existence check at detection time ────────────────────────────────
+        _resolve_id = _dt_id or _iflow_display
+        if _resolve_id and self._fix:
+            _existence = await self._fix.verify_iflow_exists(_resolve_id)
+            if not _existence["exists"] and _existence.get("verified"):
+                incident["status"]              = "ARTIFACT_MISSING"
+                incident["verification_status"] = "ARTIFACT_NOT_FOUND"
+                incident["fix_summary"]         = (
+                    f"iFlow '{_resolve_id}' does not exist in SAP CPI — "
+                    f"detected at incident creation. {_existence['message']}"
+                )
+                incident["resolved_at"] = get_hana_timestamp()
+                create_incident(incident)
+                logger.warning(
+                    "[Autonomous] ARTIFACT_MISSING at detection: incident=%s iflow=%s",
+                    incident_id, _resolve_id,
+                )
+                return "ARTIFACT_MISSING"
+
         create_incident(incident)
         logger.info("[Autonomous] New incident: %s | %s | %s",
                     incident_id, normalized.get("iflow_id", ""), normalized.get("error_type", ""))
@@ -717,7 +744,10 @@ Rules:
     ) -> Dict[str, Any]:
         incident_id      = incident.get("incident_id", "")
         working_incident = dict(incident)
-        iflow_id         = working_incident.get("iflow_id", "")
+        iflow_id         = (
+            working_incident.get("designtime_artifact_id")
+            or working_incident.get("iflow_id", "")
+        )
 
         # ── Pre-flight: verify iFlow exists ──────────────────────────────────
         if iflow_id:

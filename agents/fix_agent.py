@@ -156,7 +156,8 @@ Must do:
             '"status":"success"', '"status": "success"',
             '"result":"success"', '"result": "success"',
             "deployed successfully", "deployment successful",
-            "successfully deployed", "deploy_success",
+            "successfully deployed",
+            '"deploy_success": true', '"deploy_success":true',
         ))
 
     @staticmethod
@@ -225,7 +226,7 @@ Must do:
     async def _poll_deploy_status(
         self, iflow_id: str, polls: int = 5, interval: float = 15.0
     ) -> Dict[str, Any]:
-        _STARTED = {"started", "deployed", "active", "running"}
+        _STARTED = {"started", "starting", "deployed", "active", "running"}
         _FAILED  = {"error", "failed", "stopped"}
 
         if self.error_fetcher is None:
@@ -472,15 +473,14 @@ Must do:
             logger.debug("[FIX] No diagnosis agent — skipping structured path.")
             return []
 
-        xml_snippet = (original_xml or "")[:10000]
         prompt = FIX_OPERATION_PROMPT_TEMPLATE.format(
             iflow_id=iflow_id,
             error_type=error_type,
-            error_message=(error_message or "")[:500],
+            error_message=(error_message or "")[:3000],
             proposed_fix=proposed_fix or "",
             root_cause=root_cause or "",
             affected_component=affected_component or "",
-            original_xml=xml_snippet,
+            original_xml=original_xml or "",
             pattern_history=pattern_history or "",
             sap_notes=sap_notes or "",
             error_type_guidance=error_type_guidance or "",
@@ -491,7 +491,7 @@ Must do:
                     {"messages": [{"role": "user", "content": prompt}]},
                     config={"recursion_limit": 6},
                 ),
-                timeout=120.0,
+                timeout=240.0,
             )
             final_msg = result["messages"][-1]
             answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
@@ -683,8 +683,9 @@ Must do:
                 sap_notes=sap_notes,
                 error_type_guidance=error_type_guidance,
             )
-            _is_structural = any(op.get("change_type") == "structural" for op in _operations)
-            if _operations and not _is_structural:
+            _applicable = [op for op in _operations if op.get("change_type") != "structural"]
+            if _applicable:
+                _operations = _applicable
                 _struct_result = await self._apply_structured_fix(
                     iflow_id=iflow_id,
                     operations=_operations,
@@ -712,7 +713,7 @@ Must do:
         prompt = FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
             iflow_id=iflow_id,
             error_type=error_type or "UNKNOWN",
-            error_message=(error_message or "")[:500],
+            error_message=(error_message or "")[:3000],
             message_guid=message_guid or "N/A",
             root_cause=root_cause or error_message,
             proposed_fix=proposed_fix or f"Investigate and fix the error: {error_message}",
@@ -728,17 +729,22 @@ Must do:
         tracker   = TestExecutionTracker(user_id, f"fix:{iflow_id}", timestamp)
         logger_cb = StepLogger(tracker, progress_fn=progress_fn)
 
-        result: Optional[Dict] = None
+        answer: str = ""
+        evaluation: Dict[str, Any] = {
+            "success": False, "fix_applied": False, "deploy_success": False,
+            "failed_stage": "agent", "summary": "No result from fix agent.",
+            "technical_details": "", "failed_steps": [],
+        }
+        _current_messages = messages
         for attempt in range(3):
             try:
-                result = await asyncio.wait_for(
+                _result = await asyncio.wait_for(
                     agent.ainvoke(
-                        {"messages": messages},
+                        {"messages": _current_messages},
                         config={"callbacks": [logger_cb], "recursion_limit": 18},
                     ),
                     timeout=600.0,
                 )
-                break
             except asyncio.TimeoutError:
                 diagnosis = self._diagnose_timeout(logger_cb.steps, iflow_id)
                 logger.error("[FIX_DEPLOY] agent timed out | iflow=%s stage=%s",
@@ -772,9 +778,70 @@ Must do:
                     "steps": logger_cb.steps,
                 }
 
-        final_msg  = result["messages"][-1]
-        answer     = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
-        evaluation = self.evaluate_fix_result(logger_cb.steps, answer)
+            _final_msg = _result["messages"][-1]
+            answer     = _final_msg.content if hasattr(_final_msg, "content") else str(_final_msg)
+            evaluation = self.evaluate_fix_result(logger_cb.steps, answer)
+
+            if evaluation.get("success"):
+                break
+
+            # On a logical failure (not a lock — handled separately below), retry with
+            # the failure detail appended so the agent can take a different approach.
+            _stage = evaluation.get("failed_stage", "")
+            if attempt < 2 and _stage not in ("locked", None, ""):
+                _detail = evaluation.get("technical_details", "")
+                logger.warning(
+                    "[FIX_DEPLOY] Attempt %d/3 failed (stage=%s) — retrying with failure context",
+                    attempt + 1, _stage,
+                )
+                _current_messages = [
+                    *messages,
+                    {"role": "assistant", "content": answer},
+                    {"role": "user", "content": (
+                        f"The previous attempt failed at the '{_stage}' stage.\n"
+                        f"Error detail: {_detail}\n"
+                        f"Call get-iflow again to re-read the current state of iFlow '{iflow_id}', "
+                        f"then apply a more targeted fix that avoids the previous failure."
+                    )},
+                ]
+                logger_cb = StepLogger(
+                    TestExecutionTracker(user_id, f"fix:{iflow_id}:retry{attempt + 2}", timestamp),
+                    progress_fn=progress_fn,
+                )
+
+        # ── Re-diagnosis: if Phase 2 exhausted and still failing, ask diagnosis agent
+        #    to derive a completely different structured fix using the failure as context ──
+        if not evaluation.get("success") and evaluation.get("failed_stage") != "locked":
+            if _original_xml and _original_filepath:
+                _failure_ctx = (
+                    f"PREVIOUS ATTEMPT FAILED — stage={evaluation.get('failed_stage', 'unknown')}. "
+                    f"Detail: {evaluation.get('technical_details', '')[:400]}. "
+                    f"Propose a completely different fix approach."
+                )
+                _revised_ops = await self._get_fix_operation(
+                    iflow_id=iflow_id,
+                    error_type=error_type or "UNKNOWN",
+                    error_message=error_message or "",
+                    proposed_fix=(proposed_fix or "") + "\n" + _failure_ctx,
+                    root_cause=root_cause or "",
+                    affected_component=affected_component or "",
+                    original_xml=_original_xml,
+                    pattern_history=pattern_history,
+                    sap_notes=sap_notes,
+                    error_type_guidance=error_type_guidance,
+                )
+                _revised_applicable = [op for op in _revised_ops if op.get("change_type") != "structural"]
+                if _revised_applicable:
+                    _revised_result = await self._apply_structured_fix(
+                        iflow_id=iflow_id,
+                        operations=_revised_applicable,
+                        original_xml=_original_xml,
+                        original_filepath=_original_filepath,
+                    )
+                    if _revised_result.get("success"):
+                        logger.info("[FIX] Re-diagnosis structured fix succeeded: iflow=%s", iflow_id)
+                        evaluation = _revised_result
+                        answer = _revised_result.get("summary", "")
 
         # ── Locked mid-run: unlock + one retry ───────────────────────────────
         if evaluation.get("failed_stage") == "locked" and iflow_id:
@@ -814,7 +881,7 @@ Must do:
             and not evaluation.get("deploy_success")
             and evaluation.get("failed_stage") == "deploy"
         ):
-            _pre_poll = await self._poll_deploy_status(iflow_id, polls=3, interval=10.0)
+            _pre_poll = await self._poll_deploy_status(iflow_id, polls=6, interval=15.0)
             if _pre_poll["deploy_confirmed"]:
                 evaluation.update({
                     "success": True, "deploy_success": True, "failed_stage": None,
@@ -834,7 +901,7 @@ Must do:
                 for _pass in range(1, 4):
                     correction_prompt = (
                         f"DEPLOY CORRECTION (pass {_pass}/3) — the previous fix for iFlow '{iflow_id}' "
-                        f"was uploaded but deployment failed with:\n\n{deploy_errors[:2000]}\n\n"
+                        f"was uploaded but deployment failed with:\n\n{deploy_errors}\n\n"
                         f"Execute in order:\n"
                         f"1. Call get-iflow with ID '{iflow_id}'.\n"
                         f"2. Fix ONLY the validation errors listed above — preserve all else.\n"
@@ -875,35 +942,24 @@ Must do:
                         logger.error("[FIX_DEPLOY] Self-correction pass %d error: %s", _pass, corr_exc)
                         break
 
-            # ── Rollback: restore original XML if update succeeded but deploy never did ──
+            # ── Fixed XML preserved — signal pending deploy rather than rolling back ──
+            # Rolling back would restore the broken original XML and guarantee the same error
+            # fires again. Instead, keep the fixed design-time XML and let the orchestrator
+            # schedule a deploy-only retry via FIX_APPLIED_PENDING_VERIFICATION status.
             if (
-                _original_xml
-                and iflow_id
+                iflow_id
                 and evaluation.get("fix_applied")
                 and not evaluation.get("deploy_success")
             ):
                 logger.warning(
-                    "[FIX_DEPLOY] Deploy failed after all passes — rolling back iFlow '%s' to original XML",
+                    "[FIX_DEPLOY] Deploy failed after all passes — fixed XML preserved for retry deploy: '%s'",
                     iflow_id,
                 )
-                try:
-                    # Use the proper files array format when filepath is known;
-                    # raw content= is a fallback only when we couldn't extract the filepath.
-                    if _original_filepath:
-                        _rb_args = {
-                            "id":    iflow_id,
-                            "files": [{"filepath": _original_filepath, "content": _original_xml}],
-                        }
-                    else:
-                        _rb_args = {"id": iflow_id, "content": _original_xml}
-                    rb = await self._mcp.execute_integration_tool("update-iflow", _rb_args)
-                    if rb.get("success"):
-                        logger.info("[FIX_DEPLOY] Rollback succeeded for iFlow '%s'", iflow_id)
-                        evaluation["summary"] += " (original XML restored after failed deploy)"
-                    else:
-                        logger.error("[FIX_DEPLOY] Rollback failed for iFlow '%s': %s", iflow_id, rb.get("output", ""))
-                except Exception as _rb_exc:
-                    logger.error("[FIX_DEPLOY] Rollback exception for iFlow '%s': %s", iflow_id, _rb_exc)
+                evaluation["failed_stage"] = "pending_deploy"
+                evaluation["summary"] += (
+                    " Fixed XML was uploaded but could not be deployed automatically. "
+                    "Use 'Deploy Only' to retry deployment without re-applying the fix."
+                )
 
         self._mcp.update_memory(session_id, f"Fix {iflow_id}", evaluation["summary"])
         logger.info(
@@ -941,15 +997,34 @@ Must do:
             f'"deploy_response": "<raw response>", "summary": "<one sentence>"}}'
         )
         try:
-            result      = await agent.ainvoke(
-                {"messages": [{"role": "user", "content": prompt}]},
-                config={"callbacks": [logger_cb], "recursion_limit": 6},
+            result      = await asyncio.wait_for(
+                agent.ainvoke(
+                    {"messages": [{"role": "user", "content": prompt}]},
+                    config={"callbacks": [logger_cb], "recursion_limit": 6},
+                ),
+                timeout=300.0,
             )
             final_msg   = result["messages"][-1]
             answer      = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
             eval_result = self.evaluate_fix_result(logger_cb.steps, answer)
             eval_result["fix_applied"] = True
             return {**eval_result, "steps": logger_cb.steps}
+        except asyncio.TimeoutError:
+            logger.error("[DEPLOY_ONLY] timed out for %s", iflow_id)
+            poll = await self._poll_deploy_status(iflow_id, polls=4, interval=15.0)
+            if poll["deploy_confirmed"]:
+                return {
+                    "success": True, "fix_applied": True, "deploy_success": True,
+                    "failed_stage": None,
+                    "summary": f"Deploy confirmed via runtime poll (status: {poll['status']}).",
+                    "steps": logger_cb.steps,
+                }
+            return {
+                "success": False, "fix_applied": True, "deploy_success": False,
+                "failed_stage": "pending_deploy",
+                "summary": "Deploy-only timed out. Fixed XML is in place — retry deployment.",
+                "steps": logger_cb.steps,
+            }
         except Exception as exc:
             logger.error("[DEPLOY_ONLY] error for %s: %s", iflow_id, exc)
             return {
@@ -964,7 +1039,10 @@ Must do:
         self, incident: Dict[str, Any], rca: Dict[str, Any], progress_fn=None
     ) -> Dict[str, Any]:
         return await self.ask_fix_and_deploy(
-            iflow_id=incident.get("iflow_id", ""),
+            iflow_id=(
+                incident.get("designtime_artifact_id")
+                or incident.get("iflow_id", "")
+            ),
             error_message=incident.get("error_message", ""),
             proposed_fix=rca.get("proposed_fix", ""),
             root_cause=rca.get("root_cause", ""),
@@ -988,10 +1066,14 @@ Must do:
         failed_stage: str = "",
     ) -> str:
         if not fix_success:
+            if failed_stage == "pending_deploy":
+                return "FIX_APPLIED_PENDING_VERIFICATION"
             if failed_stage in ("deploy", "deploy_validation"):
                 return "FIX_FAILED_DEPLOY"
-            if failed_stage in ("update", "get"):
+            if failed_stage in ("update", "get", "locked", "patcher", "validation"):
                 return "FIX_FAILED_UPDATE"
+            if failed_stage in ("agent", "tool_validation"):
+                return "FIX_FAILED"
             return "FIX_FAILED"
         if policy.get("action") == "RETRY":
             if retry_result and (retry_result.get("success") or retry_result.get("skipped")):
@@ -1015,7 +1097,7 @@ Must do:
             snapshot_raw = await get_tool.ainvoke({"id": iflow_id})
             snapshot_str = json.dumps(snapshot_raw) if not isinstance(snapshot_raw, str) else snapshot_raw
             from db.database import update_incident as _update  # noqa: PLC0415
-            _update(incident_id, {"iflow_snapshot_before": snapshot_str[:50000]})
+            _update(incident_id, {"iflow_snapshot_before": snapshot_str})
             logger.info("[FIX] iFlow snapshot captured for %s (%d chars)", iflow_id, len(snapshot_str))
             orig_fp, orig_xml = _extract_iflow_file(snapshot_str)
             if orig_fp:

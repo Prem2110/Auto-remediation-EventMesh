@@ -73,23 +73,27 @@ const STATUS_CONFIG: Record<string, StatusCfg> = {
   SUCCESS:    GREEN,
   PROCESSING: BLUE,
   RETRY:      AMBER,
-  DETECTED:                       { ...RED,   label: "Detected" },
-  CLASSIFIED:                     { ...BLUE,  label: "Classified" },
-  RCA_IN_PROGRESS:                { ...BLUE,  label: "Analyzing" },
-  RCA_COMPLETE:                   { ...BLUE,  label: "RCA Done" },
-  RCA_FAILED:                     { ...RED,   label: "RCA Failed" },
-  FIX_IN_PROGRESS:                { ...AMBER, label: "Fixing" },
-  FIX_FAILED:                     { ...RED,   label: "Fix Failed" },
-  FIX_APPLIED_PENDING_VERIFICATION:{ ...AMBER,label: "Verifying" },
-  AUTO_FIXED:                     { ...GREEN, label: "Auto-Fixed" },
-  HUMAN_FIXED:                    { ...GREEN, label: "Fixed" },
-  FIX_VERIFIED:                   { ...GREEN, label: "Verified" },
-  PENDING_APPROVAL:               { ...PURPLE,label: "Pending Approval" },
-  AWAITING_APPROVAL:              { ...PURPLE,label: "Awaiting Approval" },
-  TICKET_CREATED:                 { ...PURPLE,label: "Ticket Created" },
-  PIPELINE_ERROR:                 { ...RED,   label: "Pipeline Error" },
-  REJECTED:                       { ...GREY,  label: "Rejected" },
-  RETRIED:                        { ...GREEN, label: "Retried" },
+  DETECTED:                        { ...RED,    label: "Detected" },
+  CLASSIFIED:                      { ...BLUE,   label: "Classified" },
+  RCA_IN_PROGRESS:                 { ...BLUE,   label: "Analyzing" },
+  RCA_COMPLETE:                    { ...BLUE,   label: "RCA Done" },
+  RCA_FAILED:                      { ...RED,    label: "RCA Failed" },
+  FIX_IN_PROGRESS:                 { ...AMBER,  label: "Fixing" },
+  FIX_FAILED:                      { ...RED,    label: "Fix Failed" },
+  FIX_FAILED_UPDATE:               { ...RED,    label: "Fix Failed (Update)" },
+  FIX_FAILED_DEPLOY:               { ...RED,    label: "Fix Failed (Deploy)" },
+  FIX_FAILED_RUNTIME:              { ...RED,    label: "Fix Failed (Runtime)" },
+  FIX_APPLIED_PENDING_VERIFICATION:{ ...AMBER,  label: "Verifying" },
+  AUTO_FIXED:                      { ...GREEN,  label: "Auto-Fixed" },
+  HUMAN_FIXED:                     { ...GREEN,  label: "Fixed" },
+  FIX_VERIFIED:                    { ...GREEN,  label: "Verified" },
+  PENDING_APPROVAL:                { ...PURPLE, label: "Pending Approval" },
+  AWAITING_APPROVAL:               { ...PURPLE, label: "Awaiting Approval" },
+  TICKET_CREATED:                  { ...PURPLE, label: "Ticket Created" },
+  ARTIFACT_MISSING:                { ...GREY,   label: "Artifact Missing" },
+  PIPELINE_ERROR:                  { ...RED,    label: "Pipeline Error" },
+  REJECTED:                        { ...GREY,   label: "Rejected" },
+  RETRIED:                         { ...GREEN,  label: "Retried" },
 };
 
 function StatusPill({ status }: { status: string }) {
@@ -105,7 +109,8 @@ function StatusPill({ status }: { status: string }) {
 
 const TERMINAL_STATUSES = new Set([
   "AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED",
-  "FIX_FAILED", "PIPELINE_ERROR", "REJECTED", "TICKET_CREATED",
+  "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME",
+  "PIPELINE_ERROR", "REJECTED", "TICKET_CREATED", "ARTIFACT_MISSING",
 ]);
 
 /* ── Tab definitions ─────────────────────────────────────────────────── */
@@ -312,6 +317,7 @@ export default function Observability() {
   
   const [filters, setFilters] = useState<IFilterState>(INITIAL_FILTERS);
   const [selectedGuid, setSelectedGuid] = useState<string | null>(null);
+  const [selectedMsg, setSelectedMsg] = useState<IMonitorMessage | null>(null);
   const [detail, setDetail] = useState<IMessageDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("error");
@@ -333,6 +339,7 @@ export default function Observability() {
 
   // Approval action feedback
   const [approvalActionError, setApprovalActionError] = useState<string | null>(null);
+  const [bulkActionLoading, setBulkActionLoading] = useState<"approving" | "rejecting" | null>(null);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["monitor-messages"],
@@ -358,7 +365,7 @@ export default function Observability() {
   });
 
   const STATUS_GROUP: Record<string, string[]> = {
-    FAILED:     ["FAILED", "FIX_FAILED", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED"],
+    FAILED:     ["FAILED", "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED", "ARTIFACT_MISSING"],
     SUCCESS:    ["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS"],
     PROCESSING: ["RCA_IN_PROGRESS", "FIX_IN_PROGRESS", "CLASSIFIED", "RCA_COMPLETE", "FIX_APPLIED_PENDING_VERIFICATION", "PROCESSING"],
     RETRY:      ["RETRY", "PENDING_APPROVAL", "TICKET_CREATED", "AWAITING_APPROVAL"],
@@ -389,7 +396,7 @@ export default function Observability() {
     const result: Record<string, number> = { FAILED: 0, SUCCESS: 0, PROCESSING: 0, RETRY: 0 };
     all.forEach((m) => {
       const s = (m.status || "").toUpperCase();
-      if (["FAILED", "FIX_FAILED", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED"].includes(s)) result.FAILED++;
+      if (["FAILED", "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED", "ARTIFACT_MISSING"].includes(s)) result.FAILED++;
       else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS"].includes(s)) result.SUCCESS++;
       else if (["RCA_IN_PROGRESS", "FIX_IN_PROGRESS", "CLASSIFIED", "RCA_COMPLETE", "FIX_APPLIED_PENDING_VERIFICATION"].includes(s)) result.PROCESSING++;
       else if (["RETRY", "PENDING_APPROVAL", "TICKET_CREATED", "AWAITING_APPROVAL"].includes(s)) result.RETRY++;
@@ -421,11 +428,50 @@ export default function Observability() {
     }
   }, [refetchApprovals]);
 
+  const handleApproveAll = useCallback(async () => {
+    const pending = (approvalsData?.pending || []) as Approval[];
+    const targets = pending.filter((a) => a.status === "AWAITING_APPROVAL");
+    if (!targets.length) return;
+    setApprovalActionError(null);
+    setBulkActionLoading("approving");
+    const errors: string[] = [];
+    await Promise.allSettled(
+      targets.map((a) =>
+        approveIncident(a.incident_id, true, "Bulk approved via UI").catch(() => {
+          errors.push(a.incident_id);
+        })
+      )
+    );
+    setBulkActionLoading(null);
+    if (errors.length) setApprovalActionError(`${errors.length} approval(s) failed. Others succeeded.`);
+    refetchApprovals();
+  }, [approvalsData, refetchApprovals]);
+
+  const handleRejectAll = useCallback(async () => {
+    const pending = (approvalsData?.pending || []) as Approval[];
+    const targets = pending.filter((a) => a.status === "AWAITING_APPROVAL");
+    if (!targets.length) return;
+    setApprovalActionError(null);
+    setBulkActionLoading("rejecting");
+    const errors: string[] = [];
+    await Promise.allSettled(
+      targets.map((a) =>
+        approveIncident(a.incident_id, false, "Bulk rejected via UI").catch(() => {
+          errors.push(a.incident_id);
+        })
+      )
+    );
+    setBulkActionLoading(null);
+    if (errors.length) setApprovalActionError(`${errors.length} rejection(s) failed. Others succeeded.`);
+    refetchApprovals();
+  }, [approvalsData, refetchApprovals]);
+
   /* ── Select a message and load full detail ─────────────────────────── */
   const handleSelect = useCallback(async (msg: IMonitorMessage) => {
     const guid = msg.message_guid;
     if (!guid) return;
     setSelectedGuid(guid);
+    setSelectedMsg(msg);
     setDetail(null);
     setFixPatch(null);
     setFixState("idle");
@@ -792,10 +838,10 @@ export default function Observability() {
                 {/* Header */}
                 <div className={styles.detailHeader}>
                   <div className={styles.detailHeaderLeft}>
-                    <h3 className={styles.detailTitle} title={detail?.iflow_display || selectedGuid || undefined}>
-                      {detail?.iflow_display || selectedGuid}
+                    <h3 className={styles.detailTitle} title={detail?.iflow_display || selectedMsg?.iflow_display || selectedGuid || undefined}>
+                      {detail?.iflow_display || selectedMsg?.iflow_display || selectedGuid}
                     </h3>
-                    <StatusPill status={detail?.status || "FAILED"} />
+                    <StatusPill status={detail?.status || selectedMsg?.status || "UNKNOWN"} />
                     {detail?.last_updated && (
                       <span className={styles.detailUpdated}>
                         Last Updated at: {detail.last_updated}
@@ -811,7 +857,7 @@ export default function Observability() {
                     >
                       {analyzeLoading ? "Analyzing..." : "Recheck"}
                     </button>
-                    <button className={styles.closeBtn} onClick={() => { setSelectedGuid(null); setDetail(null); }} data-tip="Close detail panel">x</button>
+                    <button className={styles.closeBtn} onClick={() => { setSelectedGuid(null); setSelectedMsg(null); setDetail(null); }} data-tip="Close detail panel">x</button>
                   </div>
                 </div>
 
@@ -1130,7 +1176,10 @@ export default function Observability() {
       {mainTab === "tickets" && (
         <div className={styles.ticketsContainer}>
           <div className={styles.ticketsHeader}>
-            <h2>Escalation Tickets</h2>
+            <div>
+              <h2>Escalation Tickets</h2>
+              <p className={styles.tabDescription}>Incidents that could not be auto-remediated are escalated here as tickets for manual review and resolution.</p>
+            </div>
             <button onClick={() => refetchTickets()} disabled={ticketsLoading}>
               {ticketsLoading ? "Loading..." : "Refresh"}
             </button>
@@ -1229,10 +1278,31 @@ export default function Observability() {
       {mainTab === "approvals" && (
         <div className={styles.approvalsContainer}>
           <div className={styles.approvalsHeader}>
-            <h2>Pending Approvals</h2>
-            <button onClick={() => refetchApprovals()} disabled={approvalsLoading}>
-              {approvalsLoading ? "Loading..." : "Refresh"}
-            </button>
+            <div>
+              <h2>Pending Approvals</h2>
+              <p className={styles.tabDescription}>AI-proposed fixes awaiting human sign-off before being deployed to SAP CPI. Review and approve or reject each one below.</p>
+            </div>
+            <div className={styles.approvalsHeaderActions}>
+              <button
+                className={`${styles.btn} ${styles.btnApprove}`}
+                onClick={handleApproveAll}
+                disabled={!!bulkActionLoading || approvalsLoading || approvals.filter(a => a.status === "AWAITING_APPROVAL").length === 0}
+                title="Approve all awaiting incidents at once"
+              >
+                {bulkActionLoading === "approving" ? "Approving..." : "✓ Approve All"}
+              </button>
+              <button
+                className={`${styles.btn} ${styles.btnReject}`}
+                onClick={handleRejectAll}
+                disabled={!!bulkActionLoading || approvalsLoading || approvals.filter(a => a.status === "AWAITING_APPROVAL").length === 0}
+                title="Reject all awaiting incidents at once"
+              >
+                {bulkActionLoading === "rejecting" ? "Rejecting..." : "✗ Reject All"}
+              </button>
+              <button onClick={() => refetchApprovals()} disabled={approvalsLoading || !!bulkActionLoading}>
+                {approvalsLoading ? "Loading..." : "Refresh"}
+              </button>
+            </div>
           </div>
 
           {approvalActionError && (
