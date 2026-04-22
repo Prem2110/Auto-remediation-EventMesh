@@ -480,7 +480,7 @@ async def get_status_breakdown():
             "FIX_FAILED_RUNTIME":     "Fix deployed but iFlow still erroring at runtime",
             "TICKET_CREATED":         "Low confidence or escalated — external ticket raised",
             # ── Artifact ──
-            "ARTIFACT_MISSING":       "iFlow confirmed deleted in SAP CPI (HTTP 404)",
+            "ARTIFACT_MISSING":       "iFlow missing or deleted in SAP CPI (HTTP 404)",
             "VERIFICATION_UNAVAILABLE": "iFlow existence could not be verified (SAP API error)",
         }
         

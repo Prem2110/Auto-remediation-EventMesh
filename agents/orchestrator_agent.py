@@ -781,6 +781,46 @@ Rules:
                     "incident":       get_incident_by_id(incident_id) or working_incident,
                 }
 
+        # ── Pre-flight: check iFlow runtime health ───────────────────────────
+        # If the iFlow is already in Started/healthy state before we touch it,
+        # a human has likely fixed it manually. Skip the AI fix to avoid
+        # modifying a working iFlow.
+        if iflow_id and self._observer and self._observer.error_fetcher:
+            try:
+                _rt = await self._observer.error_fetcher.fetch_runtime_artifact_detail(iflow_id)
+                _rt_status = (
+                    str(_rt.get("Status") or _rt.get("DeployState") or _rt.get("RuntimeStatus") or "")
+                    .strip().lower()
+                )
+                if _rt_status == "started":
+                    _health_summary = (
+                        f"iFlow '{iflow_id}' is already in Started state — "
+                        f"likely fixed manually before the AI fix could run. No changes applied."
+                    )
+                    logger.info("[FIX] Runtime pre-check: %s is healthy (Started) — skipping fix.", iflow_id)
+                    update_incident(incident_id, {
+                        "status":              "HUMAN_INITIATED_FIX",
+                        "fix_summary":         _health_summary,
+                        "resolved_at":         get_hana_timestamp(),
+                        "verification_status": "VERIFIED",
+                    })
+                    return {
+                        "incident_id":    incident_id,
+                        "iflow_id":       iflow_id,
+                        "status":         "HUMAN_INITIATED_FIX",
+                        "success":        True,
+                        "fix_applied":    False,
+                        "deploy_success": False,
+                        "failed_stage":   None,
+                        "summary":        _health_summary,
+                        "root_cause":     working_incident.get("root_cause"),
+                        "proposed_fix":   working_incident.get("proposed_fix"),
+                        "confidence":     working_incident.get("rca_confidence"),
+                        "incident":       get_incident_by_id(incident_id) or working_incident,
+                    }
+            except Exception as _rt_exc:
+                logger.warning("[FIX] Runtime health pre-check failed for %s: %s — proceeding with fix.", iflow_id, _rt_exc)
+
         rca = {
             "root_cause":         working_incident.get("root_cause", ""),
             "proposed_fix":       working_incident.get("proposed_fix", ""),

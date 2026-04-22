@@ -90,7 +90,7 @@ const STATUS_CONFIG: Record<string, StatusCfg> = {
   PENDING_APPROVAL:                { ...PURPLE, label: "Pending Approval" },
   AWAITING_APPROVAL:               { ...PURPLE, label: "Awaiting Approval" },
   TICKET_CREATED:                  { ...PURPLE, label: "Ticket Created" },
-  ARTIFACT_MISSING:                { ...GREY,   label: "Artifact Missing" },
+  ARTIFACT_MISSING:                { ...GREY,   label: "Artifact Missing or Deleted" },
   PIPELINE_ERROR:                  { ...RED,    label: "Pipeline Error" },
   REJECTED:                        { ...GREY,   label: "Rejected" },
   RETRIED:                         { ...GREEN,  label: "Retried" },

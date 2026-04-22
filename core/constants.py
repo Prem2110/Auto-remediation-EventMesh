@@ -122,7 +122,7 @@ _STATUS_ACTION_HINTS: Dict[str, str] = {
     "FIX_FAILED_UPDATE":        "Fix could not be uploaded to SAP CPI — check artifact permissions and retry.",
     "FIX_FAILED_DEPLOY":        "Fix was uploaded but deployment failed — check CPI deploy logs and retry deploy.",
     "FIX_FAILED_RUNTIME":       "iFlow deployed but failed again at runtime — a deeper manual investigation is needed.",
-    "ARTIFACT_MISSING":         "iFlow artifact could not be found in SAP CPI — verify the iFlow ID and package.",
+    "ARTIFACT_MISSING":         "iFlow artifact could not be found in SAP CPI — it may have been deleted or the ID is incorrect.",
     "REJECTED":                 "Fix was rejected by the approver — re-open and submit a revised fix if needed.",
     "RCA_INCONCLUSIVE":         "Root cause could not be determined — additional logs or manual analysis required.",
     "VERIFICATION_UNAVAILABLE": "Fix deployed but verification test could not run — manually verify the iFlow in CPI.",
