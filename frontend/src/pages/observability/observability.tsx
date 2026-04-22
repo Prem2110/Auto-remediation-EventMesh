@@ -223,6 +223,21 @@ function Timeline({ entries }: { entries: IHistoryTimelineEntry[] }) {
   );
 }
 
+/* ── Ticket description parser ───────────────────────────────────────── */
+function parseTicketDescription(desc: string): Record<string, string> {
+  if (!desc) return {};
+  const markerPattern = /\b(iFlow|Error|Root cause|Proposed fix|Incident ID|Occurrence count|RCA confidence):\s*/g;
+  const parts = desc.split(markerPattern);
+  // parts: [preamble, key1, val1, key2, val2, ...]  (split with capturing group)
+  const result: Record<string, string> = {};
+  for (let i = 1; i < parts.length; i += 2) {
+    const key = parts[i].toLowerCase().replace(/\s+/g, '_');
+    const val = (parts[i + 1] || '').trim();
+    result[key] = val;
+  }
+  return result;
+}
+
 /* ── Rich text renderer ──────────────────────────────────────────────── */
 function RichText({ text }: { text: string }) {
   if (!text) return null;
@@ -1250,9 +1265,45 @@ export default function Observability() {
                       <span><strong>Error Type:</strong> {ticket.error_type}</span>
                       {ticket.assigned_to && <span><strong>Assigned To:</strong> {ticket.assigned_to}</span>}
                     </div>
-                    
-                    <p className={styles.ticketDescription}>{ticket.description}</p>
-                    
+
+                    {(() => {
+                      const parsed = parseTicketDescription(ticket.description);
+                      const hasStructure = parsed.error || parsed.root_cause || parsed.proposed_fix;
+                      if (!hasStructure) return <p className={styles.ticketDescription}>{ticket.description}</p>;
+                      return (
+                        <div className={styles.ticketSections}>
+                          {parsed.error && (
+                            <div className={styles.approvalSection}>
+                              <strong>Error Message</strong>
+                              <p className={styles.errorText}>{parsed.error}</p>
+                            </div>
+                          )}
+                          {parsed.root_cause && (
+                            <div className={styles.approvalSection}>
+                              <strong>Root Cause</strong>
+                              <p>{parsed.root_cause}</p>
+                            </div>
+                          )}
+                          {parsed.proposed_fix && (
+                            <div className={styles.approvalSection}>
+                              <strong>Proposed Fix</strong>
+                              <p className={styles.fixText}>{parsed.proposed_fix}</p>
+                            </div>
+                          )}
+                          {(parsed.occurrence_count || parsed.rca_confidence) && (
+                            <div className={styles.ticketSectionMeta}>
+                              {parsed.occurrence_count && (
+                                <span><strong>Occurrences:</strong> {parsed.occurrence_count}</span>
+                              )}
+                              {parsed.rca_confidence && !isNaN(parseFloat(parsed.rca_confidence)) && (
+                                <span><strong>RCA Confidence:</strong> {(parseFloat(parsed.rca_confidence) * 100).toFixed(0)}%</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {ticket.resolution_notes && (
                       <div className={styles.ticketResolution}>
                         <strong>Resolution:</strong>

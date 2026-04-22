@@ -378,6 +378,29 @@ Rules:
         confidence = rca.get("confidence", 0.0)
         policy     = self.get_remediation_policy(incident, rca)
 
+        # ── Non-fixable error type gate ───────────────────────────────────────
+        # If the error type is definitively NOT fixable via iFlow XML and we have
+        # high confidence in that classification, skip RCA/fix and escalate directly.
+        _gate_error_type = rca.get("error_type") or incident.get("error_type") or "UNKNOWN_ERROR"
+        _is_fixable = self._classifier.is_iflow_fixable(_gate_error_type)
+        if not _is_fixable and confidence >= 0.80:
+            _reason = self._classifier.fallback_root_cause(_gate_error_type, incident.get("error_message", ""))
+            logger.info(
+                "[Gate] NON-FIXABLE error type '%s' (confidence=%.2f) — escalating to ticket: %s",
+                _gate_error_type, confidence, incident.get("iflow_id", ""),
+            )
+            update_incident(incident["incident_id"], {"status": "RCA_INCONCLUSIVE"})
+            ticket_id = await self._create_external_ticket(incident, rca)
+            update_incident(incident["incident_id"], {
+                "status":    "TICKET_CREATED",
+                "ticket_id": ticket_id,
+                "fix_summary": (
+                    f"Error type '{_gate_error_type}' cannot be resolved by modifying iFlow XML. "
+                    f"Root cause: {_reason[:300]}"
+                ),
+            })
+            return "TICKET_CREATED"
+
         # Classifier confidence floor
         clf_confidence = self._classifier.classify_error(
             incident.get("error_message", "")
@@ -608,14 +631,36 @@ Rules:
     # ────────────────────────────────────────────
 
     async def process_detected_error(self, normalized_error: Dict[str, Any]) -> str:
-        normalized = dict(normalized_error)
-        clf        = self._classifier.classify_error(normalized.get("error_message", ""))
+        normalized  = dict(normalized_error)
+        _error_msg  = normalized.get("error_message", "")
+        _iflow_id   = normalized.get("iflow_id", "")
+
+        # ── Step 1: rule-based classifier (zero latency, zero cost) ──────────
+        clf = self._classifier.classify_error(_error_msg)
+
+        # ── Step 2: LLM fallback when rule-based is uncertain ────────────────
+        # Trigger when: UNKNOWN_ERROR or confidence < 0.70
+        if clf.get("confidence", 0.0) < 0.70:
+            try:
+                llm_clf = await self._classifier.classify_with_llm(_error_msg, _iflow_id)
+                if llm_clf and llm_clf.get("confidence", 0.0) > clf.get("confidence", 0.0):
+                    logger.info(
+                        "[Classifier] LLM upgrade: %s(%.2f) → %s(%.2f) for iflow=%s",
+                        clf.get("error_type"), clf.get("confidence", 0.0),
+                        llm_clf.get("error_type"), llm_clf.get("confidence", 0.0),
+                        _iflow_id,
+                    )
+                    clf = llm_clf
+            except Exception as _clf_exc:
+                logger.warning("[Classifier] LLM fallback error: %s — keeping rule-based result.", _clf_exc)
+
         normalized.update(clf)
         logger.info(
-            "[ERROR_DETECTED] iflow=%s error_type=%s confidence=%.2f guid=%s source=%s | error=%.250s",
-            normalized.get("iflow_id", ""), clf.get("error_type", ""),
-            clf.get("confidence", 0.0), normalized.get("message_guid", ""),
-            normalized.get("source_type", ""), normalized.get("error_message", ""),
+            "[ERROR_DETECTED] iflow=%s error_type=%s confidence=%.2f fixable=%s guid=%s source=%s | error=%.250s",
+            _iflow_id, clf.get("error_type", ""),
+            clf.get("confidence", 0.0), clf.get("is_iflow_fixable", True),
+            normalized.get("message_guid", ""),
+            normalized.get("source_type", ""), _error_msg,
         )
 
         # ── Existing open incident for same signature ─────────────────────────

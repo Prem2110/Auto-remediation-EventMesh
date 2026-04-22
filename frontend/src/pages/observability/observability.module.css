@@ -1295,6 +1295,31 @@
   margin: 0.5rem 0;
 }
 
+.ticketSections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.ticketSectionMeta {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  background: var(--orbit-gray-50, #f9fafb);
+  border-radius: 0.375rem;
+  font-size: 0.8rem;
+  color: var(--orbit-gray-700, #374151);
+  border: 1px solid var(--orbit-gray-100, #f3f4f6);
+}
+
+.ticketSectionMeta strong {
+  color: var(--orbit-gray-500, #6b7280);
+  font-weight: 600;
+  margin-right: 0.2rem;
+}
+
 .ticketResolution {
   margin-top: 0.875rem;
   padding: 0.75rem 1rem;
