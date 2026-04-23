@@ -227,6 +227,7 @@ class SAPErrorFetcher:
             "source_type":    "MESSAGE_PROCESSING_LOG",
             "message_guid":   raw.get("MessageGuid", ""),
             "iflow_id":       raw.get("IntegrationFlowName", ""),
+            "artifact_id":    raw.get("ArtifactId", ""),
             "sender":         raw.get("Sender", ""),
             "receiver":       raw.get("Receiver", ""),
             "status":         raw.get("Status", "FAILED"),

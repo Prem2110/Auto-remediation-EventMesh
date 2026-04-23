@@ -253,7 +253,7 @@
                 </ifl:property>
                 <ifl:property>
                     <key>credentialName</key>
-                    <value>CIG</value>
+                    <value>tenant</value>
                 </ifl:property>
                 <ifl:property>
                     <key>httpErrorResponseCodes</key>
@@ -265,7 +265,7 @@
                 </ifl:property>
                 <ifl:property>
                     <key>httpAddressWithoutQuery</key>
-                    <value>https://cpi-sbx.it-cpi019.cfapps.us10-002.hana.ondemand.com/api/v1/MessageProcessingLogs('${property.MessageGuid}')/ErrorInformation/$value</value>
+                    <value>https://hess-test-btdpygoi.it-cpi019.cfapps.us10-002.hana.ondemand.com/api/v1/MessageProcessingLogs('${property.MessageGuid}')/ErrorInformation/$value</value>
                 </ifl:property>
                 <ifl:property>
                     <key>providerRelativeUrl</key>
@@ -341,7 +341,7 @@
                 </ifl:property>
                 <ifl:property>
                     <key>alias</key>
-                    <value>CIG</value>
+                    <value>tenant</value>
                 </ifl:property>
                 <ifl:property>
                     <key>contentType</key>
@@ -377,11 +377,11 @@
                 </ifl:property>
                 <ifl:property>
                     <key>address</key>
-                    <value>https://cpi-sbx.it-cpi019.cfapps.us10-002.hana.ondemand.com/api/v1</value>
+                    <value>https://hess-test-btdpygoi.it-cpi019.cfapps.us10-002.hana.ondemand.com/api/v1</value>
                 </ifl:property>
                 <ifl:property>
                     <key>queryOptions</key>
-                    <value>$select=MessageGuid,Status,LogEnd,IntegrationArtifact&amp;$top=10&amp;$filter=Status eq 'FAILED'</value>
+                    <value>$select=MessageGuid,Status,LogEnd,IntegrationArtifact&amp;$top=10&amp;$filter=Status eq 'FAILED'&amp;$orderby=LogEnd desc</value>
                 </ifl:property>
                 <ifl:property>
                     <key>proxyType</key>
@@ -513,7 +513,7 @@
                 </ifl:property>
                 <ifl:property>
                     <key>destinationName</key>
-                    <value>queue:cpi/evt/02/autofix/observer/out</value>
+                    <value>queue:cpi/evt/02/autofix</value>
                 </ifl:property>
                 <ifl:property>
                     <key>host</key>
@@ -585,7 +585,7 @@
                 </ifl:property>
                 <ifl:property>
                     <key>credentialName</key>
-                    <value>EventMesh_CPIEVT</value>
+                    <value>Event_Mesh_R</value>
                 </ifl:property>
                 <ifl:property>
                     <key>MessageProtocolVersion</key>
@@ -682,6 +682,7 @@
                     <value>&lt;MessageProcessingLogs&gt;
 &lt;MessageGuid&gt;${property.MessageGuid}&lt;/MessageGuid&gt;
 &lt;IntegrationFlowName&gt;${property.Name}&lt;/IntegrationFlowName&gt;
+&lt;ArtifactId&gt;${property.ArtifactId}&lt;/ArtifactId&gt;
 &lt;Status&gt;${property.Status}&lt;/Status&gt;
 &lt;LogEnd&gt;${property.LogEnd}&lt;/LogEnd&gt;
 &lt;ErrorMessage&gt;${in.body}&lt;/ErrorMessage&gt;
@@ -711,7 +712,7 @@
                 </ifl:property>
                 <ifl:property>
                     <key>propertyTable</key>
-                    <value>&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//Status&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;Status&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//LogEnd&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;LogEnd&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//Name&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;Name&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//MessageProcessingLog/MessageGuid&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;MessageGuid&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;</value>
+                    <value>&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//Status&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;Status&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//LogEnd&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;LogEnd&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//Name&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;Name&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//IntegrationArtifact/Id&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;ArtifactId&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;&lt;row&gt;&lt;cell id='Action'&gt;Create&lt;/cell&gt;&lt;cell id='Type'&gt;xpath&lt;/cell&gt;&lt;cell id='Value'&gt;//MessageProcessingLog/MessageGuid&lt;/cell&gt;&lt;cell id='Default'&gt;&lt;/cell&gt;&lt;cell id='Name'&gt;MessageGuid&lt;/cell&gt;&lt;cell id='Datatype'&gt;java.lang.String&lt;/cell&gt;&lt;/row&gt;</value>
                 </ifl:property>
                 <ifl:property>
                     <key>headerTable</key>
@@ -831,7 +832,7 @@
         </bpmn2:callActivity>
         <bpmn2:startEvent id="StartEvent_43242616" name="Start Timer 1">
             <bpmn2:outgoing>SequenceFlow_43242617</bpmn2:outgoing>
-            <bpmn2:timerEventDefinition id="TimerEventDefinition_113089">
+            <bpmn2:timerEventDefinition id="TimerEventDefinition_611777">
                 <bpmn2:extensionElements>
                     <ifl:property>
                         <key>scheduleKey</key>

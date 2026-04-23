@@ -741,8 +741,13 @@ Rules:
             "auto_escalated":     0,
         }
         _iflow_display = normalized.get("iflow_id", "")
+        _artifact_id   = normalized.get("artifact_id", "")  # technical ID direct from CPI message log
         _dt_id = ""
-        if _iflow_display and self._observer and self._observer.error_fetcher:
+        if _artifact_id:
+            # Technical artifact ID already known — no name-to-ID OData lookup needed
+            _dt_id = _artifact_id
+            logger.debug("[Autonomous] Using direct artifact_id='%s' for '%s'", _dt_id, _iflow_display)
+        elif _iflow_display and self._observer and self._observer.error_fetcher:
             _dt_id = await self._observer.error_fetcher.fetch_designtime_artifact_id(
                 _iflow_display
             )

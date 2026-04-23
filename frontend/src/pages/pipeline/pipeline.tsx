@@ -6,7 +6,6 @@ import {
   startPipeline,
   stopPipeline,
   fetchPipelineTrace,
-  searchKnowledge,
 } from "../../services/api.ts";
 import _styles from "./pipeline.module.css";
 // Vite 8 types CSS module values as `unknown`; cast so className={styles.x} compiles.
@@ -37,19 +36,9 @@ interface TraceIncident {
   proposed_fix?: string;
 }
 
-interface KnowledgeResult {
-  fix_description: string;
-  similarity_score: number;
-  error_type: string;
-  iflow_name?: string;
-}
-
 export default function Pipeline() {
   const qc = useQueryClient();
   const [toggling, setToggling] = useState(false);
-  const [knowledgeQuery, setKnowledgeQuery] = useState("");
-  const [knowledgeResults, setKnowledgeResults] = useState<KnowledgeResult[] | null>(null);
-  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: pipelineData } = useQuery({
@@ -87,19 +76,6 @@ export default function Pipeline() {
     }
   }
 
-  // ── Knowledge search ─────────────────────────────────────────────────────
-  async function handleKnowledgeSearch() {
-    if (!knowledgeQuery.trim()) return;
-    setKnowledgeLoading(true);
-    try {
-      const res = await searchKnowledge(knowledgeQuery.trim());
-      setKnowledgeResults(res.results as KnowledgeResult[]);
-    } catch {
-      setKnowledgeResults([]);
-    } finally {
-      setKnowledgeLoading(false);
-    }
-  }
 
   const running = pipelineData?.pipeline_running ?? false;
   const agentStatuses = pipelineData?.agents ?? {};
@@ -118,7 +94,7 @@ export default function Pipeline() {
         <div>
           <h1 className={styles.pageTitle}>Auto-Remediation Pipeline</h1>
           <p className={styles.pageSubtitle}>
-            5 specialist agents · Per-agent tools · SAP AI Core · HANA vector search
+            5 specialist agents · Per-agent tools · SAP AI Core
           </p>
         </div>
         <div className={styles.headerRight}>
@@ -182,52 +158,6 @@ export default function Pipeline() {
             </div>
           );
         })}
-      </div>
-
-      {/* ── Knowledge search ── */}
-      <div className={styles.sectionLabel} data-tip="Search past incidents for similar error patterns and their proven fixes">Knowledge Base Search</div>
-      <div className={styles.knowledgePanel}>
-        <div className={styles.knowledgeInputRow}>
-          <input
-            className={styles.knowledgeInput}
-            placeholder="Search for similar fixes… e.g. 'Connection refused to SOAP endpoint'"
-            value={knowledgeQuery}
-            onChange={e => setKnowledgeQuery(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleKnowledgeSearch()}
-            title="Enter an error message or description to find similar past incidents and their fixes"
-          />
-          <button
-            className={styles.knowledgeBtn}
-            onClick={handleKnowledgeSearch}
-            disabled={knowledgeLoading || !knowledgeQuery.trim()}
-            data-tip="Search the knowledge base for similar error patterns and proven fixes"
-          >
-            {knowledgeLoading ? "Searching…" : "Search"}
-          </button>
-        </div>
-
-        {knowledgeResults !== null && (
-          <div className={styles.knowledgeResults}>
-            {knowledgeResults.length === 0 ? (
-              <div className={styles.knowledgeEmpty}>No similar fixes found.</div>
-            ) : (
-              knowledgeResults.map((r, i) => (
-                <div key={i} className={styles.knowledgeResultCard}>
-                  <div className={styles.knowledgeResultHeader}>
-                    <span className={styles.knowledgeResultType}>{r.error_type}</span>
-                    <span className={styles.knowledgeResultScore} data-tip="Similarity score: 100% = exact keyword match, 60% = partial match based on error pattern overlap">
-                      {(r.similarity_score * 100).toFixed(1)}% match
-                    </span>
-                  </div>
-                  {r.iflow_name && (
-                    <span className={styles.knowledgeResultIflow}>{r.iflow_name}</span>
-                  )}
-                  <p className={styles.knowledgeResultFix}>{r.fix_description}</p>
-                </div>
-              ))
-            )}
-          </div>
-        )}
       </div>
 
       {/* ── Pipeline trace ── */}

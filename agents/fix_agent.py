@@ -410,7 +410,16 @@ Must do:
                         "message": f"iFlow '{iflow_id}' exists in SAP CPI", "detail": iflow_data}
 
             error_msg = str(result.get("output", "")).lower()
-            if "404" in error_msg or "not found" in error_msg or "does not exist" in error_msg:
+            # Only mark verified=True when the error unambiguously refers to the
+            # artifact itself (genuine CPI 404), not an MCP/network/auth failure
+            # that happens to contain generic "not found" text.
+            _artifact_terms = ("artifact", "iflow", "integration", "designtime", "content")
+            _is_artifact_404 = "404" in error_msg and any(t in error_msg for t in _artifact_terms)
+            _is_named_missing = (
+                ("not found" in error_msg or "does not exist" in error_msg)
+                and any(t in error_msg for t in _artifact_terms)
+            )
+            if _is_artifact_404 or _is_named_missing:
                 return {"exists": False, "verified": True, "status_code": 404,
                         "message": f"iFlow '{iflow_id}' does not exist in SAP CPI",
                         "detail": {}}

@@ -1,7 +1,9 @@
 .appShell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* Avoid 100vh issues on mobile (address bar) */
+  min-height: 100dvh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -33,6 +35,10 @@
   flex-shrink: 0;
 }
 .menuBtn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+.menuBtn:focus-visible {
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.55);
+}
 
 .menuIcon {
   display: flex;
@@ -119,6 +125,9 @@
   display: flex;
   flex: 1;
   overflow: hidden;
+
+  /* Critical for nested scrolling in flex layouts */
+  min-height: 0;
 }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────────── */
@@ -132,6 +141,9 @@
   display: flex;
   flex-direction: column;
   padding: 0.5rem 0;
+
+  /* Ensure it sits above main when used as a drawer on small screens */
+  z-index: 200;
 }
 .sidebarCollapsed { width: 3.5rem; }
 
@@ -165,11 +177,15 @@
   overflow: hidden;
   position: relative;
   text-decoration: none;
+  outline: none;
 }
 .navItem:hover {
   background: var(--orbit-sidebar-hover, rgba(255,255,255,0.07));
   color: #fff;
   transform: translateX(2px);
+}
+.navItem:focus-visible {
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.55);
 }
 .navItemActive {
   background: var(--orbit-sidebar-active, rgba(59,130,246,0.18));
@@ -217,8 +233,12 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  outline: none;
 }
 .navSubItem:hover { background: var(--orbit-sidebar-hover); color: #94a3b8; }
+.navSubItem:focus-visible {
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.45);
+}
 .navSubItemActive { color: #60a5fa !important; }
 .sidebarCollapsed .navSubItem { display: none; }
 
@@ -241,4 +261,37 @@
   flex: 1;
   overflow-y: auto;
   background: var(--orbit-gray-100, #f3f4f6);
+
+  /* Prevent wide content (tables/charts) from forcing layout overflow */
+  min-width: 0;
+
+  /* Ensure scroll containers behave inside flex parents */
+  min-height: 0;
+
+  /* Base padding so pages don’t touch edges / scrollbar */
+  padding: 1rem;
+}
+
+/* ── Responsive: sidebar becomes a drawer on small screens ─────────────────── */
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed;
+    top: 3.25rem; /* below top bar */
+    left: 0;
+    bottom: 0;
+    width: 16rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    transform: translateX(0);
+    transition: transform var(--orbit-transition);
+  }
+
+  /* When "collapsed", treat it as closed on mobile */
+  .sidebarCollapsed {
+    width: 16rem;
+    transform: translateX(-105%);
+  }
+
+  .main {
+    padding: 0.75rem;
+  }
 }
