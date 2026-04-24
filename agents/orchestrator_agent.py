@@ -546,6 +546,13 @@ Rules:
             logger.info("[Autonomous] Existing incident still in progress: %s", incident_id)
             return current_status
 
+        if current_status in {"TICKET_CREATED", "AWAITING_APPROVAL"}:
+            logger.info(
+                "[Autonomous] Absorbed into existing %s incident %s — occurrence_count updated",
+                current_status, incident_id,
+            )
+            return current_status
+
         rca = {
             "root_cause":         merged.get("root_cause", ""),
             "proposed_fix":       merged.get("proposed_fix", ""),

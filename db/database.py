@@ -717,7 +717,7 @@ def get_open_incident_by_signature(iflow_id: str, error_type: str) -> Optional[D
     terminal_statuses = (
         "FIX_VERIFIED", "HUMAN_INITIATED_FIX", "RETRIED",
         "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME",
-        "REJECTED", "TICKET_CREATED", "ARTIFACT_MISSING", "VERIFICATION_UNAVAILABLE",
+        "REJECTED", "ARTIFACT_MISSING", "VERIFICATION_UNAVAILABLE",
     )
     placeholders = ",".join("?" for _ in terminal_statuses)
     try:
