@@ -850,7 +850,7 @@ export default function Observability() {
               className={styles.refreshBtn}
               onClick={() => refetch()}
               disabled={isFetching}
-              data-tip="Reload messages from SAP CPI (auto-refreshes every 10s)"
+              data-tip="Reload messages from SAP CPI (auto-refreshes every 30s)"
             >
               {isFetching ? "↻ Refreshing..." : "Refresh"}
             </button>
@@ -1088,7 +1088,7 @@ export default function Observability() {
                                       data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
                                     >
                                       {fixState === "idle"    && "Apply Fix"}
-                                      {fixState === "loading" && "Applying..."}
+                                      {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
                                       {fixState === "success" && "Fix Applied"}
                                       {fixState === "error"   && "Retry Fix"}
                                     </button>
@@ -1106,7 +1106,7 @@ export default function Observability() {
                                     disabled={fixPatchLoading}
                                     data-tip="Ask the AI to generate a detailed step-by-step fix plan with XML change instructions"
                                   >
-                                    {fixPatchLoading ? "Generating..." : "* Generate Fix Patch"}
+                                    {fixPatchLoading ? <><span className={styles.btnSpinner} /> Generating...</> : "* Generate Fix Patch"}
                                   </button>
                                 </div>
                               )
@@ -1118,7 +1118,7 @@ export default function Observability() {
                                 {fixState === "loading" && fixProgress && (
                                   <div className={styles.fixProgressBox}>
                                     <div className={styles.fixProgressHeader}>
-                                      <span className={styles.fixProgressSpinner}>↻</span>
+                                      <span className={styles.fixProgressSpinner} />
                                       <span className={styles.fixProgressStep}>
                                         {fixProgress.stepIndex > 0
                                           ? `Step ${fixProgress.stepIndex} of ${fixProgress.totalSteps}`
@@ -1272,25 +1272,25 @@ export default function Observability() {
             <div className={styles.kpiRow}>
               <div className={styles.kpiCard} style={{ borderTop: "3px solid #dc2626" }}>
                 <span className={styles.kpiValue} style={{ color: "#dc2626" }}>
-                  {tickets.filter(t => t.priority === "Critical" || t.priority === "High").length}
+                  {tickets.filter(t => ["CRITICAL", "HIGH"].includes((t.priority || "").toUpperCase())).length}
                 </span>
                 <span className={styles.kpiLabel}>High Priority</span>
               </div>
               <div className={styles.kpiCard} style={{ borderTop: "3px solid #d97706" }}>
                 <span className={styles.kpiValue} style={{ color: "#d97706" }}>
-                  {tickets.filter(t => t.status === "Open").length}
+                  {tickets.filter(t => (t.status || "").toUpperCase() === "OPEN").length}
                 </span>
                 <span className={styles.kpiLabel}>Open Tickets</span>
               </div>
               <div className={styles.kpiCard} style={{ borderTop: "3px solid #2563eb" }}>
                 <span className={styles.kpiValue} style={{ color: "#2563eb" }}>
-                  {tickets.filter(t => t.status === "In Progress").length}
+                  {tickets.filter(t => (t.status || "").toUpperCase() === "IN_PROGRESS").length}
                 </span>
                 <span className={styles.kpiLabel}>In Progress</span>
               </div>
               <div className={styles.kpiCard} style={{ borderTop: "3px solid #16a34a" }}>
                 <span className={styles.kpiValue} style={{ color: "#16a34a" }}>
-                  {tickets.filter(t => t.status === "Resolved").length}
+                  {tickets.filter(t => (t.status || "").toUpperCase() === "RESOLVED").length}
                 </span>
                 <span className={styles.kpiLabel}>Resolved</span>
               </div>
