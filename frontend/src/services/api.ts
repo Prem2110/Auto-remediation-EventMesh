@@ -296,6 +296,35 @@ export interface PaginatedMessagesResponse {
   messages: unknown[];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AEM / Event Mesh status
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AemStatusResponse {
+  total_incidents: number;
+  messages_retrieved: number;
+  queue_depth: number;
+  stage_counts?: Record<string, number>;
+  aem_enabled: boolean;
+}
+
+export async function fetchAemStatus(): Promise<AemStatusResponse | null> {
+  return requestMaybe<AemStatusResponse>(`${_BASE}/aem/status`);
+}
+
+export async function fetchAemIncidents(
+  limit = 100
+): Promise<{ incidents: Record<string, unknown>[] }> {
+  const data = await request<{ incidents?: unknown[] }>(
+    `${_BASE}/autonomous/incidents?limit=${limit}`
+  );
+  return {
+    incidents: ((data.incidents ?? []) as Record<string, unknown>[]).map(
+      normalizeIncidentForUi
+    ),
+  };
+}
+
 export async function fetchFailedMessagesPaginated(
   page = 1,
   pageSize = 20,

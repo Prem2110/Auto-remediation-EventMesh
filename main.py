@@ -55,6 +55,7 @@ from core.constants import (
     AUTO_FIX_ALL_CPI_ERRORS,
     AUTO_FIX_CONFIDENCE,
     AUTONOMOUS_ENABLED,
+    BURST_DEDUP_WINDOW_SECONDS,
     FAILED_MESSAGE_FETCH_LIMIT,
     FIX_INTENT_KEYWORDS,
     POLL_INTERVAL_SECONDS,
@@ -92,14 +93,17 @@ from db.database import (
     get_stage_counts,
     get_incident_by_id,
     get_incident_by_message_guid,
+    get_open_incident_by_signature,
     get_pending_approvals,
     get_escalation_tickets,
+    get_recent_incident_by_group_key,
     get_similar_patterns,
     get_testsuite_log_entries,
     get_xsd_files_by_session,
     create_query_history,
     update_query_history,
     update_incident,
+    increment_incident_occurrence,
     ensure_em_schema,
     set_db_source,
 )
@@ -952,6 +956,374 @@ async def event_mesh_webhook(event: Dict[str, Any]):
     asyncio.create_task(orchestrator._route_stage(event))
     logger.info("[EventMesh] Webhook received #%d, dispatched to _route_stage", _webhook_counter)
     return {"status": "accepted", "count": _webhook_counter}
+
+
+# ─────────────────────────────────────────────
+# AGENT-TO-AGENT WEBHOOK ENDPOINTS
+#
+# Strict linear event-driven pipeline:
+#
+#   /agents/orchestrator  → classify + create incident → publish observer
+#   /agents/observer      → enrich metadata            → publish rca
+#   /agents/rca           → root cause analysis        → publish fixer
+#   /agents/fixer         → apply fix + deploy         → publish verifier
+#   /agents/verifier      → verify fix worked          → (terminal)
+#
+# Each endpoint returns {"status": "accepted"} immediately and runs the
+# agent logic inside asyncio.create_task so the HTTP response is not blocked.
+# On failure the incident DB status is set to a FAIL variant; no publish occurs.
+# ─────────────────────────────────────────────
+
+
+# ── Stage 1: Orchestrator ────────────────────────────────────────────────────
+
+async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
+    """
+    Classify the raw CPI error, apply dedup rules, create a new incident,
+    then publish to the observer queue.  Does NOT run RCA, fix, or verify.
+    """
+    try:
+        set_db_source("EVENT_MESH")
+
+        # Normalize the raw AEM/iFlow message envelope
+        normalized = orchestrator._normalize_aem_message(event)  # type: ignore[union-attr]
+        _error_msg = normalized.get("error_message", "")
+        _iflow_id  = normalized.get("iflow_id", "")
+
+        # Rule-based classify, LLM fallback when confidence is low
+        clf = orchestrator._classifier.classify_error(_error_msg)  # type: ignore[union-attr]
+        if clf.get("confidence", 0.0) < 0.70:
+            try:
+                llm_clf = await orchestrator._classifier.classify_with_llm(  # type: ignore[union-attr]
+                    _error_msg, _iflow_id
+                )
+                if llm_clf and llm_clf.get("confidence", 0.0) > clf.get("confidence", 0.0):
+                    clf = llm_clf
+            except Exception as _clf_exc:
+                logger.warning("[Agents/orchestrator] LLM classify fallback skipped: %s", _clf_exc)
+
+        normalized.update(clf)
+
+        # Signature dedup — skip when iflow_id is blank/placeholder
+        _iflow_for_dedup = normalized.get("iflow_id", "")
+        _skip_sig_dedup  = _iflow_for_dedup.lower() in ("", "unknown_iflow", "unknown", "n/a")
+        existing_sig = (
+            None if _skip_sig_dedup
+            else get_open_incident_by_signature(_iflow_for_dedup, normalized.get("error_type", ""))
+        )
+        if existing_sig:
+            increment_incident_occurrence(
+                existing_sig["incident_id"],
+                message_guid=normalized.get("message_guid") or None,
+                last_seen=get_hana_timestamp(),
+            )
+            logger.info(
+                "[Agents/orchestrator] Signature dedup → correlated into incident=%s",
+                existing_sig["incident_id"],
+            )
+            return
+
+        # Burst dedup — absorb rapid repeat errors within the dedup window
+        _group_key = orchestrator.incident_group_key(normalized)  # type: ignore[union-attr]
+        _recent    = get_recent_incident_by_group_key(_group_key, within_seconds=BURST_DEDUP_WINDOW_SECONDS)
+        if _recent:
+            increment_incident_occurrence(
+                _recent["incident_id"],
+                message_guid=normalized.get("message_guid") or None,
+                last_seen=get_hana_timestamp(),
+            )
+            logger.info(
+                "[Agents/orchestrator] Burst dedup → absorbed into incident=%s (group=%s)",
+                _recent["incident_id"], _group_key,
+            )
+            return
+
+        # Create new incident with CLASSIFIED status
+        incident_id = str(uuid.uuid4())
+        create_incident({
+            **normalized,
+            "incident_id":          incident_id,
+            "status":               "CLASSIFIED",
+            "created_at":           get_hana_timestamp(),
+            "incident_group_key":   _group_key,
+            "occurrence_count":     1,
+            "last_seen":            get_hana_timestamp(),
+            "verification_status":  "UNVERIFIED",
+            "consecutive_failures": 0,
+            "auto_escalated":       0,
+        })
+        logger.info(
+            "[Agents/orchestrator] Created incident=%s iflow=%s error_type=%s confidence=%.2f",
+            incident_id, _iflow_id, clf.get("error_type", ""), clf.get("confidence", 0.0),
+        )
+
+        # Hand off to observer — publish to observer queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("observer"), {
+            "stage": "observer", "incident_id": incident_id,
+        })
+    except Exception as exc:
+        logger.error("[Agents/orchestrator] Task failed: %s", exc)
+
+
+@app.post("/agents/orchestrator")
+async def agent_orchestrator_webhook(event: Dict[str, Any]):
+    """
+    Receives raw CPI error events from SAP Event Mesh.
+    Classifies the error, applies dedup rules, creates the incident,
+    then publishes to the observer queue.
+    """
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    asyncio.create_task(_run_orchestrator_task(event))
+    logger.info("[Agents/orchestrator] Webhook received, dispatched")
+    return {"status": "accepted"}
+
+
+# ── Stage 2: Observer ────────────────────────────────────────────────────────
+
+async def _run_observer_task(event: Dict[str, Any]) -> None:
+    """
+    Enrich the incident with OData metadata (sender, receiver, log timestamps),
+    then publish to the RCA queue.  Does NOT run RCA, fix, or verify.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/observer] Incident %s not found in DB", incident_id)
+            return
+
+        update_incident(incident_id, {"status": "OBSERVED"})
+
+        # Enrich with MessageProcessingLogs metadata from SAP OData
+        guid = incident.get("message_guid", "")
+        if guid and observer and observer.error_fetcher:
+            try:
+                meta = await observer.error_fetcher.fetch_message_metadata(guid)
+                enrichments: Dict[str, Any] = {}
+                if meta.get("IntegrationFlowName"):
+                    enrichments["iflow_id"]  = meta["IntegrationFlowName"]
+                for src, dst in (("Sender", "sender"), ("Receiver", "receiver"),
+                                 ("LogStart", "log_start"), ("LogEnd", "log_end")):
+                    if meta.get(src):
+                        enrichments[dst] = meta[src]
+                if enrichments:
+                    update_incident(incident_id, enrichments)
+                    logger.info(
+                        "[Agents/observer] Enriched incident=%s fields=%s",
+                        incident_id, list(enrichments.keys()),
+                    )
+            except Exception as _meta_exc:
+                logger.warning(
+                    "[Agents/observer] OData metadata fetch failed incident=%s: %s",
+                    incident_id, _meta_exc,
+                )
+
+        # Hand off to RCA — publish to rca queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("rca"), {
+            "stage": "rca", "incident_id": incident_id,
+        })
+    except Exception as exc:
+        logger.error("[Agents/observer] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "OBS_FAILED", "error_message": str(exc)[:500]})
+            except Exception:
+                pass
+
+
+@app.post("/agents/observer")
+async def agent_observer_webhook(event: Dict[str, Any]):
+    """
+    Receives enrichment requests from the observer queue.
+    Fetches OData metadata, updates the incident, then publishes to the RCA queue.
+    """
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    asyncio.create_task(_run_observer_task(event))
+    logger.info("[Agents/observer] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    return {"status": "accepted"}
+
+
+# ── Stage 3: RCA ─────────────────────────────────────────────────────────────
+
+async def _run_rca_task(event: Dict[str, Any]) -> None:
+    """
+    Run root cause analysis on the enriched incident, persist results,
+    then publish to the fixer queue.  Does NOT apply the fix or verify.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/rca] Incident %s not found in DB", incident_id)
+            return
+
+        update_incident(incident_id, {"status": "RCA_IN_PROGRESS"})
+        rca = await orchestrator._rca.run_rca(dict(incident))  # type: ignore[union-attr]
+
+        update_incident(incident_id, {
+            "status":             "RCA_COMPLETE",
+            "root_cause":         rca.get("root_cause", ""),
+            "proposed_fix":       rca.get("proposed_fix", ""),
+            "rca_confidence":     rca.get("confidence", 0.0),
+            "affected_component": rca.get("affected_component", ""),
+            "error_type":         rca.get("error_type") or incident.get("error_type", ""),
+        })
+        logger.info(
+            "[Agents/rca] RCA complete incident=%s confidence=%.2f",
+            incident_id, rca.get("confidence", 0.0),
+        )
+
+        # Hand off to fixer — publish to fixer queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("fixer"), {
+            "stage": "fixer", "incident_id": incident_id,
+        })
+    except Exception as exc:
+        logger.error("[Agents/rca] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "RCA_FAILED", "error_message": str(exc)[:500]})
+            except Exception:
+                pass
+
+
+@app.post("/agents/rca")
+async def agent_rca_webhook(event: Dict[str, Any]):
+    """
+    Receives RCA requests from the rca queue.
+    Runs root cause analysis, persists results, then publishes to the fixer queue.
+    """
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    asyncio.create_task(_run_rca_task(event))
+    logger.info("[Agents/rca] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    return {"status": "accepted"}
+
+
+# ── Stage 4: Fixer ───────────────────────────────────────────────────────────
+
+async def _run_fixer_task(event: Dict[str, Any]) -> None:
+    """
+    Apply the proposed fix (update iFlow XML, deploy), persist the result,
+    then publish to the verifier queue — but ONLY if the fix was successfully applied.
+    Does NOT run the verifier inline.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/fixer] Incident %s not found in DB", incident_id)
+            return
+
+        rca = {
+            "root_cause":         incident.get("root_cause", ""),
+            "proposed_fix":       incident.get("proposed_fix", ""),
+            "confidence":         incident.get("rca_confidence", 0.0),
+            "error_type":         incident.get("error_type", ""),
+            "affected_component": incident.get("affected_component", ""),
+        }
+
+        update_incident(incident_id, {"status": "FIX_IN_PROGRESS"})
+        fix_result  = await orchestrator._fix.apply_fix(dict(incident), rca)  # type: ignore[union-attr]
+        fix_success = fix_result.get("fix_applied", False) and fix_result.get("deploy_success", False)
+        fix_status  = FixAgent.determine_post_fix_status(
+            fix_success=fix_success,
+            policy={"action": "AUTO_FIX"},
+            failed_stage=fix_result.get("failed_stage", ""),
+        )
+        update_incident(incident_id, {
+            "status":      fix_status,
+            "fix_summary": fix_result.get("summary", ""),
+            "fix_applied": 1 if fix_success else 0,
+        })
+        logger.info("[Agents/fixer] Fix complete incident=%s status=%s", incident_id, fix_status)
+
+        if not fix_success:
+            logger.warning(
+                "[Agents/fixer] Fix not applied for incident=%s (stage=%s) — halting pipeline",
+                incident_id, fix_result.get("failed_stage", ""),
+            )
+            return
+
+        # Hand off to verifier — publish to verifier queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("verifier"), {
+            "stage": "verifier", "incident_id": incident_id,
+        })
+    except Exception as exc:
+        logger.error("[Agents/fixer] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "FIX_FAILED", "error_message": str(exc)[:500]})
+            except Exception:
+                pass
+
+
+@app.post("/agents/fixer")
+async def agent_fixer_webhook(event: Dict[str, Any]):
+    """
+    Receives fix requests from the fixer queue.
+    Applies the proposed fix, deploys the iFlow, then publishes to the verifier queue.
+    """
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    asyncio.create_task(_run_fixer_task(event))
+    logger.info("[Agents/fixer] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    return {"status": "accepted"}
+
+
+# ── Stage 5: Verifier (terminal) ─────────────────────────────────────────────
+
+async def _run_verifier_task(event: Dict[str, Any]) -> None:
+    """
+    Verify that the deployed fix actually resolved the error.
+    Writes the final status (FIX_VERIFIED or FIX_FAILED_RUNTIME) to the DB.
+    Terminal stage — no publish_to_next.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/verifier] Incident %s not found in DB", incident_id)
+            return
+
+        result      = await orchestrator._verifier.test_iflow_after_fix(dict(incident))  # type: ignore[union-attr]
+        test_passed = result.get("test_passed", False) or result.get("success", False)
+        final_status = "FIX_VERIFIED" if test_passed else "FIX_FAILED_RUNTIME"
+        update_incident(incident_id, {
+            "status":              final_status,
+            "verification_status": "VERIFIED" if test_passed else "FAILED",
+            "fix_summary":         result.get("summary", ""),
+            "resolved_at":         get_hana_timestamp() if test_passed else None,
+        })
+        logger.info(
+            "[Agents/verifier] Verification complete incident=%s final_status=%s",
+            incident_id, final_status,
+        )
+    except Exception as exc:
+        logger.error("[Agents/verifier] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "FIX_FAILED_RUNTIME", "error_message": str(exc)[:500]})
+            except Exception:
+                pass
+
+
+@app.post("/agents/verifier")
+async def agent_verifier_webhook(event: Dict[str, Any]):
+    """
+    Receives verification requests from the verifier queue.
+    Tests the deployed iFlow and writes the final status to the DB.
+    """
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    asyncio.create_task(_run_verifier_task(event))
+    logger.info("[Agents/verifier] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    return {"status": "accepted"}
 
 
 # ─────────────────────────────────────────────

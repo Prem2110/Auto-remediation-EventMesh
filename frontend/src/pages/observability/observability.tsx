@@ -23,9 +23,10 @@ import type {
   IErrorExplanation,
 } from "../../types/index.ts";
 import styles from "./observability.module.css";
+import EventMeshFlow from "./EventMeshFlow.tsx";
 
 /* ── Top-level tab type ───────────────────────────────────────────────── */
-type MainTabKey = "messages" | "tickets" | "approvals";
+type MainTabKey = "messages" | "tickets" | "approvals" | "eventmesh";
 
 /* ── Ticket and Approval interfaces ───────────────────────────────────── */
 interface Ticket {
@@ -754,6 +755,12 @@ export default function Observability() {
         >
           ✅ Approvals ({approvals.length})
         </button>
+        <button
+          className={`${styles.mainTab} ${mainTab === "eventmesh" ? styles.mainTabActive : ""}`}
+          onClick={() => setMainTab("eventmesh")}
+        >
+          🔀 Event Mesh
+        </button>
       </div>
 
       {/* ── Error Type Guide ── */}
@@ -1393,6 +1400,11 @@ export default function Observability() {
       {/* ══════════════════════════════════════════════════════════════════
           APPROVALS TAB
           ══════════════════════════════════════════════════════════════════ */}
+      {/* ══════════════════════════════════════════════════════════════════
+          EVENT MESH TAB
+          ══════════════════════════════════════════════════════════════════ */}
+      {mainTab === "eventmesh" && <EventMeshFlow />}
+
       {mainTab === "approvals" && (
         <div className={styles.approvalsContainer}>
           <div className={styles.approvalsHeader}>

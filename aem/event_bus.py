@@ -8,18 +8,19 @@ pipeline subscribes to that topic.  When AEM is not configured the bus falls
 back to in-process direct calls (the current behaviour is fully preserved).
 
 Topic layout:
-  sap/cpi/remediation/observed/{incident_id}
-  sap/cpi/remediation/classified/{incident_id}
-  sap/cpi/remediation/rca/{incident_id}
-  sap/cpi/remediation/fix/{incident_id}
-  sap/cpi/remediation/verified/{incident_id}
+  cpi/evt/02/autofix/agent/orbit/observed/{incident_id}
+  cpi/evt/02/autofix/agent/orbit/classified/{incident_id}
+  cpi/evt/02/autofix/agent/orbit/rca/{incident_id}
+  cpi/evt/02/autofix/agent/orbit/fix/{incident_id}
+  cpi/evt/02/autofix/agent/orbit/verified/{incident_id}
 
 Configuration (all via .env):
-  AEM_ENABLED=false           — master switch; false = in-memory fallback only
-  AEM_REST_URL                — SAP AEM REST Delivery Endpoint base URL
-  AEM_USERNAME                — Basic auth username
-  AEM_PASSWORD                — Basic auth password
-  AEM_QUEUE_PREFIX            — queue name prefix (default: "cpi-remediation")
+  AEM_ENABLED=false              — master switch; false = in-memory fallback only
+  AEM_REST_URL                   — SAP Event Mesh REST Delivery Endpoint base URL
+  EVENT_MESH_TOKEN_URL           — OAuth2 token endpoint URL
+  EVENT_MESH_CLIENT_ID           — OAuth2 client ID
+  EVENT_MESH_CLIENT_SECRET       — OAuth2 client secret
+  AEM_QUEUE_PREFIX               — queue name prefix (default: "cpi-remediation")
 
 Exports:
   AEMEventBus
@@ -32,17 +33,54 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-_AEM_ENABLED       = os.getenv("AEM_ENABLED", "false").lower() == "true"
-_AEM_REST_URL      = os.getenv("AEM_REST_URL", "")
-_AEM_USERNAME      = os.getenv("AEM_USERNAME", "")
-_AEM_PASSWORD      = os.getenv("AEM_PASSWORD", "")
-_AEM_QUEUE_PREFIX  = os.getenv("AEM_QUEUE_PREFIX", "cpi-remediation")
+_AEM_ENABLED              = os.getenv("AEM_ENABLED", "false").lower() == "true"
+_AEM_REST_URL             = os.getenv("AEM_REST_URL", "")
+_AEM_QUEUE_PREFIX         = os.getenv("AEM_QUEUE_PREFIX", "cpi-remediation")
+_EVENT_MESH_TOKEN_URL     = os.getenv("EVENT_MESH_TOKEN_URL", "")
+_EVENT_MESH_CLIENT_ID     = os.getenv("EVENT_MESH_CLIENT_ID", "")
+_EVENT_MESH_CLIENT_SECRET = os.getenv("EVENT_MESH_CLIENT_SECRET", "")
+
+# Module-level token cache shared across all AEMEventBus instances
+_token_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
+
+
+async def _fetch_oauth_token() -> Tuple[str, int]:
+    """Obtain a fresh client-credentials token from EVENT_MESH_TOKEN_URL."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            _EVENT_MESH_TOKEN_URL,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": _EVENT_MESH_CLIENT_ID,
+                "client_secret": _EVENT_MESH_CLIENT_SECRET,
+            },
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"OAuth token fetch failed: HTTP {resp.status_code} — {resp.text[:200]}"
+        )
+    body = resp.json()
+    return body["access_token"], int(body.get("expires_in", 3600))
+
+
+async def _get_bearer_token() -> str:
+    """Return a cached bearer token, refreshing 60 s before expiry."""
+    now = time.monotonic()
+    if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
+        return _token_cache["token"]
+    token, expires_in = await _fetch_oauth_token()
+    _token_cache["token"] = token
+    _token_cache["expires_at"] = now + expires_in
+    logger.debug("[AEM] OAuth token refreshed, expires in %ds", expires_in)
+    return token
 
 # Known pipeline stages in order
 PIPELINE_STAGES = ("observed", "classified", "rca", "fix", "verified")
@@ -95,22 +133,27 @@ class AEMEventBus:
         await self._dispatch_local(topic, event)
 
     async def _publish_rest(self, topic: str, event: Dict[str, Any]) -> None:
-        url = f"{_AEM_REST_URL.rstrip('/')}/{topic}"
+        encoded_topic = quote(topic, safe="")
+        url = f"{_AEM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
         try:
+            token = await _get_bearer_token()
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(
                     url,
                     content=json.dumps(event),
-                    headers={"Content-Type": "application/json"},
-                    auth=(_AEM_USERNAME, _AEM_PASSWORD),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {token}",
+                        "x-qos": "0",
+                    },
                 )
-                if resp.status_code not in (200, 202, 204):
-                    logger.warning(
-                        "[AEM] REST publish to '%s' returned HTTP %d: %s",
-                        topic, resp.status_code, resp.text[:200],
-                    )
-                else:
-                    logger.debug("[AEM] Published to '%s' (HTTP %d)", topic, resp.status_code)
+            if resp.status_code not in (200, 202, 204):
+                logger.warning(
+                    "[AEM] REST publish to '%s' returned HTTP %d: %s",
+                    topic, resp.status_code, resp.text[:200],
+                )
+            else:
+                logger.debug("[AEM] Published to '%s' (HTTP %d)", topic, resp.status_code)
         except Exception as exc:
             logger.warning("[AEM] REST publish failed for topic '%s': %s", topic, exc)
 
@@ -140,8 +183,43 @@ class AEMEventBus:
 
     def make_topic(self, stage: str, incident_id: str = "") -> str:
         """Build the canonical topic string for a pipeline stage."""
-        base = f"sap/cpi/remediation/{stage}"
+        base = f"cpi/evt/02/autofix/agent/orbit/{stage}"
         return f"{base}/{incident_id}" if incident_id else base
+
+    async def publish_to_next(self, topic: str, payload: Dict[str, Any]) -> None:
+        """
+        Publish an inter-agent handoff with x-qos: 1 (guaranteed delivery).
+
+        Use this instead of publish() when delivering from one agent endpoint
+        to the next in the event-driven pipeline.  Failures are logged only —
+        the caller must NOT raise so the current agent's response is unaffected.
+        """
+        if _AEM_ENABLED and _AEM_REST_URL:
+            encoded_topic = quote(topic, safe="")
+            url = f"{_AEM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+            try:
+                token = await _get_bearer_token()
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(
+                        url,
+                        content=json.dumps(payload),
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {token}",
+                            "x-qos": "1",
+                        },
+                    )
+                if resp.status_code not in (200, 202, 204):
+                    logger.warning(
+                        "[AEM] publish_to_next '%s' returned HTTP %d: %s",
+                        topic, resp.status_code, resp.text[:200],
+                    )
+                else:
+                    logger.debug("[AEM] publish_to_next '%s' OK (HTTP %d)", topic, resp.status_code)
+            except Exception as exc:
+                logger.warning("[AEM] publish_to_next dead-letter for '%s': %s", topic, exc)
+        # always dispatch in-process handlers too
+        await self._dispatch_local(topic, payload)
 
     async def emit(
         self,
