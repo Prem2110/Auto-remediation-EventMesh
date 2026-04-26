@@ -532,7 +532,7 @@
   <button onclick="switchTab('retry', this)">🔁 Retry Fix</button>
   <button onclick="switchTab('tickets', this)">🎫 Tickets Created</button>
   <button onclick="switchTab('agent', this)">🤖 Agent Monitor</button>
-  <button onclick="switchTab('aem', this)">📡 AEM Status</button>
+  <button onclick="switchTab('aem', this)">📡 Event Mesh Status</button>
 </nav>
 
 <main>
@@ -885,7 +885,7 @@
   </div>
 
   <!-- ══════════════════════════════════════════════════════ -->
-  <!-- TAB 7 — AEM STATUS                                    -->
+  <!-- TAB 7 — EVENT MESH STATUS                             -->
   <!-- ══════════════════════════════════════════════════════ -->
   <div class="panel" id="panel-aem">
 
@@ -893,8 +893,8 @@
     <div class="card">
       <div class="section-header">
         <h2
-          data-tooltip="Live connection status to SAP Advanced Event Mesh (Solace PubSub+) over wss:// WebSocket protocol."
-          class="tip-down" style="cursor:default">AEM Connection</h2>
+          data-tooltip="Live connection status to SAP Event Mesh over HTTPS webhook push."
+          class="tip-down" style="cursor:default">Event Mesh Connection</h2>
         <div style="display:flex;gap:8px;align-items:center">
           <span id="aem-last-refresh" class="refresh-note"
             data-tooltip="Timestamp of the last successful status poll from the server."
@@ -905,17 +905,17 @@
             <span id="aem-autopoll-dot" style="width:7px;height:7px;border-radius:50%;background:var(--success);display:inline-block"></span>
             Auto-consuming
           </span>
-          <button class="btn btn-ghost btn-sm" onclick="refreshAEM()"
-            data-tooltip="Manually trigger an immediate refresh of AEM connection status, queue depth and stage counters."
+          <button class="btn btn-ghost btn-sm" onclick="refreshEventMesh()"
+            data-tooltip="Manually trigger an immediate refresh of Event Mesh connection status, queue depth and stage counters."
             class="tip-right">↻ Refresh</button>
         </div>
       </div>
 
       <div class="aem-conn-row">
         <span class="aem-status-dot" id="aem-dot"
-          data-tooltip="Green = connected to Solace broker. Red = disconnected or AEM_ENABLED=false."></span>
+          data-tooltip="Green = connected to SAP Event Mesh. Red = disconnected or AEM_ENABLED=false."></span>
         <span class="aem-status-label" id="aem-status-label"
-          data-tooltip="Current broker connection state. Set AEM_ENABLED=true in .env to activate."
+          data-tooltip="Current connection state. Set AEM_ENABLED=true in .env to activate."
           style="cursor:default">—</span>
       </div>
 
@@ -933,7 +933,7 @@
           <div class="aii-value" id="aem-queue-depth">0</div>
         </div>
         <div class="aem-info-item"
-          data-tooltip="Total CPI error incidents ever received from AEM and stored in the database across all pipeline runs."
+          data-tooltip="Total CPI error incidents ever received from SAP Event Mesh and stored in the database across all pipeline runs."
           style="cursor:default">
           <div class="aii-label">Total Processed</div>
           <div class="aii-value" id="aem-total-incidents">0</div>
@@ -954,7 +954,7 @@
         class="tip-down" style="cursor:default">Pipeline Stage Counters</h2>
       <div class="stage-pipeline">
         <div class="stage-box" id="sb-observed"
-          data-tooltip="Stage 1 — OBSERVED&#10;Message received from AEM queue. Incident record created in DB.&#10;DB status: DETECTED">
+          data-tooltip="Stage 1 — OBSERVED&#10;Message received from SAP Event Mesh. Incident record created in DB.&#10;DB status: DETECTED">
           <div class="sb-label">Stage 1</div>
           <div class="sb-count" id="sc-observed">0</div>
           <div class="sb-name">Observed</div>
@@ -994,7 +994,7 @@
     <div class="card" style="margin-top:20px">
       <div class="section-header">
         <h2
-          data-tooltip="Incidents received from the AEM queue, sorted newest first. Each card shows the iFlow name, error type, error message, root cause and fix summary once available."
+          data-tooltip="Incidents received from SAP Event Mesh, sorted newest first. Each card shows the iFlow name, error type, error message, root cause and fix summary once available."
           class="tip-down" style="cursor:default">Queue Messages</h2>
         <span id="aem-msg-count"
           data-tooltip="Total incidents in the database. When more exist than are shown, the display reads 'Showing last N of total'."
@@ -1034,10 +1034,10 @@ function switchTab(name, btn) {
     stopAmPoll();
   }
   if (name === 'aem') {
-    refreshAEM();
-    startAEMPoll();
+    refreshEventMesh();
+    startEventMeshPoll();
   } else {
-    stopAEMPoll();
+    stopEventMeshPoll();
   }
 }
 
@@ -1681,15 +1681,15 @@ async function doAgentToggle() {
   }
 }
 
-// ─── AEM Status Tab ──────────────────────────────────────────────────────────
-let _aemPollTimer = null;
+// ─── Event Mesh Status Tab ───────────────────────────────────────────────────
+let _emPollTimer = null;
 
-function startAEMPoll() {
-  if (_aemPollTimer) return;
-  _aemPollTimer = setInterval(refreshAEM, 5000);
+function startEventMeshPoll() {
+  if (_emPollTimer) return;
+  _emPollTimer = setInterval(refreshEventMesh, 5000);
 }
-function stopAEMPoll() {
-  if (_aemPollTimer) { clearInterval(_aemPollTimer); _aemPollTimer = null; }
+function stopEventMeshPoll() {
+  if (_emPollTimer) { clearInterval(_emPollTimer); _emPollTimer = null; }
 }
 
 const STAGE_ORDER = ['observed','classified','rca','fix','verified'];
@@ -1703,29 +1703,29 @@ const STAGE_STATUS_MAP = {
   TICKET_CREATED: 'rca', RCA_FAILED: 'rca',
 };
 
-async function refreshAEM() {
+async function refreshEventMesh() {
   try {
-    const [aemRes, incRes] = await Promise.all([
+    const [emRes, incRes] = await Promise.all([
       apiFetch('GET', '/aem/status'),
       apiFetch('GET', '/autonomous/incidents?limit=50'),
     ]);
 
     // Connection status
-    const enabled = aemRes.aem_enabled;
+    const enabled = emRes.event_mesh_enabled || emRes.webhook_active;
     document.getElementById('aem-dot').className = 'aem-status-dot ' + (enabled ? 'on' : 'off');
-    document.getElementById('aem-status-label').textContent = enabled ? 'Connected — SAP Advanced Event Mesh' : 'AEM Disabled';
+    document.getElementById('aem-status-label').textContent = enabled ? 'Connected — SAP Event Mesh' : 'Event Mesh Disabled';
 
-    document.getElementById('aem-queue-name').textContent        = aemRes.queue_name || '—';
-    document.getElementById('aem-total-incidents').textContent   = aemRes.total_incidents ?? 0;
-    document.getElementById('aem-msgs-retrieved').textContent    = aemRes.messages_retrieved ?? 0;
+    document.getElementById('aem-queue-name').textContent        = emRes.queue_name || '—';
+    document.getElementById('aem-total-incidents').textContent   = emRes.total_incidents ?? 0;
+    document.getElementById('aem-msgs-retrieved').textContent    = emRes.messages_retrieved ?? 0;
 
-    const depth   = aemRes.queue_depth;
+    const depth   = emRes.queue_depth;
     const depthEl = document.getElementById('aem-queue-depth');
     depthEl.textContent  = depth ?? 0;
     depthEl.style.color  = (depth > 0) ? 'var(--warning)' : 'var(--success)';
 
     // Stage counters
-    const sc = aemRes.stage_counts || {};
+    const sc = emRes.stage_counts || {};
     STAGE_ORDER.forEach(stage => {
       const count = sc[stage] ?? 0;
       document.getElementById('sc-' + stage).textContent = count;
@@ -1738,7 +1738,7 @@ async function refreshAEM() {
       .sort((a, b) => (b.last_seen || b.created_at || '').localeCompare(a.last_seen || a.created_at || ''));
 
     const feed = document.getElementById('aem-events-feed');
-    const totalProcessed = aemRes.total_incidents ?? 0;
+    const totalProcessed = emRes.total_incidents ?? 0;
     const countEl = document.getElementById('aem-msg-count');
     countEl.textContent = totalProcessed === 0
       ? '0 messages'

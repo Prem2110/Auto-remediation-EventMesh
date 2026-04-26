@@ -7,7 +7,7 @@ const styles = _styles as Record<string, string>;
 
 // ── Pipeline agent meta ───────────────────────────────────────────────────────
 const PIPELINE_META: Record<string, { emoji: string; desc: string; gradient: string; accent: string }> = {
-  observer:     { emoji:"👁️",  desc:"Polls SAP CPI for failed messages, deduplicates, publishes to AEM.",        gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
+  observer:     { emoji:"👁️",  desc:"Polls SAP CPI for failed messages, deduplicates, publishes to SAP Event Mesh.",        gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
   classifier:   { emoji:"🏷️",  desc:"Classifies error type, confidence, and severity — zero LLM cost.",          gradient:"linear-gradient(135deg,#1e1b4b 0%,#7c3aed 100%)", accent:"#a78bfa" },
   orchestrator: { emoji:"🎯",  desc:"Routes by confidence threshold; fan-outs to RCA + Knowledge in parallel.",   gradient:"linear-gradient(135deg,#134e4a 0%,#0f766e 100%)", accent:"#2dd4bf" },
   rca:          { emoji:"🧠",  desc:"LLM root cause analysis via SAP AI Core (parallel with Knowledge).",         gradient:"linear-gradient(135deg,#064e3b 0%,#059669 100%)", accent:"#34d399" },

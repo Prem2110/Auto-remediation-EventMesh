@@ -305,7 +305,8 @@ export interface AemStatusResponse {
   messages_retrieved: number;
   queue_depth: number;
   stage_counts?: Record<string, number>;
-  aem_enabled: boolean;
+  event_mesh_enabled?: boolean;
+  webhook_active?: boolean;
 }
 
 export async function fetchAemStatus(): Promise<AemStatusResponse | null> {

@@ -830,7 +830,8 @@ async def event_mesh_status():
     return {
         "event_mesh_queue":    queue_name,
         "delivery_mode":       "webhook_push",
-        "webhook_active": True,
+        "webhook_active":      True,
+        "event_mesh_enabled":  True,
         "stage_counts":        stage_counts,
         "total_incidents":     total_incidents,
     }

@@ -1,11 +1,12 @@
 """
 aem/event_bus.py
 ================
-AEM Pattern 2 event bus — agent-to-agent messaging via SAP Advanced Event Mesh.
+SAP Event Mesh event bus — agent-to-agent messaging via SAP Event Mesh.
 
 Each agent publishes its output to a well-known topic; the next agent in the
-pipeline subscribes to that topic.  When AEM is not configured the bus falls
-back to in-process direct calls (the current behaviour is fully preserved).
+pipeline subscribes to that topic.  When SAP Event Mesh is not configured the
+bus falls back to in-process direct calls (the current behaviour is fully
+preserved).
 
 Topic layout:
   cpi/evt/02/autofix/agent/orbit/observed/{incident_id}
@@ -77,7 +78,7 @@ async def _get_bearer_token() -> str:
     token, expires_in = await _fetch_oauth_token()
     _token_cache["token"] = token
     _token_cache["expires_at"] = now + expires_in
-    logger.debug("[AEM] OAuth token refreshed, expires in %ds", expires_in)
+    logger.debug("[EventMesh] OAuth token refreshed, expires in %ds", expires_in)
     return token
 
 # Known pipeline stages in order
@@ -93,8 +94,8 @@ class AEMEventBus:
        publish() calls registered handlers directly, no network I/O.
        Zero external dependencies; safe for local dev and unit tests.
 
-    2. AEM_ENABLED=true — REST delivery to SAP AEM.
-       publish() POSTs the event JSON to the AEM REST Delivery Endpoint.
+    2. AEM_ENABLED=true — REST delivery to SAP Event Mesh.
+       publish() POSTs the event JSON to the SAP Event Mesh REST Delivery Endpoint.
        subscribe() still registers in-process handlers (for the same process
        to consume its own events during local-mode hybrid testing).
     """
@@ -110,11 +111,12 @@ class AEMEventBus:
         Register an async callable as an in-process handler for messages on
         topic.  The handler receives a single argument: the decoded event dict.
 
-        Subscribing does NOT require AEM to be enabled — it works in both modes
-        and is the primary mechanism for inter-agent calls when AEM_ENABLED=false.
+        Subscribing does NOT require SAP Event Mesh to be enabled — it works in
+        both modes and is the primary mechanism for inter-agent calls when
+        AEM_ENABLED=false.
         """
         self._handlers.setdefault(topic, []).append(handler)
-        logger.debug("[AEM] Handler registered for topic: %s", topic)
+        logger.debug("[EventMesh] Handler registered for topic: %s", topic)
 
     # ── publish ──────────────────────────────────────────────────────────────
 
@@ -122,9 +124,9 @@ class AEMEventBus:
         """
         Publish an event to the given topic.
 
-        If AEM is enabled, POST to the REST endpoint.
+        If SAP Event Mesh is enabled, POST to the REST endpoint.
         Always call any in-process handlers registered for this topic
-        (so the pipeline keeps working even without external AEM connectivity).
+        (so the pipeline keeps working even without external SAP Event Mesh connectivity).
         """
         if _AEM_ENABLED and _AEM_REST_URL:
             await self._publish_rest(topic, event)
@@ -147,13 +149,13 @@ class AEMEventBus:
                 )
             if resp.status_code not in (200, 202, 204):
                 logger.warning(
-                    "[AEM] REST publish to '%s' returned HTTP %d: %s",
+                    "[EventMesh] REST publish to '%s' returned HTTP %d: %s",
                     topic, resp.status_code, resp.text[:200],
                 )
             else:
-                logger.debug("[AEM] Published to '%s' (HTTP %d)", topic, resp.status_code)
+                logger.debug("[EventMesh] Published to '%s' (HTTP %d)", topic, resp.status_code)
         except Exception as exc:
-            logger.warning("[AEM] REST publish failed for topic '%s': %s", topic, exc)
+            logger.warning("[EventMesh] REST publish failed for topic '%s': %s", topic, exc)
 
     async def _dispatch_local(self, topic: str, event: Dict[str, Any]) -> None:
         """
@@ -175,7 +177,7 @@ class AEMEventBus:
                 else:
                     handler(event)
             except Exception as exc:
-                logger.error("[AEM] Handler for topic '%s' raised: %s", topic, exc)
+                logger.error("[EventMesh] Handler for topic '%s' raised: %s", topic, exc)
 
     # ── convenience helper ───────────────────────────────────────────────────
 
@@ -209,13 +211,13 @@ class AEMEventBus:
                     )
                 if resp.status_code not in (200, 202, 204):
                     logger.warning(
-                        "[AEM] publish_to_next '%s' returned HTTP %d: %s",
+                        "[EventMesh] publish_to_next '%s' returned HTTP %d: %s",
                         topic, resp.status_code, resp.text[:200],
                     )
                 else:
-                    logger.debug("[AEM] publish_to_next '%s' OK (HTTP %d)", topic, resp.status_code)
+                    logger.debug("[EventMesh] publish_to_next '%s' OK (HTTP %d)", topic, resp.status_code)
             except Exception as exc:
-                logger.warning("[AEM] publish_to_next dead-letter for '%s': %s", topic, exc)
+                logger.warning("[EventMesh] publish_to_next dead-letter for '%s': %s", topic, exc)
         # always dispatch in-process handlers too
         await self._dispatch_local(topic, payload)
 
@@ -238,7 +240,7 @@ class AEMEventBus:
             "payload":     payload,
         }
         await self.publish(topic, event)
-        logger.info("[AEM] Emitted stage='%s' incident='%s'", stage, incident_id)
+        logger.info("[EventMesh] Emitted stage='%s' incident='%s'", stage, incident_id)
 
 
 # ─────────────────────────────────────────────

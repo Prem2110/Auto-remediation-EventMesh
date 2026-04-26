@@ -238,7 +238,7 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
         <span className={styles.diagramTitle}>Event Mesh Pipeline Flow</span>
         <span className={styles.aemStatus} data-enabled={String(aemEnabled)}>
           <span className={styles.aemDot} />
-          {aemEnabled ? "AEM Connected" : "AEM Disconnected"}
+          {aemEnabled ? "Event Mesh Connected" : "Event Mesh Disconnected"}
         </span>
       </div>
       <div className={styles.svgWrapper}>
@@ -482,7 +482,7 @@ export default function EventMeshFlow() {
     <div className={styles.root}>
       <PipelineDiagram
         incidents={incidents}
-        aemEnabled={aemStatus?.aem_enabled ?? false}
+        aemEnabled={(aemStatus?.event_mesh_enabled || aemStatus?.webhook_active) ?? false}
         messagesRetrieved={aemStatus?.messages_retrieved ?? 0}
       />
       <StatsRow aemStatus={aemStatus ?? null} incidents={incidents} />
