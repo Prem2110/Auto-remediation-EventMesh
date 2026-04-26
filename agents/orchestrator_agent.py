@@ -48,7 +48,6 @@ from core.constants import (
     AUTO_FIX_CONFIDENCE,
     BURST_DEDUP_WINDOW_SECONDS,
     CPI_IFLOW_GROOVY_RULES,
-    LOCAL_QUEUE_MAXSIZE,
     MAX_CONSECUTIVE_FAILURES,
     PATTERN_MIN_SUCCESS_COUNT,
     REMEDIATION_POLICIES,
@@ -98,10 +97,6 @@ class OrchestratorAgent:
         self._agents_ready: bool = False  # set True after all specialist agents finish build_agent()
         # Per-iFlow mutex: prevents two concurrent fix pipelines writing to the same SAP CPI artifact
         self._iflow_fix_locks: Dict[str, asyncio.Lock] = {}
-        # Autonomous queue-polling loop
-        self._autonomous_task:    Optional[asyncio.Task] = None
-        self._autonomous_running: bool                   = False
-        self._local_queue:        asyncio.Queue          = asyncio.Queue(maxsize=LOCAL_QUEUE_MAXSIZE)
 
     def set_observer(self, observer) -> None:
         """Inject the ObserverAgent reference for the orchestrator LangChain agent."""
@@ -150,11 +145,7 @@ class OrchestratorAgent:
             lc = _ainvoke_or_method(_obs, "")
             if lc:
                 return await _call_agent(lc, task)
-            # Fallback: consume one message via orchestrator queue
-            msg = await _orch._fetch_from_aem_queue()
-            if msg is None:
-                return "WARNING: No messages in AEM observer queue."
-            return str([_orch._normalize_aem_message(msg)])
+            return "WARNING: Observer agent not available."
 
         @_tool
         async def run_classifier(incident_json: str) -> str:
@@ -1447,40 +1438,6 @@ Rules:
             "error_type":     msg.get("error_type") or msg.get("errorType") or "",
         }
 
-    async def _fetch_from_aem_queue(self) -> Optional[Dict[str, Any]]:
-        """Pop one message from the in-process queue (buffered during agent init)."""
-        try:
-            return self._local_queue.get_nowait()
-        except asyncio.QueueEmpty:
-            return None
-
-    async def _publish_to_aem_queue(self, stage: str, incident_id: str, payload: Dict[str, Any]) -> None:
-        """Put a stage-transition message into the in-process queue."""
-        message = {"stage": stage, "incident_id": incident_id, **payload}
-        await self._put_local_queue_message(message)
-        logger.debug("[AEM] Queued: stage='%s' incident='%s'", stage, incident_id)
-
-    async def _put_local_queue_message(self, message: Dict[str, Any]) -> None:
-        """Keep the in-process queue bounded by dropping the oldest message on overflow."""
-        if self._local_queue.full():
-            try:
-                dropped = self._local_queue.get_nowait()
-                logger.warning(
-                    "[AEM] Local queue full; dropped oldest stage='%s' incident='%s'",
-                    dropped.get("stage", "observed"),
-                    dropped.get("incident_id", ""),
-                )
-            except asyncio.QueueEmpty:
-                pass
-        try:
-            self._local_queue.put_nowait(message)
-        except asyncio.QueueFull:
-            logger.warning(
-                "[AEM] Local queue still full; dropping newest stage='%s' incident='%s'",
-                message.get("stage", "observed"),
-                message.get("incident_id", ""),
-            )
-
     # ────────────────────────────────────────────
     # PIPELINE STAGE ROUTING
     # ────────────────────────────────────────────
@@ -1496,9 +1453,10 @@ Rules:
         # "observed" only needs the classifier (sync, always ready) + HANA — never block it,
         # otherwise webhooks received before build_agent() completes are silently lost.
         if not self._agents_ready and stage != "observed":
-            logger.info("[Orchestrator] Agents not ready — re-queuing stage=%s", stage)
-            await asyncio.sleep(2)
-            await self._put_local_queue_message(message)
+            logger.warning(
+                "[Orchestrator] Agents not yet ready for stage=%s — "
+                "event-driven mode will rely on Event Mesh retry", stage
+            )
             return
         try:
             if stage == "observed":
@@ -1696,97 +1654,3 @@ Rules:
             message.get("incident_id", ""), message.get("status", ""), message.get("resolved", False),
         )
 
-    # ────────────────────────────────────────────
-    # AUTONOMOUS QUEUE-POLLING LOOP
-    # ────────────────────────────────────────────
-
-    async def _autonomous_loop(self) -> None:
-        logger.info("[Orchestrator] Autonomous loop started  mode=local in-process queue")
-
-        _BATCH_SIZE          = 20    # max messages to drain per tick
-        _IDLE_SLEEP          = 0.1   # seconds to sleep when queue is empty
-        _TIMEOUT_CHECK_EVERY = 300   # run approval-timeout sweep every 5 minutes
-        _INFLIGHT_CAP        = 5     # max concurrent _route_stage tasks (back-pressure guard)
-        _BACKPRESSURE_SLEEP  = 0.5   # seconds to wait when inflight cap is reached
-        _last_timeout_check  = 0.0
-        _active_tasks: set   = set()
-        _was_at_cap          = False  # track state change to log only on transition
-
-        while self._autonomous_running:
-            try:
-                # Approval-timeout sweep — run every 5 minutes, not every tick
-                now = asyncio.get_running_loop().time()
-                if self._observer and (now - _last_timeout_check) >= _TIMEOUT_CHECK_EVERY:
-                    try:
-                        await self._observer._check_pending_approval_timeouts()
-                        _last_timeout_check = now
-                    except Exception as exc:
-                        logger.warning("[Orchestrator] Timeout check error: %s", exc)
-
-                # Prune completed tasks each tick
-                _active_tasks = {t for t in _active_tasks if not t.done()}
-                inflight = len(_active_tasks)
-
-                # Back-pressure: pause draining when inflight cap is reached
-                if inflight >= _INFLIGHT_CAP:
-                    if not _was_at_cap:
-                        logger.info("[Orchestrator] Back-pressure — %d tasks in flight, pausing drain", inflight)
-                        _was_at_cap = True
-                    await asyncio.sleep(_BACKPRESSURE_SLEEP)
-                    continue
-
-                if _was_at_cap:
-                    logger.info("[Orchestrator] Back-pressure cleared — resuming drain")
-                    _was_at_cap = False
-
-                # Drain up to _BATCH_SIZE messages per tick (while below inflight cap)
-                drained = 0
-                while drained < _BATCH_SIZE and len(_active_tasks) < _INFLIGHT_CAP:
-                    msg = await self._fetch_from_aem_queue()
-                    if msg is None:
-                        break
-                    task = asyncio.create_task(self._route_stage(msg))
-                    _active_tasks.add(task)
-                    drained += 1
-
-                # Sleep only when the queue was empty; yield immediately if busy
-                if drained == 0:
-                    await asyncio.sleep(_IDLE_SLEEP)
-                else:
-                    await asyncio.sleep(0)   # yield to event loop without blocking
-
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.error("[Orchestrator] Loop error: %s", exc)
-                await asyncio.sleep(5)
-                continue
-
-        logger.info("[Orchestrator] Autonomous loop stopped.")
-
-    def start(self) -> bool:
-        if self._autonomous_running:
-            return False
-        self._autonomous_running = True
-
-        async def _guarded():
-            try:
-                await self._autonomous_loop()
-            except Exception as exc:
-                logger.error("[Orchestrator] Loop crashed: %s", exc)
-                self._autonomous_running = False
-
-        self._autonomous_task = asyncio.create_task(_guarded())
-        return True
-
-    def stop(self) -> bool:
-        if not self._autonomous_running:
-            return False
-        self._autonomous_running = False
-        if self._autonomous_task:
-            self._autonomous_task.cancel()
-        return True
-
-    @property
-    def is_running(self) -> bool:
-        return self._autonomous_running

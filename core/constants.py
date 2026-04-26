@@ -37,7 +37,6 @@ MEMORY_SESSION_TTL_SECONDS   = int(os.getenv("MEMORY_SESSION_TTL_SECONDS", "3600
 MAX_MEMORY_SESSIONS          = int(os.getenv("MAX_MEMORY_SESSIONS", "500"))
 FIX_PROGRESS_TTL_SECONDS     = int(os.getenv("FIX_PROGRESS_TTL_SECONDS", "7200"))
 MAX_FIX_PROGRESS_ENTRIES     = int(os.getenv("MAX_FIX_PROGRESS_ENTRIES", "1000"))
-LOCAL_QUEUE_MAXSIZE          = int(os.getenv("LOCAL_QUEUE_MAXSIZE", "1000"))
 
 # ─────────────────────────────────────────────
 # SAP POLLING CONFIG
@@ -47,10 +46,8 @@ SAP_HUB_TOKEN_URL     = os.getenv("SAP_HUB_TOKEN_URL", "")
 SAP_HUB_CLIENT_ID     = os.getenv("SAP_HUB_CLIENT_ID", "")
 SAP_HUB_CLIENT_SECRET = os.getenv("SAP_HUB_CLIENT_SECRET", "")
 
-POLL_INTERVAL_SECONDS   = int(os.getenv("POLL_INTERVAL_SECONDS", "120"))
 AUTO_FIX_CONFIDENCE     = float(os.getenv("AUTO_FIX_CONFIDENCE", "0.90"))
 SUGGEST_FIX_CONFIDENCE  = float(os.getenv("SUGGEST_FIX_CONFIDENCE", "0.70"))
-AUTONOMOUS_ENABLED      = os.getenv("AUTONOMOUS_ENABLED", "false").lower() == "true"
 AUTO_FIX_ALL_CPI_ERRORS = os.getenv("AUTO_FIX_ALL_CPI_ERRORS", "true").lower() == "true"
 AUTO_DEPLOY_AFTER_FIX   = os.getenv("AUTO_DEPLOY_AFTER_FIX", "true").lower() == "true"
 FAILED_MESSAGE_FETCH_LIMIT          = int(os.getenv("FAILED_MESSAGE_FETCH_LIMIT", "100"))

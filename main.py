@@ -54,11 +54,9 @@ from core.constants import (
     AUTO_DEPLOY_AFTER_FIX,
     AUTO_FIX_ALL_CPI_ERRORS,
     AUTO_FIX_CONFIDENCE,
-    AUTONOMOUS_ENABLED,
     BURST_DEDUP_WINDOW_SECONDS,
     FAILED_MESSAGE_FETCH_LIMIT,
     FIX_INTENT_KEYWORDS,
-    POLL_INTERVAL_SECONDS,
     RUNTIME_ERROR_FETCH_LIMIT,
     SUGGEST_FIX_CONFIDENCE,
 )
@@ -191,39 +189,14 @@ async def lifespan(app: FastAPI):
             orchestrator._agents_ready = True
             logger.info("[Startup] All specialist agents built — orchestrator ready to process messages.")
 
-            # ── AEM inbound webhook subscription ──────────────────────────────
-            async def _on_observed_event(event: dict) -> None:
-                payload = event.get("payload", event)
-                if payload and orchestrator:
-                    asyncio.create_task(orchestrator._route_stage(payload))
-                    logger.info("[AEM] Inbound webhook event → _route_stage queued")
-
-            event_bus.subscribe(event_bus.make_topic("observed"), _on_observed_event)
-            logger.info("[Startup] AEM webhook subscription registered: observed")
             logger.info("[Startup] All agents ready.")
         except Exception as exc:
             logger.error("[Startup] Agent initialisation failed: %s", exc)
 
-        # Orchestrator loop was already started before _init_background() ran.
-        # Log confirmation that all agents are now ready for full pipeline processing.
-        if AUTONOMOUS_ENABLED:
-            logger.info("[Startup] All agents ready — orchestrator loop already running.")
-
-    # Start the orchestrator loop immediately so the UI shows "Running" from boot.
-    # Webhook events are dispatched directly to _route_stage from the HTTP handler.
-    if AUTONOMOUS_ENABLED:
-        try:
-            orchestrator.start()
-            logger.info("[Startup] Orchestrator loop started early — agents still initialising.")
-        except Exception as exc:
-            logger.error("[Startup] Early orchestrator start failed: %s", exc)
-
     asyncio.create_task(_init_background())
     logger.info("[Startup] FastAPI ready — agents initialising in background.")
+    logger.info("[Startup] Event-driven mode active — waiting for SAP Event Mesh webhooks")
     yield
-
-    if orchestrator:
-        orchestrator.stop()
 
 
 # ─────────────────────────────────────────────
@@ -471,34 +444,6 @@ async def get_testsuite_logs(user_id: Optional[str] = None):
 # ─────────────────────────────────────────────
 # AUTONOMOUS CONTROL
 # ─────────────────────────────────────────────
-
-@app.post("/autonomous/start")
-async def start_autonomous():
-    _guard()
-    started = orchestrator.start()
-    return {"status": "started" if started else "already_running",
-            "poll_interval_seconds": POLL_INTERVAL_SECONDS}
-
-
-@app.post("/autonomous/stop")
-async def stop_autonomous():
-    _guard()
-    stopped = orchestrator.stop()
-    return {"status": "stopped" if stopped else "not_running"}
-
-
-@app.get("/autonomous/status")
-async def autonomous_status():
-    _guard()
-    return {
-        "running":                orchestrator.is_running,
-        "poll_interval_seconds":  POLL_INTERVAL_SECONDS,
-        "auto_fix_confidence":    AUTO_FIX_CONFIDENCE,
-        "suggest_fix_confidence": SUGGEST_FIX_CONFIDENCE,
-        "auto_fix_all":           AUTO_FIX_ALL_CPI_ERRORS,
-        "auto_deploy":            AUTO_DEPLOY_AFTER_FIX,
-    }
-
 
 # ─────────────────────────────────────────────
 # AUTO-FIX CONFIGURATION
@@ -831,23 +776,6 @@ async def list_escalation_tickets(status: Optional[str] = None, limit: int = 50)
 # MANUAL TRIGGER + TEST INCIDENT
 # ─────────────────────────────────────────────
 
-@app.post("/autonomous/manual_trigger")
-async def manual_trigger(background_tasks: BackgroundTasks):
-    _guard()
-
-    async def one_shot():
-        try:
-            msg = await orchestrator._fetch_from_aem_queue()
-            if msg is None:
-                logger.warning("[manual_trigger] No messages in AEM queue — nothing to process.")
-                return
-            await orchestrator._route_stage(msg)
-        except Exception as exc:
-            logger.error("[manual_trigger] %s", exc)
-
-    background_tasks.add_task(one_shot)
-    return {"status": "triggered", "message": "One-shot poll started in background"}
-
 
 @app.post("/autonomous/test_incident")
 async def inject_test_incident(background_tasks: BackgroundTasks):
@@ -894,7 +822,7 @@ async def inject_test_incident(background_tasks: BackgroundTasks):
 @app.get("/aem/status")
 async def event_mesh_status():
     """Return SAP Event Mesh connectivity info and pipeline stage counts."""
-    queue_name = os.getenv("EVENT_MESH_QUEUE", os.getenv("AEM_OBSERVER_QUEUE", "cpi/evt/02/autofix/observer/out"))
+    queue_name = os.getenv("EVENT_MESH_QUEUE", "cpi/evt/02/autofix/orbit/orchestrator")
 
     total_incidents = count_all_incidents()
     stage_counts    = get_stage_counts()
@@ -902,7 +830,7 @@ async def event_mesh_status():
     return {
         "event_mesh_queue":    queue_name,
         "delivery_mode":       "webhook_push",
-        "orchestrator_running": orchestrator.is_running if orchestrator else False,
+        "webhook_active": True,
         "stage_counts":        stage_counts,
         "total_incidents":     total_incidents,
     }
@@ -1361,7 +1289,7 @@ async def autonomous_debug():
             "SAP_HUB_CLIENT_ID":     "SET" if os.getenv("SAP_HUB_CLIENT_ID")     else "NOT SET",
             "SAP_HUB_CLIENT_SECRET": "SET" if os.getenv("SAP_HUB_CLIENT_SECRET") else "NOT SET",
         },
-        "autonomous_running": orchestrator.is_running if orchestrator else False,
+        "webhook_mode": True,
         "auto_fix_all":       AUTO_FIX_ALL_CPI_ERRORS,
         "auto_deploy":        AUTO_DEPLOY_AFTER_FIX,
         "fetch_test":  None,
@@ -1415,14 +1343,6 @@ async def autonomous_debug2():
     except Exception as exc:
         results["api_exception"] = str(exc)
     return results
-
-
-from fastapi import FastAPI, Request, Header, HTTPException
-@app.post("/webhook")
-async def webhook(request: Request):
-    data = await request.json()
-    print("Received from CPI:", data)
-    return {"status": "received"}
 
 
 # ─────────────────────────────────────────────

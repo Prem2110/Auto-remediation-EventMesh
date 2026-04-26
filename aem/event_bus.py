@@ -20,7 +20,6 @@ Configuration (all via .env):
   EVENT_MESH_TOKEN_URL           — OAuth2 token endpoint URL
   EVENT_MESH_CLIENT_ID           — OAuth2 client ID
   EVENT_MESH_CLIENT_SECRET       — OAuth2 client secret
-  AEM_QUEUE_PREFIX               — queue name prefix (default: "cpi-remediation")
 
 Exports:
   AEMEventBus
@@ -43,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 _AEM_ENABLED              = os.getenv("AEM_ENABLED", "false").lower() == "true"
 _AEM_REST_URL             = os.getenv("AEM_REST_URL", "")
-_AEM_QUEUE_PREFIX         = os.getenv("AEM_QUEUE_PREFIX", "cpi-remediation")
 _EVENT_MESH_TOKEN_URL     = os.getenv("EVENT_MESH_TOKEN_URL", "")
 _EVENT_MESH_CLIENT_ID     = os.getenv("EVENT_MESH_CLIENT_ID", "")
 _EVENT_MESH_CLIENT_SECRET = os.getenv("EVENT_MESH_CLIENT_SECRET", "")

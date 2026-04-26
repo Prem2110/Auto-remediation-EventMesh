@@ -1,783 +1,807 @@
-# SAP CPI Self-Healing Agent
+# Orbit — SAP CPI Auto-Remediation Agent
 
-[![Python Version](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688.svg)](https://fastapi.tiangolo.com/)
-[![LangChain](https://img.shields.io/badge/LangChain-0.3%2B-brightgreen.svg)](https://langchain.com/)
-[![HANA Cloud](https://img.shields.io/badge/SAP%20HANA-Cloud-blue.svg)](https://www.sap.com/products/technology-platform/hana.html)
-
-An intelligent, autonomous SAP Cloud Platform Integration (CPI) monitoring and self-healing system powered by AI. The system automatically detects failed integration messages via **SAP Advanced Event Mesh (AEM) REST Delivery** or direct SAP CPI polling, performs AI-driven Root Cause Analysis through a **multi-agent pipeline**, and applies fixes to iFlows — with no manual intervention required.
-
----
-
-## Quick Start
-
-```bash
-# 1. Install dependencies
-uv sync
-
-# 2. Copy and fill environment variables
-cp .env.example .env   # then edit .env with your credentials
-
-# 3. (One-time) Build the SAP Notes knowledge base
-uv run playwright install chromium
-uv run python scrape_sap_docs.py --notes-only --notes-file sap_notes_1.txt
-uv run python vectorize_docs.py
-
-# 4. Start the server (development — hot reload)
-APP_ENV=development uvicorn main:app --host 0.0.0.0 --port 8080 --reload
-
-# 5. Start the server (production)
-uvicorn main:app --host 0.0.0.0 --port 8080
-```
-
-API docs: `http://localhost:8080/docs`
+An event-driven, multi-agent system that automatically detects, diagnoses, and fixes
+errors in SAP Integration Suite (CPI) iFlows. When a CPI iFlow fails, the system
+receives the error event via SAP Event Mesh, runs root cause analysis using an LLM,
+applies a fix to the iFlow XML, redeploys it, and verifies the fix — all without
+human intervention.
 
 ---
 
-## Features
+## Table of Contents
 
-### Core Capabilities
-
-- **Autonomous Error Detection** — Receives failed CPI events via SAP AEM REST Delivery webhook (`POST /aem/events`). Falls back to direct SAP CPI OData polling when AEM is disabled
-- **SAP AEM Event Bus** — In-process publish/subscribe bus with dual-mode operation: pure in-memory (default, no external dependency) or REST delivery to SAP AEM. Pipeline stages emit events on canonical topics (`sap/cpi/remediation/{stage}/{incident_id}`)
-- **OData iFlow Name Resolution** — Extracts the MPL ID (GUID) from each error and calls `GET /api/v1/MessageProcessingLogs('{guid}')` to resolve `IntegrationFlowName`, `Sender`, `Receiver`, `LogStart`, `LogEnd`
-- **Multi-Agent Pipeline** — Dedicated specialist agents (Observer → Classifier → RCA → Fix → Verifier) coordinated by an OrchestratorAgent; each agent has its own filtered tool set and LLM deployment
-- **AI Root Cause Analysis (RCA)** — LangChain agent analyses errors using message logs, actual iFlow configuration (`get-iflow`), top-5 SAP notes from vector store, HANA knowledge base, and rule-based classifier with priority-ordered keyword matching
-- **Self-Healing Fix Pipeline** — Downloads iFlow config, applies a reasoned fix, updates and deploys — with automatic unlock handling, 600 s agent timeout, per-stage failure diagnosis, and retry logic
-- **Pre-Update XML Validator** — Python validator intercepts every `update-iflow` call before it reaches SAP CPI: checks filepath matches the original, validates XML is well-formed, rejects `ifl:property` at collaboration level, and blocks version attribute changes
-- **SFTP Error Routing** — All SFTP-class errors are classified as `SFTP_ERROR` and routed directly to `TICKET_CREATED` — never wastes a fix attempt on errors requiring server-side action
-- **Backend vs Adapter Error Split** — HTTP 5xx (`BACKEND_ERROR`) → ticket; HTTP 4xx (`ADAPTER_CONFIG_ERROR`) → auto-fix; HTTP 429 → retry
-- **HANA Vector Store Integration** — Cosine similarity search over `SAP_HELP_DOCS` (20,000+ scraped SAP notes, 3072-dim embeddings)
-- **Internal Escalation Tickets** — Low-confidence incidents escalated as tickets in HANA
-- **Fix Pattern Learning** — Successful fixes stored and reused via error signature matching (scoped to iflow + error type + normalised error fragment)
-- **Live Fix Progress** — In-memory step tracker provides granular pipeline progress without HANA polling
-- **Locked Artifact Handling** — Automatic unlock via DELETE /checkout, POST /CancelCheckout, MCP unlock tools
-- **Recurring Incident Correlation** — Deduplicates by signature and resumes fix flow for recurring failures
-- **Runtime Auto-Fix Toggle** — Enable/disable autonomous fixing at runtime via API without service restart
-- **Dashboard + Observability** — React frontend with Dashboard, Observability, Pipeline, Orchestrator, Agent Cards, Test Suite, Migration Wizard, and PiPo List tabs
+1. [Project Overview](#1-project-overview)
+2. [Architecture](#2-architecture)
+3. [Agent Roles](#3-agent-roles)
+4. [SAP Event Mesh Setup](#4-sap-event-mesh-setup)
+5. [Environment Variables](#5-environment-variables)
+6. [API Endpoints](#6-api-endpoints)
+7. [Local Development Setup](#7-local-development-setup)
+8. [Deployment (Cloud Foundry)](#8-deployment-cloud-foundry)
+9. [Database](#9-database)
+10. [Frontend](#10-frontend)
 
 ---
 
-## Architecture
+## 1. Project Overview
+
+**What it does:**
+
+SAP CPI iFlows occasionally fail due to mapping errors, missing fields, endpoint
+timeouts, or schema mismatches. Orbit monitors these failures in real time, determines
+the root cause using an LLM, edits the iFlow XML to apply the fix, deploys the updated
+iFlow back to SAP Integration Suite, and verifies it works — writing the final outcome
+to the database.
+
+**Tech stack:**
+
+| Layer | Technology |
+|---|---|
+| API framework | FastAPI + Uvicorn |
+| Agent orchestration | LangChain (tool-calling agents) |
+| LLM | SAP AI Core — GPT-5 / Claude Sonnet via OpenAI-compatible API |
+| MCP tool protocol | fastmcp `>=2.14.5`, langchain-mcp-adapters |
+| Event bus | SAP Event Mesh (REST publishing, OAuth2, x-qos 0/1) |
+| SAP CPI integration | OData API (OAuth2), Design-time / Runtime REST APIs |
+| Database | SAP HANA Cloud via hdbcli |
+| Object storage | AWS S3 via boto3 |
+| Frontend | React + TypeScript (Vite) |
+| Python | `>=3.13` |
+| Logging | structlog + rotating file handlers |
+
+---
+
+## 2. Architecture
+
+### Event-Driven Pipeline
+
+A CPI iFlow error triggers an event that flows through five agents in strict linear
+order. Each agent webhook returns `{"status": "accepted"}` immediately and processes
+in a background task. Only on success does it publish to the next agent's topic.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      FastAPI Application ($PORT)                         │
-│                                                                           │
-│  ┌─────────────┐   ┌──────────────────────┐   ┌────────────────────┐   │
-│  │ Chatbot API │   │ Smart Monitoring API │   │  Dashboard API     │   │
-│  │ /query /fix │   │ /smart-monitoring/   │   │  /dashboard/       │   │
-│  └──────┬──────┘   └──────────┬───────────┘   └─────────┬──────────┘   │
-│         └─────────────────────┴──────────────────────────┘              │
-│                               │                                           │
-│   ┌───────────────────────────▼──────────────────────────────────────┐  │
-│   │                      OrchestratorAgent                            │  │
-│   │   Routes AEM events → Classifier → RCA → Fix → Verifier          │  │
-│   │   Manages autonomous loop, dedup, escalation, fix progress        │  │
-│   └──────┬──────────┬──────────┬──────────┬──────────────────────────┘  │
-│          │          │          │          │                               │
-│   ┌──────▼──┐ ┌─────▼───┐ ┌───▼────┐ ┌──▼───────┐                     │
-│   │Observer │ │Classif- │ │  RCA   │ │  Fix     │ ┌──────────┐        │
-│   │Agent    │ │ier Agent│ │ Agent  │ │  Agent   │ │ Verifier │        │
-│   │+OData   │ │rule-based│ │LLM +  │ │get/update│ │  Agent   │        │
-│   │fetcher  │ │keywords  │ │vector │ │/deploy   │ │test+retry│        │
-│   └─────────┘ └─────────┘ └───────┘ └──────────┘ └──────────┘        │
-│                               │                                           │
-│   ┌───────────────────────────▼──────────────────────────────────────┐  │
-│   │                       MultiMCP Manager                            │  │
-│   │   Transport layer — connects, discovers, executes MCP tools       │  │
-│   └──────┬───────────────────┬────────────────────┬───────────────────┘  │
-└──────────┼───────────────────┼────────────────────┼─────────────────────┘
-           │                   │                    │
- ┌─────────▼────────┐  ┌───────▼──────┐  ┌─────────▼────────┐
- │ Integration Suite│  │  iFlow Test  │  │  Documentation   │
- │      MCP         │  │     MCP      │  │      MCP         │
- │ get/update/deploy│  │ test/validate│  │  spec/templates  │
- └──────────────────┘  └──────────────┘  └──────────────────┘
-
-Inbound:
-┌────────────────────────────────────────────────────────┐
-│  SAP Advanced Event Mesh (AEM) — REST Delivery         │
-│  POST /aem/events  ← AEM queue consumer pushes JSON    │
-│  event_bus.publish(topic, event)                        │
-│  → registered in-process handlers                       │
-│  → OrchestratorAgent.process_detected_error()          │
-└────────────────────────────────────────────────────────┘
-
-External Services:
-┌──────────────────────┐  ┌───────────────────┐  ┌──────────────────────┐
-│    SAP HANA Cloud    │  │   SAP AI Core     │  │       AWS S3         │
-│  Incidents · History │  │  LLM deployments  │  │  File uploads        │
-│  Fix patterns        │  │  text-embedding   │  │  iFlow examples      │
-│  SAP_HELP_DOCS       │  │  -3-large (3072d) │  │  (structural ref)    │
-│  Escalation tickets  │  │                   │  │                      │
-└──────────────────────┘  └───────────────────┘  └──────────────────────┘
+SAP CPI iFlow → error occurs
+        │
+        │  publishes event to topic: cpi/evt/02/autofix/in
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Queue: cpi/evt/02/autofix/orbit/orchestrator                │
+│  Subscribes to topic: cpi/evt/02/autofix/in                  │
+└──────────────────────┬───────────────────────────────────────┘
+                       │ webhook push
+                       ▼
+             POST /agents/orchestrator
+             • Normalize raw AEM message envelope
+             • Classify error (rule-based + LLM fallback)
+             • Dedup check (signature + burst window)
+             • Create incident in DB  →  status: CLASSIFIED
+                       │
+                       │  publish_to_next → cpi/evt/02/autofix/agent/orbit/observer
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Queue: cpi/evt/02/autofix/orbit/observer                    │
+│  Subscribes to topic: cpi/evt/02/autofix/agent/orbit/observer│
+└──────────────────────┬───────────────────────────────────────┘
+                       │ webhook push
+                       ▼
+             POST /agents/observer
+             • Fetch OData metadata (sender, receiver, log timestamps)
+             • Enrich incident in DB  →  status: OBSERVED
+                       │
+                       │  publish_to_next → cpi/evt/02/autofix/agent/orbit/rca
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Queue: cpi/evt/02/autofix/orbit/rca                         │
+│  Subscribes to topic: cpi/evt/02/autofix/agent/orbit/rca     │
+└──────────────────────┬───────────────────────────────────────┘
+                       │ webhook push
+                       ▼
+             POST /agents/rca
+             • Run LLM root cause analysis (reads iFlow XML via MCP)
+             • Update DB: root_cause, proposed_fix, rca_confidence
+             • status: RCA_IN_PROGRESS → RCA_COMPLETE
+                       │
+                       │  publish_to_next → cpi/evt/02/autofix/agent/orbit/fixer
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Queue: cpi/evt/02/autofix/orbit/fixer                       │
+│  Subscribes to topic: cpi/evt/02/autofix/agent/orbit/fixer   │
+└──────────────────────┬───────────────────────────────────────┘
+                       │ webhook push
+                       ▼
+             POST /agents/fixer
+             • Apply fix: get-iflow → update-iflow → deploy-iflow (via MCP)
+             • Update DB: fix_summary, fix_applied
+             • status: FIX_IN_PROGRESS → FIX_DEPLOYED
+             • Halt pipeline on failure — does NOT publish to verifier
+                       │
+                       │  publish_to_next → cpi/evt/02/autofix/agent/orbit/verifier
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Queue: cpi/evt/02/autofix/orbit/verifier                    │
+│  Subscribes to topic: cpi/evt/02/autofix/agent/orbit/verifier│
+└──────────────────────┬───────────────────────────────────────┘
+                       │ webhook push
+                       ▼
+             POST /agents/verifier
+             • Check iFlow runtime status
+             • Run test payload (HTTP-triggered iFlows only)
+             • Write final status to DB:
+               ✓  FIX_VERIFIED        — fix confirmed working
+               ✗  FIX_FAILED_RUNTIME  — iFlow still failing after deploy
+             ✓  Terminal — no further publish
 ```
 
-### Agent Responsibilities
+### Failure Handling
 
-| Agent | Role | Tool Set |
+Each background task wraps the agent call in `try/except`. On any exception:
+- The incident DB status is set to the appropriate `*_FAILED` variant
+- `publish_to_next()` is **not** called — the pipeline halts cleanly at that stage
+- The failure is logged as `[Agents/<name>] Task failed incident=<id>: <exc>`
+
+### In-Process Fallback (`AEM_ENABLED=false`)
+
+When `AEM_ENABLED=false` (local dev), `publish_to_next()` dispatches to in-process
+handlers registered via `event_bus.subscribe()` instead of making HTTP calls to SAP
+Event Mesh. The same five-stage pipeline runs end-to-end with zero external dependencies.
+
+### Backward-Compatible Entry Points
+
+The original `/aem/events` and `/event-mesh/events` webhooks are preserved unchanged.
+They call `orchestrator._route_stage()` which runs the full pipeline inline — useful
+as a fallback or for testing without the full queue topology.
+
+---
+
+## 3. Agent Roles
+
+### Stage 1 — Orchestrator (`/agents/orchestrator`)
+
+- **Input:** Raw CPI error event JSON (SAP Event Mesh push from iFlow)
+- **Responsibilities:**
+  - Normalize the AEM multimap envelope into a flat incident dict
+  - Classify the error type using rule-based patterns (zero latency)
+  - Fall back to LLM classification when rule confidence < 70%
+  - Apply signature dedup — if same iFlow + error type is already open, increment occurrence count and stop
+  - Apply burst dedup — absorb rapid repeat events within `BURST_DEDUP_WINDOW_SECONDS`
+  - Create a new incident record in HANA with status `CLASSIFIED`
+- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/observer`
+- **On failure:** Logs error; no incident is written to DB
+
+### Stage 2 — Observer (`/agents/observer`)
+
+- **Input:** `{"stage": "observer", "incident_id": "<uuid>"}`
+- **Responsibilities:**
+  - Read incident from DB
+  - Call SAP CPI OData `MessageProcessingLogs('<guid>')` API
+  - Enrich incident with: `iflow_id`, `sender`, `receiver`, `log_start`, `log_end`
+  - Update DB status to `OBSERVED`
+- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/rca`
+- **On failure:** Sets status `OBS_FAILED`
+
+### Stage 3 — RCA Agent (`/agents/rca`)
+
+- **Input:** `{"stage": "rca", "incident_id": "<uuid>"}`
+- **Responsibilities:**
+  - Read enriched incident from DB
+  - Run an LLM agent with a restricted tool set (`get-iflow`, `get_message_logs`)
+  - Read the iFlow XML and CPI message logs to determine root cause
+  - Update DB: `root_cause`, `proposed_fix`, `rca_confidence`, `affected_component`
+  - Status progression: `RCA_IN_PROGRESS` → `RCA_COMPLETE`
+- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/fixer`
+- **On failure:** Sets status `RCA_FAILED`
+
+### Stage 4 — Fixer Agent (`/agents/fixer`)
+
+- **Input:** `{"stage": "fixer", "incident_id": "<uuid>"}`
+- **Responsibilities:**
+  - Read incident + RCA results from DB
+  - Execute the fix pipeline via MCP: `get-iflow` → `update-iflow` → `deploy-iflow`
+  - Evaluate outcome: `fix_applied AND deploy_success`
+  - Update DB: `fix_summary`, `fix_applied`, `status`
+  - Only publish to verifier if fix was successfully applied and deployed; otherwise halt
+- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/verifier` (success only)
+- **On failure:** Sets status `FIX_FAILED`
+
+### Stage 5 — Verifier Agent (`/agents/verifier`) — Terminal
+
+- **Input:** `{"stage": "verifier", "incident_id": "<uuid>"}`
+- **Responsibilities:**
+  - Read incident from DB
+  - Check iFlow runtime status via `check_iflow_runtime_status` tool
+  - For HTTP-triggered iFlows: execute a test payload via `test_iflow_with_payload`
+  - For non-HTTP iFlows: runtime `Started` state is sufficient confirmation
+  - Write final DB status: `FIX_VERIFIED` or `FIX_FAILED_RUNTIME`
+- **Publishes to:** Nothing — this is the terminal stage
+- **On failure:** Sets status `FIX_FAILED_RUNTIME`
+
+---
+
+## 4. SAP Event Mesh Setup
+
+### Queues
+
+Create the following 5 queues in your SAP Event Mesh service instance:
+
+| Queue Name | Topic Subscription | Purpose |
 |---|---|---|
-| `OrchestratorAgent` | Coordinates the full pipeline; drains AEM event queue; manages dedup, escalation, circuit breaker | All specialist agents as LangChain `@tool` wrappers |
-| `ObserverAgent` | Holds `SAPErrorFetcher` for OData metadata calls; manages approval timeouts | CPI OData API via `error_fetcher` |
-| `ClassifierAgent` | Rule-based keyword classifier (priority-ordered) | No LLM — pure Python |
-| `RCAAgent` | Root cause analysis | `get-iflow`, `get_message_logs` (read-only MCP tools) + vector store |
-| `FixAgent` | iFlow fix + deploy pipeline | `get-iflow`, `update-iflow`, `deploy-iflow` |
-| `VerifierAgent` | Post-fix test + message replay | `mcp_testing` tools |
+| `cpi/evt/02/autofix/orbit/orchestrator` | `cpi/evt/02/autofix/in` | Receives raw iFlow error events |
+| `cpi/evt/02/autofix/orbit/observer` | `cpi/evt/02/autofix/agent/orbit/observer` | Receives classified incidents for enrichment |
+| `cpi/evt/02/autofix/orbit/rca` | `cpi/evt/02/autofix/agent/orbit/rca` | Receives enriched incidents for RCA |
+| `cpi/evt/02/autofix/orbit/fixer` | `cpi/evt/02/autofix/agent/orbit/fixer` | Receives RCA-complete incidents for fix |
+| `cpi/evt/02/autofix/orbit/verifier` | `cpi/evt/02/autofix/agent/orbit/verifier` | Receives deployed fixes for verification |
+
+Recommended queue settings: **Access type: Exclusive**, **Message retention: 7 days**
+
+### Webhook Subscriptions
+
+Create one REST delivery webhook per queue:
+
+| Subscription Name | Source Queue | Webhook URL |
+|---|---|---|
+| `orbit-orchestrator` | `cpi/evt/02/autofix/orbit/orchestrator` | `https://<backend-url>/agents/orchestrator` |
+| `orbit-observer` | `cpi/evt/02/autofix/orbit/observer` | `https://<backend-url>/agents/observer` |
+| `orbit-rca` | `cpi/evt/02/autofix/orbit/rca` | `https://<backend-url>/agents/rca` |
+| `orbit-fixer` | `cpi/evt/02/autofix/orbit/fixer` | `https://<backend-url>/agents/fixer` |
+| `orbit-verifier` | `cpi/evt/02/autofix/orbit/verifier` | `https://<backend-url>/agents/verifier` |
+
+Webhook settings: **Content-Type: application/json**, **Method: POST**
+
+### SAP CPI iFlow Configuration
+
+Configure the CPI iFlow's outbound adapter to publish error events to the
+Event Mesh topic `cpi/evt/02/autofix/in` using the AMQP 1.0 adapter.
+Store the Event Mesh AMQP credentials in the iFlow's credential store entry
+`EventMesh_CPIEVT`.
+
+AMQP connection details (from `.env`):
+- Host: `EVENT_MESH_AMQP_HOST`
+- Port: `EVENT_MESH_AMQP_PORT` (443)
+- Path: `EVENT_MESH_AMQP_PATH` (`/protocols/amqp10ws`)
+
+---
+
+## 5. Environment Variables
+
+Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
+
+### SAP AI Core (LLM)
+
+| Variable | Description |
+|---|---|
+| `AICORE_CLIENT_ID` | OAuth2 client ID from SAP AI Core service key |
+| `AICORE_CLIENT_SECRET` | OAuth2 client secret |
+| `AICORE_AUTH_URL` | Token URL: `https://<subdomain>.authentication.<region>.hana.ondemand.com` |
+| `AICORE_BASE_URL` | AI Core API base: `https://api.ai.prod.<region>.aws.ml.hana.ondemand.com/v2` |
+| `AICORE_RESOURCE_GROUP` | Resource group (default: `default`) |
+| `LLM_DEPLOYMENT_ID` | Default LLM deployment ID |
+| `LLM_DEPLOYMENT_ID_RCA` | Per-agent override for RCA (optional; falls back to `LLM_DEPLOYMENT_ID`) |
+| `LLM_DEPLOYMENT_ID_FIX` | Per-agent override for Fixer (optional) |
+| `EMBEDDING_DEPLOYMENT_ID` | Embedding model deployment ID |
+| `EMBEDDING_MODEL_NAME` | Embedding model name (e.g. `text-embedding-3-large`) |
+| `VECTOR_DIMENSION` | Embedding vector size (e.g. `3072`) |
+
+### SAP Integration Suite — Runtime API
+
+| Variable | Description |
+|---|---|
+| `API_BASE_URL` | CPI API base: `https://<tenant>.it-cpi<n>.cfapps.<region>.hana.ondemand.com/api/v1` |
+| `API_OAUTH_CLIENT_ID` | Client ID for CPI API |
+| `API_OAUTH_CLIENT_SECRET` | Client secret |
+| `API_OAUTH_TOKEN_URL` | Token endpoint URL |
+
+### SAP Integration Suite — CPI Runtime Monitor
+
+| Variable | Description |
+|---|---|
+| `CPI_BASE_URL` | CPI runtime base: `https://<tenant>.it-cpi<n>-rt.cfapps.<region>.hana.ondemand.com` |
+| `CPI_OAUTH_CLIENT_ID` | Client ID for CPI runtime |
+| `CPI_OAUTH_CLIENT_SECRET` | Client secret |
+| `CPI_OAUTH_TOKEN_URL` | Token endpoint URL |
+
+### SAP Integration Suite — Design Time
+
+| Variable | Description |
+|---|---|
+| `SAP_DESIGN_TIME_URL` | Design-time base URL |
+| `SAP_DESIGN_TIME_TOKEN_URL` | Token endpoint |
+| `SAP_DESIGN_TIME_CLIENT_ID` | Client ID |
+| `SAP_DESIGN_TIME_CLIENT_SECRET` | Client secret |
+
+### SAP Hub — Autonomous Error Polling
+
+| Variable | Description |
+|---|---|
+| `SAP_HUB_TENANT_URL` | SAP CPI tenant URL for OData polling |
+| `SAP_HUB_TOKEN_URL` | Token endpoint |
+| `SAP_HUB_CLIENT_ID` | Client ID |
+| `SAP_HUB_CLIENT_SECRET` | Client secret |
 
 ### MCP Servers
 
-| Server | Responsibility |
+| Variable | Description |
 |---|---|
-| `integration_suite` | iFlow get / update / deploy / unlock, message logs, iFlow examples |
-| `mcp_testing` | Test execution, iFlow validation, test reports |
-| `documentation_mcp` | SAP standard docs, spec generation, templates |
+| `MCP_INTEGRATION_SUITE_URL` | Integration Suite MCP server URL (iFlow get/update/deploy tools) |
+| `MCP_TESTING_URL` | Testing MCP server URL (test execution, validation) |
+| `MCP_DOCUMENTATION_URL` | Documentation MCP server URL (SAP docs, templates) |
 
-### AEM Event Bus
+### SAP HANA Cloud
 
-The `aem/event_bus.py` module implements a dual-mode publish/subscribe bus:
-
-| Mode | When | Behaviour |
+| Variable | Default | Description |
 |---|---|---|
-| In-memory (default) | `AEM_ENABLED=false` | `publish()` calls registered Python handlers directly — zero network I/O |
-| REST Delivery | `AEM_ENABLED=true` | `publish()` POSTs the event JSON to `AEM_REST_URL/{topic}` with Basic auth; in-process handlers also fire |
+| `HANA_HOST` | — | HANA host: `<uuid>.hna0.prod-<region>.hanacloud.ondemand.com` |
+| `HANA_PORT` | `443` | HANA port |
+| `HANA_USER` | — | Database user |
+| `HANA_PASSWORD` | — | Database password |
+| `HANA_SCHEMA` | — | Schema name |
+| `HANA_TABLE_EM_INCIDENTS` | `EM_AUTONOMOUS_INCIDENTS` | Incidents table |
+| `HANA_TABLE_EM_FIX_PATTERNS` | `EM_FIX_PATTERNS` | Fix patterns table |
+| `HANA_TABLE_EM_ESCALATION_TICKETS` | `EM_ESCALATION_TICKETS` | Escalation tickets table |
 
-Topic convention: `sap/cpi/remediation/{stage}/{incident_id}` where stage is one of `observed`, `classified`, `rca`, `fix`, `verified`.
+### SAP Event Mesh
+
+| Variable | Default | Description |
+|---|---|---|
+| `AEM_ENABLED` | `false` | `true` = publish to SAP Event Mesh; `false` = in-process only |
+| `AEM_REST_URL` | — | Event Mesh REST gateway base URL (from service key `httprest` entry) |
+| `EVENT_MESH_TOKEN_URL` | — | OAuth2 token endpoint (from service key `uaa` section) |
+| `EVENT_MESH_CLIENT_ID` | — | OAuth2 client ID |
+| `EVENT_MESH_CLIENT_SECRET` | — | OAuth2 client secret |
+| `EVENT_MESH_QUEUE` | `cpi/evt/02/autofix` | Inbound queue name |
+| `AEM_OBSERVER_QUEUE` | `cpi/evt/02/autofix` | Observer queue alias |
+| `EVENT_MESH_AMQP_HOST` | — | AMQP host (used by CPI iFlow adapter only) |
+| `EVENT_MESH_AMQP_PORT` | `443` | AMQP port |
+| `EVENT_MESH_AMQP_PATH` | `/protocols/amqp10ws` | AMQP WebSocket path |
+
+### AWS S3 Object Store
+
+| Variable | Description |
+|---|---|
+| `BUCKET_NAME` | S3 bucket name |
+| `REGION` | AWS region (e.g. `us-east-1`) |
+| `ENDPOINT_URL` | S3 endpoint |
+| `OBJECT_STORE_ACCESS_KEY` | Access key |
+| `OBJECT_STORE_SECRET_KEY` | Secret key |
+| `WRITE_ACCESS_KEY_ID` | Write-only access key |
+| `WRITE_SECRET_ACCESS_KEY` | Write-only secret key |
+
+### Autonomous Operations — Feature Flags
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTONOMOUS_ENABLED` | `true` | Enable the orchestrator polling loop at startup |
+| `AUTO_FIX_CONFIDENCE` | `0.90` | Min RCA confidence to auto-apply a fix |
+| `SUGGEST_FIX_CONFIDENCE` | `0.70` | Min confidence to suggest (not apply) a fix |
+| `USE_REAL_FIXES` | `true` | Actually deploy; `false` = dry-run (no iFlow changes) |
+| `POLL_INTERVAL_SECONDS` | `60` | Interval between autonomous CPI polling cycles |
+| `FAILED_MESSAGES_PAGE_SIZE` | `400` | Page size for CPI failed message fetch |
+| `FAILED_MESSAGES_MAX_TOTAL` | `50000` | Max messages to fetch per cycle |
+| `MAX_CONSECUTIVE_FAILURES` | `5` | Circuit breaker: escalate after N consecutive failures |
+| `PENDING_APPROVAL_TIMEOUT_HRS` | `24` | Hours before pending approval auto-escalates |
+| `PATTERN_MIN_SUCCESS_COUNT` | `2` | Min successful fixes before a pattern is trusted |
+| `BURST_DEDUP_WINDOW_SECONDS` | `60` | Window for absorbing rapid repeat events |
+
+### Server & Logging
+
+| Variable | Default | Description |
+|---|---|---|
+| `API_HOST` | `0.0.0.0` | Server bind address |
+| `API_PORT` | `8080` | Server port |
+| `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `ENABLE_CONSOLE_LOGS` | `true` | Mirror structured logs to stdout |
+| `WEB_SEARCH_ENABLED` | `false` | Enable DuckDuckGo search tool for agents |
+| `UPLOAD_ROOT` | `user` | Root prefix for S3 file uploads |
 
 ---
 
-## Prerequisites
+## 6. API Endpoints
 
-- Python 3.13+
-- SAP BTP account with Integration Suite access
-- SAP AI Core deployment (LLM + `text-embedding-3-large` embedding model)
-- SAP HANA Cloud database instance
-- AWS S3 bucket (for file uploads and iFlow example storage)
-- The three MCP servers deployed and reachable
-- **SAP Advanced Event Mesh** — required if `AEM_ENABLED=true` (REST Delivery Endpoint)
-- Playwright Chromium browser (for `scrape_sap_docs.py` utility only — not needed for the running app)
+### Agent Webhook Endpoints
+
+Event-driven pipeline entry points called by SAP Event Mesh webhooks.
+All return `{"status": "accepted"}` immediately; work runs in a background task.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/agents/orchestrator` | Classify error, dedup check, create incident → publish to observer |
+| `POST` | `/agents/observer` | Enrich with OData metadata → publish to rca |
+| `POST` | `/agents/rca` | Run root cause analysis → publish to fixer |
+| `POST` | `/agents/fixer` | Apply fix + deploy iFlow → publish to verifier (success only) |
+| `POST` | `/agents/verifier` | Verify fix, write final status — terminal stage |
+
+### Legacy Event Mesh Webhooks (backward-compatible)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/aem/events` | Full inline pipeline via `_route_stage()` |
+| `POST` | `/event-mesh/events` | Alias for `/aem/events` |
+
+### Event Mesh Status
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/aem/status` | AEM connectivity, queue depth, stage counts, enabled flag |
+| `GET` | `/event-mesh/status` | Alias for `/aem/status` |
+
+### Autonomous Pipeline
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/autonomous/start` | Start the autonomous CPI polling loop |
+| `POST` | `/autonomous/stop` | Stop the autonomous polling loop |
+| `GET` | `/autonomous/status` | Pipeline running state + agent states |
+| `GET` | `/autonomous/tools` | MCP tool list per agent |
+| `GET` | `/autonomous/incidents` | List incidents (params: `status`, `limit`) |
+| `GET` | `/autonomous/incidents/{id}` | Single incident detail |
+| `GET` | `/autonomous/incidents/{id}/view_model` | Rich UI view model |
+| `GET` | `/autonomous/incidents/{id}/fix_progress` | Live fix progress (SSE) |
+| `POST` | `/autonomous/incidents/{id}/approve` | Approve or reject a pending fix |
+| `POST` | `/autonomous/incidents/{id}/generate_fix` | Manually trigger fix generation |
+| `POST` | `/autonomous/incidents/{id}/retry_rca` | Re-run RCA on an existing incident |
+| `GET` | `/autonomous/incidents/{id}/fix_patterns` | Similar patterns from knowledge base |
+| `GET` | `/autonomous/pending_approvals` | Incidents awaiting human approval |
+| `GET` | `/autonomous/tickets` | Escalation tickets |
+| `POST` | `/autonomous/manual_trigger` | Push a raw error through the pipeline manually |
+| `POST` | `/autonomous/test_incident` | Create a synthetic test incident |
+
+### CPI Error Fetch
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/autonomous/cpi/errors` | All CPI failed messages |
+| `GET` | `/autonomous/cpi/messages/errors` | Message processing log errors |
+| `GET` | `/autonomous/cpi/runtime_artifacts/errors` | Runtime artifact errors |
+| `GET` | `/autonomous/cpi/runtime_artifacts/{id}` | Single runtime artifact detail |
+
+### Configuration
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/config/auto-fix` | Get current auto-fix enabled state |
+| `POST` | `/api/config/auto-fix` | Enable or disable auto-fix at runtime |
+| `POST` | `/api/config/auto-fix/reset` | Reset to the `.env` value |
+
+### Chatbot & General
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Health check |
+| `POST` | `/query` | General chatbot query (full MCP agent) |
+| `POST` | `/fix` | Direct fix request |
+| `GET` | `/get_all_history` | Chatbot query history for a user |
+| `GET` | `/get_testsuite_logs` | Test suite run logs |
+| `POST` | `/webhook` | Generic inbound webhook |
+
+### Debug
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/autonomous/db_test` | HANA connectivity + insert/fetch roundtrip |
+| `GET` | `/autonomous/debug` | SAP credential env vars + observer health |
+| `GET` | `/autonomous/debug2` | Agent state dump |
 
 ---
 
-## Installation
+## 7. Local Development Setup
 
-### 1. Clone the repository
+### Prerequisites
+
+- Python `>=3.13`
+- Access to SAP HANA Cloud instance
+- Node.js `>=18` (frontend only)
+- (Optional) Access to SAP AI Core + MCP servers for full agent functionality
+
+### Backend Setup
 
 ```bash
+# 1. Clone the repository
 git clone <repo-url>
-cd auto-remediation
-```
+cd "auto-remediation - EventMesh"
 
-### 2. Install dependencies
+# 2. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate        # Linux / macOS
+.venv\Scripts\activate           # Windows
 
-Using uv (recommended):
-```bash
-uv sync
-```
-
-Or pip:
-```bash
+# 3. Install dependencies
 pip install -r requirements.txt
+
+# 4. Configure environment
+cp .env.example .env
+# Edit .env — fill in HANA, SAP CPI, and AI Core credentials at minimum
 ```
 
-### 3. Configure environment variables
+### Run in In-Process Mode (`AEM_ENABLED=false`)
 
-Create a `.env` file in the project root.
+Recommended for local development. No SAP Event Mesh connectivity required.
+The five agents call each other in-process via the in-memory event bus.
 
-Legend: `[REQUIRED]` must be set or the app will not start / feature will not work. `[OPTIONAL]` has a safe default or enables a non-critical feature.
-
-```env
-# ── SAP AI Core ── [REQUIRED] ─────────────────────────────────────────
-AICORE_CLIENT_ID=your_client_id
-AICORE_CLIENT_SECRET=your_client_secret
-AICORE_AUTH_URL=https://your-tenant.authentication.region.hana.ondemand.com
-AICORE_BASE_URL=https://api.ai.prod.region.aws.ml.hana.ondemand.com/v2
-AICORE_RESOURCE_GROUP=default
-LLM_DEPLOYMENT_ID=your_llm_deployment_id
-LLM_DEPLOYMENT_ID_RCA=your_rca_deployment_id     # optional — falls back to LLM_DEPLOYMENT_ID
-LLM_DEPLOYMENT_ID_FIX=your_fix_deployment_id     # optional — falls back to LLM_DEPLOYMENT_ID
-
-# ── LangSmith Tracing ── [OPTIONAL] ──────────────────────────────────
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=your_langsmith_key
-LANGSMITH_PROJECT=your_project_name
-
-# ── SAP Integration Suite — Runtime API ── [REQUIRED] ────────────────
-API_BASE_URL=https://your-tenant.it-cpi019.cfapps.region.hana.ondemand.com/api/v1
-API_OAUTH_CLIENT_ID=your_client_id
-API_OAUTH_CLIENT_SECRET=your_client_secret
-API_OAUTH_TOKEN_URL=https://your-tenant.authentication.region.hana.ondemand.com/oauth/token
-
-# ── SAP Integration Suite — Monitor / CPI Runtime ── [REQUIRED] ──────
-CPI_BASE_URL=https://your-tenant.it-cpi019-rt.cfapps.region.hana.ondemand.com
-CPI_OAUTH_CLIENT_ID=your_client_id
-CPI_OAUTH_CLIENT_SECRET=your_client_secret
-CPI_OAUTH_TOKEN_URL=https://your-tenant.authentication.region.hana.ondemand.com/oauth/token
-
-# ── SAP Hub — Autonomous Error Polling & OData ── [REQUIRED] ─────────
-SAP_HUB_TENANT_URL=https://your-tenant.it-cpi019.cfapps.region.hana.ondemand.com
-SAP_HUB_TOKEN_URL=https://your-tenant.authentication.region.hana.ondemand.com/oauth/token
-SAP_HUB_CLIENT_ID=your_client_id
-SAP_HUB_CLIENT_SECRET=your_client_secret
-
-# ── SAP HANA Cloud ── [REQUIRED] ──────────────────────────────────────
-HANA_HOST=your-guid.hna0.prod-region.hanacloud.ondemand.com
-HANA_PORT=443
-HANA_USER=your_hdi_rt_user
-HANA_PASSWORD=your_password
-HANA_SCHEMA=your_schema
-HANA_TABLE_VECTOR=SAP_HELP_DOCS
-HANA_TABLE_SAP_DOCS=SAP_HELP_DOCS
-
-# ── SAP Advanced Event Mesh (AEM) ── [REQUIRED if AEM_ENABLED=true] ──
-AEM_ENABLED=false               # true = forward events to AEM REST endpoint
-AEM_REST_URL=https://your-aem-broker/QUEUE/cpi-remediation
-AEM_USERNAME=your-aem-user
-AEM_PASSWORD=your-aem-password
-AEM_QUEUE_PREFIX=cpi-remediation   # queue name prefix for topic routing
-
-# ── AWS S3 Object Store ── [REQUIRED for file uploads & iFlow examples]
-BUCKET_NAME=your_bucket_name
-REGION=us-east-1
-OBJECT_STORE_ENDPOINT=https://s3.amazonaws.com/
-OBJECT_STORE_ACCESS_KEY=your_access_key
-OBJECT_STORE_SECRET_KEY=your_secret_key
-WRITE_ACCESS_KEY_ID=your_write_key_id
-WRITE_SECRET_ACCESS_KEY=your_write_secret
-READ_ACCESS_KEY_ID=your_read_key_id
-READ_SECRET_ACCESS_KEY=your_read_secret
-
-# ── Autonomous Operations ── [OPTIONAL — defaults shown] ─────────────
-AUTONOMOUS_ENABLED=true
-POLL_INTERVAL_SECONDS=60
-AUTO_FIX_CONFIDENCE=0.90
-SUGGEST_FIX_CONFIDENCE=0.70
-MAX_CONSECUTIVE_FAILURES=5
-PENDING_APPROVAL_TIMEOUT_HRS=24
-PATTERN_MIN_SUCCESS_COUNT=2
-BURST_DEDUP_WINDOW_SECONDS=60
-
-# ── Escalation Tickets ── [OPTIONAL] ─────────────────────────────────
-TICKET_DEFAULT_ASSIGNEE=team@example.com
-
-# ── Server & Logging ── [OPTIONAL — defaults shown] ──────────────────
-APP_ENV=production          # set to "development" to enable --reload
-ENABLE_CONSOLE_LOGS=true
-
-# ── SAP Notes Scraper ── [REQUIRED only for scrape_sap_docs.py] ──────
-SAP_USERNAME=your_sap_user@example.com
-SAP_PASSWORD=your_sap_password
-SAP_NOTE_CONCURRENCY=10
-SAP_NOTE_DELAY=0.3
-
-# ── Embeddings ── [REQUIRED only for vectorize_docs.py] ──────────────
-EMBEDDING_DEPLOYMENT_ID=your_embedding_deployment_id
-EMBEDDING_MODEL_NAME=text-embedding-3-large
-VECTOR_DIMENSION=3072
-```
-
-### 4. Build the SAP Notes knowledge base (one-time setup)
-
-Install Playwright browsers (only needed for this utility script):
 ```bash
-uv run playwright install chromium
+# Set in .env:
+AEM_ENABLED=false
+AUTONOMOUS_ENABLED=false   # disable polling unless you want it
+
+uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-Scrape SAP Notes from me.sap.com. Each notes file is a plain text file with one SAP Note URL per line. Split your full list into files of ~500 then run each:
+Test the pipeline end-to-end with a synthetic incident:
+
 ```bash
-uv run python scrape_sap_docs.py --notes-only --notes-file sap_notes_1.txt
-uv run python scrape_sap_docs.py --notes-only --notes-file sap_notes_2.txt
+curl -X POST http://localhost:8080/autonomous/test_incident \
+  -H "Content-Type: application/json" \
+  -d '{"iflow_id": "MyTestFlow", "error_message": "Mapping failed: field not found"}'
 ```
 
-Vectorize all scraped notes (run once after scraping):
+Check the resulting incident:
+
 ```bash
-uv run python vectorize_docs.py
+curl http://localhost:8080/autonomous/incidents?limit=5
 ```
 
-Both scripts are crash-safe — re-run at any time to resume from where they left off.
+### Run with SAP Event Mesh (`AEM_ENABLED=true`)
 
-### 5. Run the server
+Requires the 5 queues and webhook subscriptions configured (see [Section 4](#4-sap-event-mesh-setup)).
+The app must have a public HTTPS URL reachable from SAP Event Mesh — use ngrok for local testing.
 
-Development (hot reload):
 ```bash
-APP_ENV=development uvicorn main:app --host 0.0.0.0 --port 8080 --reload
-```
+# Set in .env:
+AEM_ENABLED=true
+AEM_REST_URL=https://<em-service-host>
+EVENT_MESH_TOKEN_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/token
+EVENT_MESH_CLIENT_ID=<client-id>
+EVENT_MESH_CLIENT_SECRET=<client-secret>
 
-Production:
-```bash
 uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
-API docs available at:
-- Swagger UI: `http://localhost:8080/docs`
-- ReDoc: `http://localhost:8080/redoc`
+### Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev        # starts dev server at http://localhost:5173
+```
+
+Create `frontend/.env.local`:
+
+```
+VITE_API_BASE=http://localhost:8080/api
+VITE_API_PRIMARY=http://localhost:8080
+```
 
 ---
 
-## BTP Cloud Foundry Deployment
+## 8. Deployment (Cloud Foundry)
 
-The project ships with CF deployment files.
-
-### Files
-
-| File | Purpose |
-|---|---|
-| `Procfile` | CF startup command — `web: python main.py` |
-| `runtime.txt` | Python buildpack selection |
-| `.cfignore` | Excludes `.env`, `.venv/`, logs, stale files from push |
-| `requirements.txt` | Complete pip dependency list for CF Python buildpack |
-
-### Deploy
+### Backend
 
 ```bash
-# Log in and target your BTP space
-cf login -a https://api.cf.us10-001.hana.ondemand.com
-cf target -o <your-org> -s <your-space>
-
-# Set all required environment variables (or use BTP Cockpit → Environment Variables)
-cf set-env sap-cpi-self-healing-agent HANA_HOST <value>
-cf set-env sap-cpi-self-healing-agent LLM_DEPLOYMENT_ID <value>
-# ... (all other required vars from .env section above)
-
-# Deploy
-cf push
+cf push nd-orbit-eventmesh-be \
+  --buildpack python_buildpack \
+  --memory 2G \
+  --disk 1G \
+  --start-command "uvicorn main:app --host 0.0.0.0 --port 8080"
 ```
 
-### Notes
+Set all environment variables:
 
-- All secrets must be set as CF environment variables — **never commit `.env`**
-- The app listens on `$PORT` which CF injects automatically
-- Logs go to stdout and are captured by CF Loggregator (`cf logs sap-cpi-self-healing-agent --recent`)
-- Memory: 2 GB minimum — the multi-agent LangChain stack is memory-heavy
+```bash
+# Event Mesh
+cf set-env nd-orbit-eventmesh-be AEM_ENABLED             "true"
+cf set-env nd-orbit-eventmesh-be AEM_REST_URL             "https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com"
+cf set-env nd-orbit-eventmesh-be EVENT_MESH_TOKEN_URL     "https://<subdomain>.authentication.us10.hana.ondemand.com/oauth/token"
+cf set-env nd-orbit-eventmesh-be EVENT_MESH_CLIENT_ID     "<client-id>"
+cf set-env nd-orbit-eventmesh-be EVENT_MESH_CLIENT_SECRET "<client-secret>"
+
+# HANA
+cf set-env nd-orbit-eventmesh-be HANA_HOST     "<hana-host>"
+cf set-env nd-orbit-eventmesh-be HANA_USER     "<user>"
+cf set-env nd-orbit-eventmesh-be HANA_PASSWORD "<password>"
+cf set-env nd-orbit-eventmesh-be HANA_SCHEMA   "<schema>"
+
+# AI Core
+cf set-env nd-orbit-eventmesh-be LLM_DEPLOYMENT_ID   "<deployment-id>"
+cf set-env nd-orbit-eventmesh-be AICORE_CLIENT_ID     "<client-id>"
+cf set-env nd-orbit-eventmesh-be AICORE_CLIENT_SECRET "<client-secret>"
+cf set-env nd-orbit-eventmesh-be AICORE_AUTH_URL      "https://<subdomain>.authentication.us10.hana.ondemand.com"
+cf set-env nd-orbit-eventmesh-be AICORE_BASE_URL      "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2"
+
+# SAP CPI
+cf set-env nd-orbit-eventmesh-be API_BASE_URL            "https://<tenant>.it-cpi<n>.cfapps.<region>.hana.ondemand.com/api/v1"
+cf set-env nd-orbit-eventmesh-be API_OAUTH_CLIENT_ID     "<client-id>"
+cf set-env nd-orbit-eventmesh-be API_OAUTH_CLIENT_SECRET "<client-secret>"
+cf set-env nd-orbit-eventmesh-be API_OAUTH_TOKEN_URL     "https://<tenant>.authentication.<region>.hana.ondemand.com/oauth/token"
+
+cf restage nd-orbit-eventmesh-be
+```
+
+**Deployed backend URL:** `https://nd-orbit-eventmesh-be.cfapps.us10-001.hana.ondemand.com`
+
+### Frontend
+
+```bash
+cd frontend
+npm run build      # outputs production build to dist/
+
+cf push nd-orbit-eventmesh-fe \
+  --buildpack staticfile_buildpack \
+  --memory 256M \
+  --path dist
+```
+
+**Deployed frontend URL:** `https://nd-orbit-eventmesh-fe.cfapps.us10-001.hana.ondemand.com`
+
+### After Deployment — Wire Event Mesh Webhooks
+
+Once the backend is live, update all 5 webhook subscriptions in SAP Event Mesh to use
+`https://nd-orbit-eventmesh-be.cfapps.us10-001.hana.ondemand.com/agents/*`.
+
+---
+
+## 9. Database
+
+### Technology
+
+SAP HANA Cloud accessed via `hdbcli`. Schema and all tables are auto-created on
+startup by `db/database.py → ensure_em_schema()`. No manual migration scripts needed.
+Connections use TLS (`encrypt=True`) on port 443.
+
+### Tables
+
+| Table | Env var (default) | Purpose |
+|---|---|---|
+| `EM_AUTONOMOUS_INCIDENTS` | `HANA_TABLE_EM_INCIDENTS` | One row per incident; tracks status, RCA, fix, verification |
+| `EM_FIX_PATTERNS` | `HANA_TABLE_EM_FIX_PATTERNS` | Successful fix signatures for pattern-matching |
+| `EM_ESCALATION_TICKETS` | `HANA_TABLE_EM_ESCALATION_TICKETS` | External tickets created on escalation |
+
+### Incident Status Flow
+
+```
+CLASSIFIED              orchestrator created the incident
+    │
+    ▼
+OBSERVED                observer enriched it with OData metadata
+    │
+    ▼
+RCA_IN_PROGRESS         RCA agent is running
+    │
+    ▼
+RCA_COMPLETE            root_cause + proposed_fix stored
+    │
+    ▼
+FIX_IN_PROGRESS         fixer is applying the change
+    │
+    ▼
+FIX_DEPLOYED            iFlow redeployed successfully
+    │
+    ├──► FIX_VERIFIED          verifier confirmed the fix works       ✓
+    └──► FIX_FAILED_RUNTIME    verifier found the iFlow still failing ✗
+
+── Failure variants (pipeline halts) ──────────────────────────────
+OBS_FAILED              observer threw an exception
+RCA_FAILED              RCA agent threw an exception
+FIX_FAILED              fixer threw an unhandled exception
+FIX_FAILED_UPDATE       SAP CPI rejected the iFlow XML update
+FIX_FAILED_DEPLOY       deploy step failed
+FIX_FAILED_RUNTIME      post-deploy verification failed
+
+── Special statuses ────────────────────────────────────────────────
+ARTIFACT_MISSING           iFlow not found in SAP CPI design time
+AWAITING_APPROVAL          human must approve before fix is applied
+TICKET_CREATED             escalated; ticket raised in external system
+BURST_DEDUPED              absorbed as duplicate within dedup window
+CIRCUIT_BREAKER_ESCALATED  too many consecutive failures; auto-escalated
+```
+
+### Key Incident Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `incident_id` | UUID | Primary key |
+| `iflow_id` | string | SAP CPI iFlow name |
+| `message_guid` | string | CPI `MessageProcessingLog` GUID |
+| `error_type` | string | Classified error category |
+| `error_message` | text | Raw error text from CPI |
+| `root_cause` | text | LLM root cause explanation |
+| `proposed_fix` | text | LLM fix description |
+| `rca_confidence` | float | RCA confidence score (0.0–1.0) |
+| `fix_summary` | text | Fix + deploy outcome summary |
+| `status` | string | Current pipeline status (see flow above) |
+| `verification_status` | string | `UNVERIFIED` / `VERIFIED` / `FAILED` |
+| `sender` | string | CPI sender system (filled by observer) |
+| `receiver` | string | CPI receiver system (filled by observer) |
+| `log_start` | timestamp | Message processing start (filled by observer) |
+| `log_end` | timestamp | Message processing end (filled by observer) |
+| `created_at` | timestamp | Incident creation time |
+| `resolved_at` | timestamp | Time of successful verification |
+| `occurrence_count` | int | Number of times this error has been seen |
+| `consecutive_failures` | int | Consecutive fix attempt failures (circuit breaker) |
+
+---
+
+## 10. Frontend
+
+### Location
+
+Source: [`frontend/`](frontend/) — React + TypeScript, bundled with Vite.
+
+Uses `@tanstack/react-query` for polling, CSS Modules for styling (dark theme,
+`#111827` background, no Tailwind).
+
+### Key Pages & Tabs
+
+| Page | Tab | Description |
+|---|---|---|
+| Observability | **Event Mesh** | Live SVG pipeline diagram with animated glowing nodes, 6 stats cards (total, retrieved, queue depth, stage counts), auto-scrolling event log. Polls `/aem/status` and `/autonomous/incidents` every 3 s. |
+| Observability | **Messages** | Paginated CPI failed messages with AI analysis, explain-error, and fix-patch actions |
+| Observability | **Agent Monitor** | Real-time agent running state, tool distribution per agent, autonomous loop toggle |
+| Observability | **AEM Status** | Event Mesh connectivity status, enabled flag, queue depth |
+| Dashboard | — | Incident summary cards, fix rate, recent activity |
+| Incidents | — | Full incident list with status filter, detail drawer, approve/reject UI |
+| Chat | — | General chatbot backed by the full MCP agent |
+
+### Backend Connection
+
+The frontend reads `VITE_API_BASE` (defaults to `/api`) for the backend base URL.
+In production on Cloud Foundry, an nginx reverse-proxy rule forwards `/api/*` to the
+backend application, so no hard-coded URLs are needed in the built artefact.
+
+**Deployed frontend URL:** `https://nd-orbit-eventmesh-fe.cfapps.us10-001.hana.ondemand.com`
 
 ---
 
 ## Project Structure
 
 ```
-auto-remediation/
-├── main.py                         # FastAPI app, lifespan, all HTTP endpoints
-├── smart_monitoring.py             # /smart-monitoring/* router
-├── smart_monitoring_dashboard.py   # /dashboard/* router
+auto-remediation - EventMesh/
+├── main.py                          # FastAPI app — all HTTP endpoints, lifespan wiring
+├── smart_monitoring.py              # /smart-monitoring/* router
+├── smart_monitoring_dashboard.py    # /dashboard/* router
+├── generate_dashboard_pdf.py        # PDF export utility
 │
 ├── agents/
-│   ├── base.py                     # Shared base classes (StepLogger, TestExecutionTracker)
-│   ├── classifier_agent.py         # Rule-based error classifier (no LLM)
-│   ├── observer_agent.py           # ObserverAgent + SAPErrorFetcher (OData calls)
-│   ├── orchestrator_agent.py       # Top-level coordinator — routes events through pipeline
-│   ├── rca_agent.py                # Root Cause Analysis (LLM + vector store)
-│   ├── fix_agent.py                # iFlow fix + deploy pipeline
-│   └── verifier_agent.py           # Post-fix testing + message replay
+│   ├── base.py                      # StepLogger, TestExecutionTracker base classes
+│   ├── classifier_agent.py          # Rule-based + LLM error classifier
+│   ├── observer_agent.py            # SAP CPI OData polling + metadata enrichment
+│   ├── rca_agent.py                 # LLM-based root cause analysis
+│   ├── fix_agent.py                 # iFlow fix generation + deploy pipeline
+│   ├── verifier_agent.py            # Post-fix test execution + runtime check
+│   └── orchestrator_agent.py        # Pipeline coordinator, dedup logic, chatbot
 │
 ├── aem/
-│   └── event_bus.py                # Dual-mode AEM event bus (in-memory + REST delivery)
+│   └── event_bus.py                 # SAP Event Mesh publisher (OAuth2 token cache,
+│                                    #   publish / publish_to_next / in-process fallback)
 │
 ├── core/
-│   ├── mcp_manager.py              # MultiMCP — connect, discover, execute, build_agent
-│   ├── constants.py                # All config constants, prompts, remediation policies
-│   ├── state.py                    # FIX_PROGRESS in-memory store
-│   └── validators.py               # iFlow XML validator (pre-update-iflow gate)
+│   ├── constants.py                 # Tuning constants, prompt templates, error rules
+│   ├── mcp_manager.py               # MultiMCP — connects to 3 MCP servers
+│   ├── state.py                     # In-memory fix progress tracking
+│   ├── validators.py                # iFlow XML validation helpers
+│   └── xml_patcher.py               # Structured XML patch operations
 │
 ├── config/
-│   ├── config.py                   # Settings loaded from .env
-│   └── runtime_config.json         # Runtime-mutable config (e.g. auto-fix enabled flag)
+│   └── config.py                    # Settings class + runtime auto-fix override
 │
 ├── db/
-│   └── database.py                 # SAP HANA Cloud abstraction (all table CRUD)
+│   └── database.py                  # HANA Cloud CRUD, auto-schema, dedup queries
 │
 ├── storage/
-│   ├── storage.py                  # File uploads + XSD detection
-│   └── object_store.py             # AWS S3 operations
+│   ├── storage.py                   # File upload + XSD detection
+│   └── object_store.py              # AWS S3 operations
 │
 ├── utils/
-│   ├── utils.py                    # HANA timestamp helpers
-│   ├── logger_config.py            # Rotating file logger + stdout handler
-│   ├── vector_store.py             # HANA SAP_HELP_DOCS cosine similarity search
-│   └── xsd_handler.py              # XSD parsing and validation
+│   ├── utils.py                     # HANA timestamp helpers
+│   ├── logger_config.py             # Rotating file + console logger setup
+│   ├── vector_store.py              # HANA vector search for SAP Notes
+│   └── xsd_handler.py               # XSD parsing + validation
 │
-├── frontend/                       # React + Vite frontend app
-│   └── src/pages/
-│       ├── dashboard/              # KPI cards, charts, recent failures
-│       ├── observability/          # Incident list + drill-down
-│       ├── pipeline/               # Pipeline status view
-│       ├── orchestrator/           # Orchestrator + fix progress
-│       ├── agent-cards/            # Agent status cards
-│       ├── test-suite/             # iFlow test execution
-│       ├── migration-wizard/       # Migration helper
-│       └── pipo-list/              # PiPo interface list
+├── frontend/                        # React + TypeScript frontend (Vite)
+│   ├── src/pages/observability/     # EventMeshFlow, AgentMonitor, AEM status tabs
+│   └── src/services/api.ts          # Typed API client for all backend endpoints
 │
-├── rules/                          # Coding standards
-├── scrape_sap_docs.py              # Playwright-based SAP Notes scraper (utility, not deployed)
-├── vectorize_docs.py               # SAP_HELP_DOCS vectorization (utility, not deployed)
-├── Procfile                        # CF startup command
-├── runtime.txt                     # Python version for CF buildpack
-├── .cfignore                       # CF push exclusions
-├── requirements.txt                # Production pip dependencies
-├── pyproject.toml                  # Full dependency spec (requires Python >=3.13)
-└── CLAUDE.md                       # Claude Code project instructions
+├── logs/                            # Rotating application logs (auto-created)
+├── .env                             # Secrets — NEVER commit
+├── .env.example                     # Template with placeholder values
+├── requirements.txt                 # Python production dependencies
+└── CLAUDE.md                        # AI assistant coding standards for this project
 ```
-
----
-
-## How the Agent Works
-
-### Startup Sequence
-
-```
-FastAPI lifespan starts
-  │
-  ├─ DB schema migration (ensure_*_schema)
-  ├─ All agents created and wired (observer ↔ orchestrator, error_fetcher → fix/verifier)
-  │
-  └─ _init_background() [async task]:
-       ├─ mcp.connect() → discover_tools() → build_agent()
-       ├─ All specialist agents build their filtered tool sets
-       ├─ If AUTONOMOUS_ENABLED=true → observer.start()
-       └─ Agent ready — incoming /aem/events webhook calls are queued
-                        and processed once the orchestrator is initialised
-```
-
-### AEM Event Flow (REST Delivery)
-
-```
-SAP CPI or upstream system
-  │  publishes error event to AEM queue
-  ▼
-SAP AEM REST Delivery
-  │  POSTs JSON to POST /aem/events
-  ▼
-aem_webhook() handler
-  │  validates topic field
-  ▼
-event_bus.publish(topic, event)
-  │
-  ├─ AEM_ENABLED=true  → POST to AEM_REST_URL/{topic}  (fire-and-forget)
-  │
-  └─ always → _dispatch_local()
-       │  calls all in-process handlers registered for topic
-       ▼
-  OrchestratorAgent handler
-       │
-       └─ process_detected_error(normalized_event)
-```
-
-### Autonomous Polling Flow (AEM_ENABLED=false)
-
-```
-ObserverAgent._poll_loop() [runs every POLL_INTERVAL_SECONDS]
-  │
-  ├─ fetch_failed_messages()        — OData: MessageProcessingLogs?$filter=Status eq 'FAILED'
-  ├─ dedupe_raw_failed_messages()   — burst dedup by signature + window
-  ├─ fetch_error_details(guid)      — OData: per-message detail + error text
-  ├─ normalize()                    — standard incident dict
-  └─ orchestrator.process_detected_error(normalized) × N
-```
-
-### RCA Engine
-
-```
-Error detected → process_detected_error()
-      │
-      ├─── ClassifierAgent (rule-based, no LLM)
-      │    • Priority-ordered keyword matching
-      │    • Returns error_type + confidence
-      │
-      ├─── RCAAgent (LangChain)
-      │    • get_vector_store_notes — top-5 SAP notes from HANA
-      │    • get_cross_iflow_patterns — successful past fixes
-      │    • get-iflow — reads actual iFlow configuration
-      │    • get_message_logs — MPL log (if GUID available)
-      │    • Returns root_cause, proposed_fix, confidence
-      │
-      └─── confidence = max(LLM_confidence, classifier_confidence)
-                │
-                If proposed_fix empty → FALLBACK_FIX_BY_ERROR_TYPE
-```
-
-### Remediation Gate
-
-| Condition | Action |
-|---|---|
-| `CONNECTIVITY_ERROR` + confidence ≥ 0.70 | Retry failed message |
-| confidence ≥ 0.90 (`AUTO_FIX_CONFIDENCE`) | Auto-fix + deploy |
-| confidence ≥ 0.70 (`SUGGEST_FIX_CONFIDENCE`) | `PENDING_APPROVAL` |
-| confidence < 0.70 | `TICKET_CREATED` — escalation ticket in HANA |
-
-### Fix Pipeline
-
-```
-1. Verify iFlow exists          — pre-flight existence check
-2. Pre-flight unlock            — cancel any existing checkout
-3. Run RCA (if needed)         — LLM + vector store + classifier
-4. Re-verify iFlow exists       — double-check after RCA
-5. Download iFlow config        — MCP: get-iflow
-6. Apply fix                    — LLM determines precise XML change
-7. Pre-update validation        — Python validator:
-                                   • filepath matches original
-                                   • XML is well-formed
-                                   • no ifl:property at collaboration root
-                                   • no version attributes changed
-8. Upload updated iFlow         — MCP: update-iflow (only if validation passes)
-9. Deploy iFlow                 — MCP: deploy-iflow (mandatory after update)
-10. Fetch deploy errors          — detailed error if deploy fails
-11. Replay message               — retry original failed message
-12. Persist result               — AUTONOMOUS_INCIDENTS + FIX_PATTERNS
-```
-
-### Error Classification
-
-| Priority | Error Type | Default Action | Keywords |
-|---|---|---|---|
-| 1 | `SFTP_ERROR` | TICKET_CREATED | `sftp`, `jsch`, `no such file`, `permission denied`, `auth fail`, `hostkey`, `quota exceeded` |
-| 2 | `AUTH_ERROR` | AUTO_FIX | `unauthorized`, `expired`, `certificate`, `ssl handshake`, `tls`, `saml`, `oauth` |
-| 3 | `MAPPING_ERROR` | AUTO_FIX | `mappingexception`, `does not exist in target`, `xslt`, `groovy`, `script` |
-| 4 | `DATA_VALIDATION` | AUTO_FIX | `mandatory`, `required field`, `null value`, `schema validation` |
-| 5 | `CONNECTIVITY_ERROR` | RETRY | `connection refused`, `connect timed out`, `unreachable`, `socketexception` |
-| 6 | `CONNECTIVITY_ERROR` (rate-limit) | RETRY | `429`, `too many requests`, `rate limit` |
-| 7 | `BACKEND_ERROR` | TICKET_CREATED | `500`, `502`, `503`, `internal server error`, `bad gateway` |
-| 8 | `ADAPTER_CONFIG_ERROR` | AUTO_FIX | `400`, `401`, `403`, `404`, `422`, `bad request`, `not found` |
-| 9 | `UNKNOWN_ERROR` | PENDING_APPROVAL | _(fallback)_ |
-
----
-
-## API Reference
-
-### Chatbot
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/` | Health check |
-| `POST` | `/query` | Chat with fix-intent detection (supports file uploads) |
-| `POST` | `/fix` | Direct iFlow fix by iflow_id + error message |
-| `GET` | `/get_all_history` | Query history for a user |
-| `GET` | `/get_testsuite_logs` | Test suite log entries for a user |
-
-### AEM Webhook
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/aem/events` | SAP AEM REST Delivery entry point — dispatches event to all registered in-process handlers |
-
-### Smart Monitoring
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/smart-monitoring/messages` | List failed CPI messages (filterable) |
-| `GET` | `/smart-monitoring/messages/paginated` | List failed CPI messages with cursor-based pagination |
-| `GET` | `/smart-monitoring/messages/{guid}` | Full detail (6 tabs) for one message |
-| `POST` | `/smart-monitoring/messages/{guid}/analyze` | Trigger AI RCA (returns 503 if agents still init) |
-| `POST` | `/smart-monitoring/messages/{guid}/apply_fix` | Apply and deploy fix |
-| `POST` | `/smart-monitoring/incidents/{id}/retry_fix` | Retry failed fix (up to 3 attempts) |
-| `POST` | `/smart-monitoring/incidents/{id}/rollback` | Rollback iFlow to pre-fix snapshot |
-| `GET` | `/smart-monitoring/incidents/{id}/fix_status` | Live fix progress (in-memory, no HANA poll) |
-| `GET` | `/smart-monitoring/escalations` | List escalation tickets |
-| `PATCH` | `/smart-monitoring/escalations/{ticket_id}` | Update ticket status / assignee |
-
-### Dashboard
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/dashboard/kpi-cards` | Top-level KPI metrics |
-| `GET` | `/dashboard/error-distribution` | Error type breakdown |
-| `GET` | `/dashboard/failures-over-time` | Time-series failure data |
-| `GET` | `/dashboard/top-failing-iflows` | Most failing iFlows |
-| `GET` | `/dashboard/recent-failures-table` | Recent failures (reads HANA directly — always works at boot) |
-| `GET` | `/dashboard/active-incidents-table` | Real-time active incidents |
-| `GET` | `/dashboard/health-metrics` | System health indicators |
-| `GET` | `/dashboard/sla-metrics` | SLA compliance metrics |
-
-### Autonomous Operations
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/autonomous/start` | Start autonomous monitoring loop |
-| `POST` | `/autonomous/stop` | Stop loop |
-| `GET` | `/autonomous/status` | Loop status and config |
-| `GET` | `/autonomous/incidents` | All incidents (optional `?status=` filter) |
-| `GET` | `/autonomous/incidents/{id}` | Incident detail by ID or message GUID |
-| `GET` | `/autonomous/incidents/{id}/view_model` | Enriched incident view with OData metadata |
-| `GET` | `/autonomous/incidents/{id}/fix_progress` | In-memory fix progress for an incident |
-| `GET` | `/autonomous/incidents/{id}/fix_patterns` | Matched historical fix patterns for an incident |
-| `POST` | `/autonomous/incidents/{id}/approve` | Approve or reject a pending fix |
-| `POST` | `/autonomous/incidents/{id}/generate_fix` | Generate and apply fix (sync or background) |
-| `POST` | `/autonomous/incidents/{id}/retry_rca` | Re-run RCA for an incident |
-| `GET` | `/autonomous/pending_approvals` | List all incidents awaiting human approval |
-| `POST` | `/autonomous/manual_trigger` | Manual one-shot error polling |
-| `POST` | `/autonomous/test_incident` | Inject synthetic test incident |
-| `GET` | `/autonomous/tools` | List all loaded MCP tools (optional `?server=` filter) |
-| `GET` | `/autonomous/cpi/errors` | Combined CPI error inventory (messages + runtime artifacts) |
-| `GET` | `/autonomous/cpi/messages/errors` | Failed CPI message processing logs |
-| `GET` | `/autonomous/cpi/runtime_artifacts/errors` | Runtime artifact errors |
-| `GET` | `/autonomous/cpi/runtime_artifacts/{id}` | Runtime artifact detail + error info |
-| `GET` | `/autonomous/db_test` | Test HANA connectivity |
-| `GET` | `/autonomous/debug` | Autonomous config + live fetch test |
-| `GET` | `/autonomous/debug2` | Raw OAuth token + OData connectivity test |
-
-### Auto-Fix Configuration
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/config/auto-fix` | Current auto-fix config (source: runtime or env) |
-| `POST` | `/api/config/auto-fix` | Enable/disable at runtime |
-| `POST` | `/api/config/auto-fix/reset` | Reset to `.env` default |
-
----
-
-## iFlow XML Validator
-
-Runs as a Python gate inside `MultiMCP.execute()` — every `update-iflow` call passes through before any HTTP request is made.
-
-| Check | What it catches |
-|---|---|
-| **Filepath match** | LLM submitted a different `.iflw` filename than returned by `get-iflow` |
-| **XML well-formedness** | Malformed XML that SAP CPI would reject on upload |
-| **Property placement** | `ifl:property` inside `<bpmn2:collaboration>` instead of inside the specific step |
-| **Version attributes** | Any `version="…"` attribute changed from the original value |
-
-Validation failures are returned to the LLM as specific actionable messages so it can self-correct in the same run.
-
----
-
-## Database Schema
-
-All tables are in SAP HANA Cloud. Auto-created/migrated on startup via `ensure_*_schema()`.
-
-### `AUTONOMOUS_INCIDENTS`
-
-One row per detected error. Key columns:
-
-| Column | Description |
-|---|---|
-| `incident_id` | UUID primary key |
-| `message_guid` | SAP CPI MPL ID (GUID) |
-| `iflow_id` | Integration flow name (resolved via OData) |
-| `status` | Lifecycle status |
-| `error_type` | Classified error type |
-| `root_cause` | AI-generated root cause |
-| `proposed_fix` | AI-generated fix description |
-| `rca_confidence` | Confidence score 0.0–1.0 |
-| `occurrence_count` | Recurring error counter |
-| `incident_group_key` | Deduplication hash |
-| `consecutive_failures` | Circuit breaker counter |
-| `auto_escalated` | 1 if circuit breaker triggered escalation |
-
-**Incident lifecycle:**
-
-```
-DETECTED → RCA_IN_PROGRESS → RCA_COMPLETE → PENDING_APPROVAL → FIX_IN_PROGRESS → AUTO_FIXED
-                                                                             → HUMAN_INITIATED_FIX
-                                                                             → FIX_FAILED ──────────┐
-                                                                             → FIX_FAILED_UPDATE ───┤ retry_fix
-                                                                             → FIX_FAILED_DEPLOY ───┤ (up to 3×)
-                                                                             → FIX_FAILED_RUNTIME ──┘
-                                                                             → ROLLED_BACK
-                                                                             → ARTIFACT_MISSING
-                                        → TICKET_CREATED
-                        → RETRIED
-```
-
-### `FIX_PATTERNS`
-
-Stores outcomes of applied fixes. Matched by `error_signature` (`iflow_id + error_type + normalised_error_fragment`) on recurring incidents. Includes `success_rate` and `key_steps` injected into RCA prompts.
-
-### `ESCALATION_TICKETS`
-
-Internal escalation system. Auto-created for low-confidence incidents. Priority derived from `occurrence_count` and `rca_confidence`.
-
-### `SAP_HELP_DOCS`
-
-```sql
-CREATE TABLE sap_help_docs (
-    ID         INTEGER          PRIMARY KEY,
-    VEC_TEXT   NCLOB,           -- chunked SAP Note text
-    VEC_META   NCLOB,           -- JSON: title, url, source, note_id
-    VEC_VECTOR REAL_VECTOR(3072) -- text-embedding-3-large embedding
-);
-```
-
-Populated by `scrape_sap_docs.py`, vectorized by `vectorize_docs.py`. Used for semantic RCA context retrieval via cosine similarity.
-
----
-
-## Security
-
-- All SAP API calls use OAuth 2.0 client credentials — tokens cached until expiry
-- Secrets stored in `.env` locally or CF environment variables in production — never committed
-- HANA connections use SSL/TLS (`encrypt=True`, `sslValidateCertificate=False`)
-- SQL queries use parameterised statements — no string interpolation
-- API responses never expose stack traces or internal error details
-- `AUTO_FIX_CONFIDENCE=0.90` gates autonomous deployments
-- Auto-fix toggled at runtime via `/api/config/auto-fix` — no service restart required
-- S3 uses separate read / write credentials
-- Locked artifact detection prevents concurrent edit conflicts
-
----
-
-## Debugging
-
-```bash
-# View live logs (local)
-tail -f logs/mcp.log
-
-# View logs on BTP CF
-cf logs sap-cpi-self-healing-agent --recent
-
-# Health check
-curl http://localhost:8080/
-
-# Autonomous loop status
-curl http://localhost:8080/autonomous/status
-
-# List all loaded MCP tools
-curl http://localhost:8080/autonomous/tools
-
-# Test HANA connectivity
-curl http://localhost:8080/autonomous/db_test
-
-# Fetch current SAP CPI errors (without starting loop)
-curl http://localhost:8080/autonomous/cpi/errors
-
-# Inject synthetic test incident
-curl -X POST http://localhost:8080/autonomous/test_incident
-
-# Debug autonomous config + fetch test
-curl http://localhost:8080/autonomous/debug
-
-# Raw OAuth + OData connectivity test
-curl http://localhost:8080/autonomous/debug2
-
-# Enable auto-fix at runtime
-curl -X POST "http://localhost:8080/api/config/auto-fix?enabled=true"
-
-# Send a test AEM event
-curl -X POST http://localhost:8080/aem/events \
-  -H "Content-Type: application/json" \
-  -d '{"topic": "sap/cpi/remediation/observed/test-001", "incident_id": "test-001"}'
-```
-
----
-
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `iFlow name shows as blank in Observability` | OData metadata call failed — check `SAP_HUB_*` env vars | Verify credentials and tenant URL; check `logs/mcp.log` for OData errors |
-| `POST /aem/events returns 400` | Event body missing `topic` field | Ensure the AEM REST Delivery payload includes `"topic": "..."` |
-| `recent-failures-table returns empty` | HANA not reachable | Check `HANA_HOST`/`HANA_PASSWORD`; table is read directly — no MCP dependency |
-| `503 on /analyze right after boot` | MCP agents still initialising (takes 30–60 s) | Wait for `[Startup] All agents ready` in logs, then retry |
-| `iFlow fix applied but deploy fails locked` | iFlow checked out in browser | Use `POST /retry_fix` — automatic unlock is attempted |
-| `HANA connection refused` | Wrong host/port or IP not whitelisted | Check HANA Cloud instance → Allowed Connections |
-| `LLM deployment not found` | Wrong `LLM_DEPLOYMENT_ID` | Verify deployment ID in SAP AI Core Launchpad |
-| `cf push fails — memory exceeded` | Not enough memory in BTP quota | Request quota increase or reduce to `1536M` and monitor |
-| `VEC_VECTOR IS NULL after vectorize` | Script interrupted mid-run | Re-run `vectorize_docs.py` — it skips already-vectorized rows |
-| `AEM events not reaching orchestrator` | `AEM_ENABLED=true` but `AEM_REST_URL` unset | Set `AEM_REST_URL` or set `AEM_ENABLED=false` to use in-memory bus |
-
----
-
-## Further Reading
-
-- [CLAUDE.md](CLAUDE.md) — Claude Code project standards and agent instructions
-- [ROUTES_DOCUMENTATION.md](ROUTES_DOCUMENTATION.md) — Full API route reference
-- [rules/coding-style.md](rules/coding-style.md) — naming conventions and architecture rules
-- [rules/security.md](rules/security.md) — security standards for SAP BTP
