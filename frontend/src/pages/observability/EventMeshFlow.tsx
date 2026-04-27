@@ -306,8 +306,8 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
                 )}
                 {/* Main circle */}
                 <circle cx={node.cx} cy={CY} r={R} fill={GLOW_FILL[glow]} stroke={GLOW_STROKE[glow]} strokeWidth={glow !== "idle" ? 2 : 1.5} />
-                {/* Abbreviation */}
-                <text x={node.cx} y={CY + 5} textAnchor="middle" fontSize={11} fontWeight={700} fontFamily="Inter,sans-serif" fill={GLOW_TEXT[glow]} letterSpacing={1}>
+                {/* Abbreviation — always white: sits on the dark-filled circle */}
+                <text x={node.cx} y={CY + 5} textAnchor="middle" fontSize={11} fontWeight={700} fontFamily="Inter,sans-serif" fill="#ffffff" letterSpacing={1}>
                   {node.abbr}
                 </text>
                 {/* Count badge */}
@@ -319,11 +319,11 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
                     </text>
                   </g>
                 )}
-                {/* Label */}
-                <text x={node.cx} y={CY + R + 16} textAnchor="middle" fontSize={11} fontWeight={600} fontFamily="Inter,sans-serif" fill={glow !== "idle" ? GLOW_TEXT[glow] : "#9ca3af"}>
+                {/* Label — dark text, readable on the light page background */}
+                <text x={node.cx} y={CY + R + 16} textAnchor="middle" fontSize={11} fontWeight={600} fontFamily="Inter,sans-serif" fill="#1e293b">
                   {node.label}
                 </text>
-                <text x={node.cx} y={CY + R + 30} textAnchor="middle" fontSize={9} fontFamily="Inter,sans-serif" fill="#4b5563">
+                <text x={node.cx} y={CY + R + 30} textAnchor="middle" fontSize={9} fontFamily="Inter,sans-serif" fill="#1e293b">
                   {node.sub}
                 </text>
               </g>

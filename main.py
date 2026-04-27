@@ -19,6 +19,7 @@ To promote this to the live main.py:
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -28,7 +29,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -997,12 +998,14 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
 
 
 @app.post("/agents/orchestrator")
-async def agent_orchestrator_webhook(event: Dict[str, Any]):
+async def agent_orchestrator_webhook(request: Request, event: Dict[str, Any]):
     """
     Receives raw CPI error events from SAP Event Mesh.
     Classifies the error, applies dedup rules, creates the incident,
     then publishes to the observer queue.
     """
+    body_bytes = await request.body()
+    logger.info(f"[Agents/orchestrator] RAW PAYLOAD: {body_bytes.decode('utf-8', errors='replace')[:500]}")
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
     asyncio.create_task(_run_orchestrator_task(event))
