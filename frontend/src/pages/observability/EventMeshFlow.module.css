@@ -40,8 +40,8 @@
   gap: 1rem;
   padding: 1.25rem 1.5rem;
   background:
-    radial-gradient(circle, rgba(99,179,237,0.09) 1px, transparent 1px),
-    linear-gradient(160deg, #0a0f1e 0%, #0d1b2a 100%);
+    radial-gradient(circle, rgba(99,130,220,0.15) 1px, transparent 1px),
+    linear-gradient(160deg, #f0f4ff 0%, #e8f0fe 100%);
   background-size: 24px 24px, 100% 100%;
   animation: dotGridDrift 14s linear infinite;
   min-height: 100%;
@@ -50,11 +50,11 @@
 /* ── Diagram card ────────────────────────────────────────────────────────── */
 
 .diagramCard {
-  background: rgba(10, 18, 38, 0.88);
-  border: 1px solid rgba(99, 179, 237, 0.2);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(99, 130, 220, 0.3);
   border-radius: 0.75rem;
   overflow: hidden;
-  box-shadow: 0 0 32px rgba(99, 179, 237, 0.04), 0 4px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 32px rgba(99, 130, 220, 0.08), 0 4px 20px rgba(99, 130, 220, 0.08);
 }
 
 .diagramHeader {
@@ -62,13 +62,13 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid rgba(99, 179, 237, 0.12);
+  border-bottom: 1px solid rgba(99, 130, 220, 0.18);
 }
 
 .diagramTitle {
   font-size: 0.875rem;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #1e293b;
   letter-spacing: 0.01em;
 }
 
@@ -78,15 +78,15 @@
   gap: 0.4rem;
   font-size: 0.72rem;
   font-weight: 500;
-  color: #64748b;
+  color: #94a3b8;
   padding: 0.2rem 0.6rem;
   border-radius: 9999px;
-  border: 1px solid #374151;
+  border: 1px solid #cbd5e1;
 }
 
 .aemStatus[data-enabled="true"] {
-  color: #4ade80;
-  border-color: #14532d;
+  color: #16a34a;
+  border-color: #bbf7d0;
   background: rgba(34,197,94,0.08);
 }
 
@@ -94,7 +94,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #4b5563;
+  background: #cbd5e1;
   flex-shrink: 0;
 }
 
@@ -144,8 +144,8 @@
 }
 
 .statCard {
-  background: rgba(10, 18, 38, 0.88);
-  border: 1px solid rgba(99, 179, 237, 0.13);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(99, 130, 220, 0.2);
   border-radius: 0.625rem;
   padding: 0.875rem 1rem;
   display: flex;
@@ -159,13 +159,13 @@
   font-weight: 700;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
-  color: #f1f5f9;
+  color: #1e293b;
 }
 
 .statLabel {
   font-size: 0.7rem;
   font-weight: 500;
-  color: #64748b;
+  color: #94a3b8;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
@@ -173,8 +173,8 @@
 /* ── Event log ───────────────────────────────────────────────────────────── */
 
 .logCard {
-  background: rgba(10, 18, 38, 0.88);
-  border: 1px solid rgba(99, 179, 237, 0.13);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(99, 130, 220, 0.2);
   border-radius: 0.75rem;
   overflow: hidden;
   display: flex;
@@ -188,7 +188,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1.25rem;
-  border-bottom: 1px solid rgba(99, 179, 237, 0.1);
+  border-bottom: 1px solid rgba(99, 130, 220, 0.15);
   flex-shrink: 0;
 }
 
@@ -201,7 +201,7 @@
 .logTitle {
   font-size: 0.875rem;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #1e293b;
 }
 
 .liveChip {
@@ -218,9 +218,9 @@
 
 .clearBtn {
   font-size: 0.72rem;
-  color: #64748b;
+  color: #94a3b8;
   background: transparent;
-  border: 1px solid #374151;
+  border: 1px solid #cbd5e1;
   border-radius: 0.375rem;
   padding: 0.25rem 0.65rem;
   cursor: pointer;
@@ -228,8 +228,8 @@
 }
 
 .clearBtn:hover {
-  color: #94a3b8;
-  border-color: #4b5563;
+  color: #64748b;
+  border-color: #a0aec0;
 }
 
 .logScroll {
@@ -245,7 +245,7 @@
   justify-content: center;
   padding: 3rem 1rem;
   gap: 0.5rem;
-  color: #4b5563;
+  color: #94a3b8;
 }
 
 .logEmptyIcon {
@@ -263,13 +263,13 @@
   align-items: center;
   gap: 0.625rem;
   padding: 0.5rem 1.25rem;
-  border-bottom: 1px solid rgba(55,65,81,0.5);
+  border-bottom: 1px solid rgba(99,130,220,0.12);
   animation: fadeInRow 0.2s ease both;
   transition: background 0.15s;
 }
 
 .logEntry:hover {
-  background: rgba(255,255,255,0.03);
+  background: rgba(99,130,220,0.05);
 }
 
 .logEntry:last-child {
@@ -278,7 +278,7 @@
 
 .logTs {
   font-size: 0.68rem;
-  color: #4b5563;
+  color: #94a3b8;
   font-family: 'Courier New', monospace;
   white-space: nowrap;
 }
@@ -291,7 +291,7 @@
 
 .logIflow {
   font-size: 0.78rem;
-  color: #a0aec0;
+  color: #4a5568;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -301,7 +301,7 @@
 
 .logIflowUnknown {
   font-size: 0.78rem;
-  color: #6b7280;
+  color: #94a3b8;
   font-style: italic;
   font-family: 'Courier New', monospace;
 }
