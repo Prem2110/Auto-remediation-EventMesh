@@ -407,13 +407,23 @@ function EventLog({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
             const stageCfg = STAGE_CFG[entry.stage] ?? STAGE_CFG.observed;
             const ts = new Date(entry.ts);
             const timeStr = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            const rawName  = entry.iflowName;
+            const isEmpty  = !rawName || rawName === "—" || rawName.trim() === "";
+            const truncated = !isEmpty && rawName.length > 30
+              ? rawName.slice(0, 30) + "…"
+              : rawName;
             return (
               <div key={entry.id} className={styles.logEntry}>
                 <span className={styles.logTs}>{timeStr}</span>
                 <span className={styles.logIcon}>{entry.icon}</span>
-                <span className={`${styles.logIflow} ${entry.isNew ? styles.logIflowNew : ""}`}>
-                  {entry.iflowName}
-                </span>
+                {isEmpty
+                  ? <span className={styles.logIflowUnknown}>unknown</span>
+                  : <span className={styles.logIflow} title={rawName}>{truncated}</span>
+                }
+                {entry.isNew
+                  ? <span className={styles.logNewBadge}>NEW</span>
+                  : <span />
+                }
                 <span
                   className={styles.stageBadge}
                   style={{ color: stageCfg.color, background: stageCfg.bg, borderColor: stageCfg.border }}

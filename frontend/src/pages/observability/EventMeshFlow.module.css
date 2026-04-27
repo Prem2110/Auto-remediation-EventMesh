@@ -259,7 +259,7 @@
 
 .logEntry {
   display: grid;
-  grid-template-columns: 6.5rem 1.5rem 1fr auto;
+  grid-template-columns: 6.5rem 1.5rem 1fr auto auto;
   align-items: center;
   gap: 0.625rem;
   padding: 0.5rem 1.25rem;
@@ -291,20 +291,28 @@
 
 .logIflow {
   font-size: 0.78rem;
-  color: #cbd5e1;
+  color: #a0aec0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
   font-family: 'Courier New', monospace;
 }
 
-.logIflowNew::before {
-  content: "NEW · ";
-  font-size: 0.62rem;
-  color: #3b82f6;
+.logIflowUnknown {
+  font-size: 0.78rem;
+  color: #6b7280;
+  font-style: italic;
+  font-family: 'Courier New', monospace;
+}
+
+.logNewBadge {
+  font-size: 0.6rem;
   font-weight: 700;
+  color: #3b82f6;
   letter-spacing: 0.05em;
   font-family: Inter, sans-serif;
+  white-space: nowrap;
 }
 
 .stageBadge {
