@@ -255,6 +255,18 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
             <marker id="em-arrow-active" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
               <path d="M0,1 L9,5 L0,9z" fill="#2563eb" />
             </marker>
+            <radialGradient id="em-rglow-blue" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(59,130,246,0.28)" />
+              <stop offset="100%" stopColor="rgba(59,130,246,0)" />
+            </radialGradient>
+            <radialGradient id="em-rglow-green" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(34,197,94,0.28)" />
+              <stop offset="100%" stopColor="rgba(34,197,94,0)" />
+            </radialGradient>
+            <radialGradient id="em-rglow-red" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(239,68,68,0.28)" />
+              <stop offset="100%" stopColor="rgba(239,68,68,0)" />
+            </radialGradient>
           </defs>
 
           {/* Connectors */}
@@ -284,6 +296,10 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
 
             return (
               <g key={node.id} className={GLOW_CLASS[glow]}>
+                {/* Radial background glow */}
+                {glow !== "idle" && (
+                  <circle cx={node.cx} cy={CY} r={R + 42} fill={`url(#em-rglow-${glow})`} />
+                )}
                 {/* Outer ring */}
                 {glow !== "idle" && (
                   <circle cx={node.cx} cy={CY} r={R + 9} fill="none" stroke={GLOW_STROKE[glow]} strokeWidth={1} opacity={0.25} />

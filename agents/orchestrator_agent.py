@@ -1418,6 +1418,15 @@ Rules:
           2. XML multimap   – raw_body contains <Error> blocks with embedded MPL IDs
           3. Single message – flat JSON with top-level MessageGuid / IntegrationFlowName fields (this method)
         """
+        # Unwrap MessageProcessingLogs when the iFlow wraps fields under that key.
+        # Multi-entry lists are split upstream in _route_stage; here we handle the
+        # single-object case (and first-entry fallback for any stragglers).
+        _mpl = msg.get("MessageProcessingLogs")
+        if isinstance(_mpl, dict):
+            msg = _mpl
+        elif isinstance(_mpl, list) and _mpl:
+            msg = _mpl[0]
+
         raw_body   = msg.get("raw_body") or ""
 
         return {
@@ -1466,7 +1475,10 @@ Rules:
                     logs: list = []
                     for msg_block in mm_root.values():
                         if isinstance(msg_block, dict):
-                            logs.extend(msg_block.get("MessageProcessingLogs", []))
+                            _mpl = msg_block.get("MessageProcessingLogs", [])
+                            # Wrap single-object MPL in a list; a plain dict would
+                            # otherwise cause extend() to iterate over its keys.
+                            logs.extend([_mpl] if isinstance(_mpl, dict) else _mpl)
                     if logs:
                         logger.info("[Orchestrator] JSON multimap — splitting %d log entry(ies)", len(logs))
                         for entry in logs:
@@ -1479,8 +1491,8 @@ Rules:
                             inc = {
                                 "source_type":    "EVENT_MESH",
                                 "message_guid":   entry.get("MessageGuid", ""),
-                                "iflow_id":       entry.get("IntegrationFlowName", ""),
-                                "artifact_id":    "",
+                                "iflow_id":       (entry.get("IflowId") or entry.get("IntegrationFlowName") or ""),
+                                "artifact_id":    (entry.get("IntegrationFlowId") or ""),
                                 "sender":         "",
                                 "receiver":       "",
                                 "status":         "FAILED",
@@ -1545,6 +1557,32 @@ Rules:
                                     logger.warning("[Orchestrator] OData fallback failed guid=%s: %s", guid, _e)
                             await self.process_detected_error(inc)
                         return  # all blocks dispatched — skip single-message path below
+
+                # ── Direct MessageProcessingLogs format ───────────────────────
+                # {"MessageProcessingLogs": {...}} or {"MessageProcessingLogs": [{...}]}
+                _mpl_direct = message.get("MessageProcessingLogs")
+                if _mpl_direct is not None:
+                    _mpl_entries = _mpl_direct if isinstance(_mpl_direct, list) else [_mpl_direct]
+                    logger.info("[Orchestrator] MessageProcessingLogs format — %d entry(ies)", len(_mpl_entries))
+                    for _mpl_entry in _mpl_entries:
+                        if str(_mpl_entry.get("Status", "")).upper() != "FAILED":
+                            continue
+                        _norm = self._normalize_aem_message(_mpl_entry)
+                        _iflow_ph = _norm["iflow_id"].lower() in ("", "unknown_iflow", "unknown", "n/a")
+                        if _iflow_ph and _norm["message_guid"] and self._observer:
+                            try:
+                                _meta = await self._observer.error_fetcher.fetch_message_metadata(_norm["message_guid"])
+                                if _meta.get("IntegrationFlowName"):
+                                    _norm["iflow_id"]  = _meta["IntegrationFlowName"]
+                                    _norm["sender"]    = _meta.get("Sender", "") or _norm["sender"]
+                                    _norm["receiver"]  = _meta.get("Receiver", "") or _norm["receiver"]
+                                    _norm["log_start"] = _meta.get("LogStart", "") or _norm["log_start"]
+                                    _norm["log_end"]   = _meta.get("LogEnd", "") or _norm["log_end"]
+                            except Exception as _odata_exc:
+                                logger.warning("[Orchestrator] OData iflow fallback failed (guid=%s): %s",
+                                               _norm["message_guid"], _odata_exc)
+                        await self.process_detected_error(_norm)
+                    return  # all MPL entries dispatched
 
                 normalized = self._normalize_aem_message(message)
                 _iflow_placeholder = normalized["iflow_id"].lower() in ("", "unknown_iflow", "unknown", "n/a")
