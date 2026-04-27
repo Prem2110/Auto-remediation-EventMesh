@@ -133,12 +133,6 @@ const GLOW_FILL: Record<GlowState, string> = {
   idle:  "rgba(15,23,42,0.6)",
 };
 
-const GLOW_TEXT: Record<GlowState, string> = {
-  blue:  "#93c5fd",
-  green: "#86efac",
-  red:   "#fca5a5",
-  idle:  "#6b7280",
-};
 
 const GLOW_CLASS: Record<GlowState, string> = {
   blue:  styles.glowBlue,
