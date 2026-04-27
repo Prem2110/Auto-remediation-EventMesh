@@ -849,7 +849,7 @@ async def event_mesh_webhook(event: Dict[str, Any]):
     """
     SAP Event Mesh webhook push endpoint.
 
-    SAP Event Mesh posts messages from queue cpi/evt/02/autofix/observer/out
+    SAP Event Mesh posts messages from queue cpi/evt/02/autofix/orbit/orchestrator
     here via HTTPS POST.  The body is JSON — the multimap envelope produced
     by the iFlow's XML-to-JSON converter step.
 

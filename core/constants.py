@@ -70,7 +70,7 @@ AEM_USERNAME             = os.getenv("AEM_USERNAME", "")
 AEM_PASSWORD             = os.getenv("AEM_PASSWORD", "")
 AEM_QUEUE_PREFIX         = os.getenv("AEM_QUEUE_PREFIX", "sap/cpi/remediation")
 
-EVENT_MESH_QUEUE         = os.getenv("EVENT_MESH_QUEUE", os.getenv("AEM_OBSERVER_QUEUE", "cpi/evt/02/autofix/observer/out"))
+EVENT_MESH_QUEUE         = os.getenv("EVENT_MESH_QUEUE", os.getenv("AEM_OBSERVER_QUEUE", "cpi/evt/02/autofix/orbit/orchestrator"))
 EVENT_MESH_TOKEN_URL     = os.getenv("EVENT_MESH_TOKEN_URL", "")
 EVENT_MESH_CLIENT_ID     = os.getenv("EVENT_MESH_CLIENT_ID", "")
 EVENT_MESH_CLIENT_SECRET = os.getenv("EVENT_MESH_CLIENT_SECRET", "")
