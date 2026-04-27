@@ -1413,12 +1413,18 @@ Rules:
         """
         Normalize a raw AEM / SAP CPI queue message to the standard incident dict.
 
-        Handles three source formats (checked in _route_stage before this is called):
-          1. JSON multimap  – {"multimap:Messages": {"multimap:Message1": {"MessageProcessingLogs": [...]}}}
-          2. XML multimap   – raw_body contains <Error> blocks with embedded MPL IDs
-          3. Single message – flat JSON with top-level MessageGuid / IntegrationFlowName fields (this method)
+        Handles four source formats in order:
+          1. multimap envelope – {"multimap:Messages": {"multimap:Message1": {"MessageProcessingLogs": {...}}}}
+          2. JSON multimap     – {"multimap:Messages": {"multimap:Message1": {"MessageProcessingLogs": [...]}}}
+          3. Direct MPL wrap   – {"MessageProcessingLogs": {...}} or {"MessageProcessingLogs": [...]}
+          4. Flat message      – top-level MessageGuid / IflowId / IntegrationFlowName fields
         """
-        # Unwrap MessageProcessingLogs when the iFlow wraps fields under that key.
+        # Step 1 — unwrap multimap:Messages envelope; take the first message block.
+        _mm = msg.get("multimap:Messages")
+        if isinstance(_mm, dict) and _mm:
+            msg = next(iter(_mm.values()))
+
+        # Step 2 — unwrap MessageProcessingLogs when the iFlow nests fields under it.
         # Multi-entry lists are split upstream in _route_stage; here we handle the
         # single-object case (and first-entry fallback for any stragglers).
         _mpl = msg.get("MessageProcessingLogs")
