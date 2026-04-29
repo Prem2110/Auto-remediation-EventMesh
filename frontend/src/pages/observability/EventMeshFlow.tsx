@@ -26,6 +26,9 @@ interface LogEntry {
   stage: string;
   status: string;
   isNew: boolean;
+  incidentId: string;
+  errorMessage: string;
+  createdAt: string;
 }
 
 // ── Node definitions ───────────────────────────────────────────────────────────
@@ -198,7 +201,7 @@ function NodeParticles({ cx, counts }: NodeParticlesProps) {
         />
       ))}
       {extra > 0 && (
-        <text x={startX + slots.length * spacing + 5} y={dotY + 4} fontSize={9} fill="#6b7280">
+        <text x={startX + (slots.length - 1) * spacing + 8} y={dotY + 4} fontSize={9} fill="#6b7280">
           +{extra}
         </text>
       )}
@@ -235,6 +238,11 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
           {aemEnabled ? "Event Mesh Connected" : "Event Mesh Disconnected"}
         </span>
       </div>
+      {!aemEnabled && (
+        <div className={styles.disconnectedBanner}>
+          ⚠️ Event Mesh is disconnected — the pipeline is not receiving events
+        </div>
+      )}
       <div className={styles.svgWrapper}>
         <svg
           viewBox={`0 0 ${SVG_W} ${SVG_H}`}
@@ -289,17 +297,21 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
             const total = node.id === "cpi" ? (aemEnabled && messagesRetrieved > 0 ? messagesRetrieved : 0) : nodeCts.total;
 
             return (
-              <g key={node.id} className={GLOW_CLASS[glow]}>
-                {/* Radial background glow */}
-                {glow !== "idle" && (
-                  <circle cx={node.cx} cy={CY} r={R + 42} fill={`url(#em-rglow-${glow})`} />
-                )}
-                {/* Outer ring */}
-                {glow !== "idle" && (
-                  <circle cx={node.cx} cy={CY} r={R + 9} fill="none" stroke={GLOW_STROKE[glow]} strokeWidth={1} opacity={0.25} />
-                )}
-                {/* Main circle */}
-                <circle cx={node.cx} cy={CY} r={R} fill={GLOW_FILL[glow]} stroke={GLOW_STROKE[glow]} strokeWidth={glow !== "idle" ? 2 : 1.5} />
+              <g key={node.id}>
+                <title>{`${node.label} · ${node.sub}\nActive incidents: ${total}${glow !== "idle" ? `\nState: ${glow === "red" ? "Error" : glow === "green" ? "Success" : "Processing"}` : "\nState: Idle"}`}</title>
+                {/* Circle group — glow class scoped here so drop-shadow bounding box is square */}
+                <g className={GLOW_CLASS[glow]}>
+                  {/* Radial background glow */}
+                  {glow !== "idle" && (
+                    <circle cx={node.cx} cy={CY} r={R + 42} fill={`url(#em-rglow-${glow})`} />
+                  )}
+                  {/* Outer ring */}
+                  {glow !== "idle" && (
+                    <circle cx={node.cx} cy={CY} r={R + 9} fill="none" stroke={GLOW_STROKE[glow]} strokeWidth={1} opacity={0.25} />
+                  )}
+                  {/* Main circle */}
+                  <circle cx={node.cx} cy={CY} r={R} fill={GLOW_FILL[glow]} stroke={GLOW_STROKE[glow]} strokeWidth={glow !== "idle" ? 2 : 1.5} />
+                </g>
                 {/* Abbreviation — always white: sits on the dark-filled circle */}
                 <text x={node.cx} y={CY + 5} textAnchor="middle" fontSize={11} fontWeight={700} fontFamily="Inter,sans-serif" fill="#ffffff" letterSpacing={1}>
                   {node.abbr}
@@ -352,12 +364,12 @@ function StatsRow({ aemStatus, incidents }: { aemStatus: AemStatusResponse | nul
   const inProgress    = incidents.filter(i => !terminalStatuses.has(i.status.toUpperCase())).length;
 
   const CARDS: Array<{ label: string; value: number | string; accent: string }> = [
-    { label: "Webhooks Received",  value: aemStatus?.messages_retrieved ?? "—", accent: "#3b82f6" },
+    { label: "Webhooks Received",  value: aemStatus?.messages_retrieved ?? 0, accent: "#3b82f6" },
     { label: "Total Incidents",    value: aemStatus?.total_incidents ?? incidents.length,   accent: "#6366f1" },
     { label: "Fixed & Verified",   value: fixedCount,   accent: "#22c55e" },
     { label: "In Progress",        value: inProgress,   accent: "#f59e0b" },
     { label: "Failed",             value: failedCount,  accent: "#ef4444" },
-    { label: "Queue Depth",        value: aemStatus?.queue_depth ?? "—", accent: "#8b5cf6" },
+    { label: "Queue Depth",        value: aemStatus?.queue_depth ?? 0, accent: "#8b5cf6" },
   ];
 
   return (
@@ -375,11 +387,17 @@ function StatsRow({ aemStatus, incidents }: { aemStatus: AemStatusResponse | nul
 // ── Event Log ─────────────────────────────────────────────────────────────────
 
 function EventLog({ entries, onClear }: { entries: LogEntry[]; onClear: () => void }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef                    = useRef<HTMLDivElement>(null);
+  const [filterText, setFilter]      = useState("");
+  const [expandedId, setExpanded]    = useState<string | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [entries.length]);
+
+  const filtered = filterText
+    ? entries.filter(e => e.iflowName.toLowerCase().includes(filterText.toLowerCase()))
+    : entries;
 
   return (
     <div className={styles.logCard}>
@@ -390,40 +408,93 @@ function EventLog({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
         </div>
         <button className={styles.clearBtn} onClick={onClear}>Clear</button>
       </div>
+      <div className={styles.logFilterBar}>
+        <input
+          type="text"
+          className={styles.logFilterInput}
+          placeholder="Filter by iFlow name…"
+          value={filterText}
+          onChange={e => setFilter(e.target.value)}
+        />
+      </div>
       <div className={styles.logScroll} ref={scrollRef}>
-        {entries.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className={styles.logEmpty}>
             <span className={styles.logEmptyIcon}>📡</span>
-            <span className={styles.logEmptyText}>Waiting for events…</span>
+            <span className={styles.logEmptyText}>
+              {entries.length === 0 ? "Waiting for events…" : "No entries match filter."}
+            </span>
           </div>
         ) : (
-          entries.map(entry => {
-            const stageCfg = STAGE_CFG[entry.stage] ?? STAGE_CFG.observed;
-            const ts = new Date(entry.ts);
-            const timeStr = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-            const rawName  = entry.iflowName;
-            const isEmpty  = !rawName || rawName === "—" || rawName.trim() === "";
-            const truncated = !isEmpty && rawName.length > 30
-              ? rawName.slice(0, 30) + "…"
-              : rawName;
+          filtered.map(entry => {
+            const stageCfg   = STAGE_CFG[entry.stage] ?? STAGE_CFG.observed;
+            const ts         = new Date(entry.ts);
+            const timeStr    = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            const rawName    = entry.iflowName;
+            const isEmpty    = !rawName || rawName === "—" || rawName.trim() === "";
+            const truncated  = !isEmpty && rawName.length > 30 ? rawName.slice(0, 30) + "…" : rawName;
+            const isExpanded = expandedId === entry.id;
+            const s          = entry.status.toUpperCase();
+            const colorCls   = isExpanded              ? styles.logEntryActive
+                             : s.includes("FAIL")      ? styles.logEntryFail
+                             : entry.stage === "verified" ? styles.logEntryVerified
+                             : entry.isNew             ? styles.logEntryNew
+                             : "";
             return (
-              <div key={entry.id} className={styles.logEntry}>
-                <span className={styles.logTs}>{timeStr}</span>
-                <span className={styles.logIcon}>{entry.icon}</span>
-                {isEmpty
-                  ? <span className={styles.logIflowUnknown}>unknown</span>
-                  : <span className={styles.logIflow} title={rawName}>{truncated}</span>
-                }
-                {entry.isNew
-                  ? <span className={styles.logNewBadge}>NEW</span>
-                  : <span />
-                }
-                <span
-                  className={styles.stageBadge}
-                  style={{ color: stageCfg.color, background: stageCfg.bg, borderColor: stageCfg.border }}
+              <div key={entry.id}>
+                <div
+                  className={`${styles.logEntry} ${colorCls}`}
+                  onClick={() => setExpanded(isExpanded ? null : entry.id)}
                 >
-                  {stageCfg.label}
-                </span>
+                  <span className={styles.logTs}>{timeStr}</span>
+                  <span className={styles.logIcon}>{entry.icon}</span>
+                  {isEmpty
+                    ? <span className={styles.logIflowUnknown}>unknown</span>
+                    : <span className={styles.logIflow} title={rawName}>{truncated}</span>
+                  }
+                  {entry.isNew
+                    ? <span className={styles.logNewBadge}>NEW</span>
+                    : <span />
+                  }
+                  <span
+                    className={styles.stageBadge}
+                    style={{ color: stageCfg.color, background: stageCfg.bg, borderColor: stageCfg.border }}
+                  >
+                    {stageCfg.label}
+                  </span>
+                </div>
+                {isExpanded && (
+                  <div className={styles.logEntryDetail}>
+                    <div>
+                      <span className={styles.logDetailLabel}>iFlow</span>
+                      {isEmpty ? <em>unknown</em> : rawName}
+                    </div>
+                    <div>
+                      <span className={styles.logDetailLabel}>Status</span>
+                      {entry.status}
+                    </div>
+                    <div className={styles.logDetailFull}>
+                      <span className={styles.logDetailLabel}>Error</span>
+                      {entry.errorMessage || "—"}
+                    </div>
+                    <div>
+                      <span className={styles.logDetailLabel}>Logged at</span>
+                      {ts.toLocaleString()}
+                    </div>
+                    {entry.createdAt && (
+                      <div>
+                        <span className={styles.logDetailLabel}>Created</span>
+                        {entry.createdAt}
+                      </div>
+                    )}
+                    {entry.incidentId && (
+                      <div>
+                        <span className={styles.logDetailLabel}>Incident ID</span>
+                        {entry.incidentId}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })
@@ -468,23 +539,29 @@ export default function EventMeshFlow() {
       const statusUp = inc.status.toUpperCase();
       if (!prevStatus) {
         newEntries.push({
-          id:        `${inc.incident_id}-${Date.now()}-new`,
-          ts:        new Date().toISOString(),
-          icon:      STATUS_ICON[statusUp] ?? "📥",
-          iflowName: inc.iflow_name ?? inc.iflow_id ?? "—",
-          stage:     statusToStage(inc.status),
-          status:    inc.status,
-          isNew:     true,
+          id:           `${inc.incident_id}-${Date.now()}-new`,
+          ts:           new Date().toISOString(),
+          icon:         STATUS_ICON[statusUp] ?? "📥",
+          iflowName:    inc.iflow_name ?? inc.iflow_id ?? "—",
+          stage:        statusToStage(inc.status),
+          status:       inc.status,
+          isNew:        true,
+          incidentId:   inc.incident_id,
+          errorMessage: (inc.error_message as string) ?? "",
+          createdAt:    (inc.created_at as string) ?? "",
         });
       } else if (prevStatus !== inc.status) {
         newEntries.push({
-          id:        `${inc.incident_id}-${Date.now()}-chg`,
-          ts:        new Date().toISOString(),
-          icon:      STATUS_ICON[statusUp] ?? "🔄",
-          iflowName: inc.iflow_name ?? inc.iflow_id ?? "—",
-          stage:     statusToStage(inc.status),
-          status:    inc.status,
-          isNew:     false,
+          id:           `${inc.incident_id}-${Date.now()}-chg`,
+          ts:           new Date().toISOString(),
+          icon:         STATUS_ICON[statusUp] ?? "🔄",
+          iflowName:    inc.iflow_name ?? inc.iflow_id ?? "—",
+          stage:        statusToStage(inc.status),
+          status:       inc.status,
+          isNew:        false,
+          incidentId:   inc.incident_id,
+          errorMessage: (inc.error_message as string) ?? "",
+          createdAt:    (inc.created_at as string) ?? "",
         });
       }
     }
