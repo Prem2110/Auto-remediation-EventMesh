@@ -161,6 +161,22 @@ interface ToolsResponse {
   servers?: Record<string, Array<{ agent_tool_name?: string; mcp_tool_name?: string }>>;
 }
 
+export interface McpToolsStatus {
+  total: number;
+  servers: Record<string, string[]>;
+}
+
+export async function fetchMcpTools(): Promise<McpToolsStatus> {
+  const tools = await requestMaybe<ToolsResponse>(`${_BASE}/autonomous/tools`);
+  const servers: Record<string, string[]> = {};
+  let total = 0;
+  for (const [server, toolList] of Object.entries(tools?.servers ?? {})) {
+    servers[server] = toolList.map(t => t.agent_tool_name ?? t.mcp_tool_name ?? "").filter(Boolean);
+    total += servers[server].length;
+  }
+  return { total, servers };
+}
+
 // Fetch tool distribution once — tools don't change after startup.
 // Callers should use staleTime: 5+ minutes.
 export async function fetchToolDistribution(): Promise<Record<string, string[]>> {

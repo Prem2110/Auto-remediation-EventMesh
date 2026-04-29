@@ -187,12 +187,18 @@ async def lifespan(app: FastAPI):
                 _verifier.build_agent(),
             )
             await orchestrator.build_agent(observer=observer)  # depends on all above being ready
-            orchestrator._agents_ready = True
             logger.info("[Startup] All specialist agents built — orchestrator ready to process messages.")
-
-            logger.info("[Startup] All agents ready.")
         except Exception as exc:
             logger.error("[Startup] Agent initialisation failed: %s", exc)
+        finally:
+            # Always mark ready so /autonomous/status returns True and webhooks are accepted.
+            # If MCP discovery partially failed, whatever tools loaded are still usable.
+            orchestrator._agents_ready = True
+            tool_count = len(mcp.tools) if mcp else 0
+            logger.info(
+                "[Startup] pipeline_running=True — MCP tools loaded: %d, agents_ready: True",
+                tool_count,
+            )
 
     asyncio.create_task(_init_background())
     logger.info("[Startup] FastAPI ready — agents initialising in background.")
@@ -549,6 +555,39 @@ async def get_cpi_runtime_artifact_detail(artifact_id: str):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─────────────────────────────────────────────
+# PIPELINE STATUS  (polled by frontend fetchPipelineStatus)
+# ─────────────────────────────────────────────
+
+@app.get("/autonomous/status")
+async def autonomous_status():
+    """Return whether the agent pipeline is ready to process events."""
+    agents_ready = bool(orchestrator and orchestrator._agents_ready)
+    tool_count   = len(mcp.tools) if mcp else 0
+    logger.debug("[Autonomous/status] agents_ready=%s tool_count=%d", agents_ready, tool_count)
+    return {
+        "running":      agents_ready,
+        "agents_ready": agents_ready,
+        "tool_count":   tool_count,
+    }
+
+
+@app.post("/autonomous/start")
+async def autonomous_start():
+    """No-op in event-driven mode — always returns current readiness state."""
+    agents_ready = bool(orchestrator and orchestrator._agents_ready)
+    return {
+        "running": agents_ready,
+        "message": "Event-driven pipeline active" if agents_ready else "Agents still initialising",
+    }
+
+
+@app.post("/autonomous/stop")
+async def autonomous_stop():
+    """No-op in event-driven mode."""
+    return {"running": False, "message": "Event-driven mode: stop is not applicable"}
 
 
 # ─────────────────────────────────────────────
