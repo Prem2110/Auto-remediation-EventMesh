@@ -162,6 +162,36 @@ def _agent_webhook_count() -> int:
 
 
 # ─────────────────────────────────────────────
+# CPI MONITOR BACKGROUND TASK
+# ─────────────────────────────────────────────
+
+async def _run_cpi_monitor() -> None:
+    """
+    Background polling loop: query CPI for FAILED messages every
+    CPI_POLL_INTERVAL_SECONDS (default 600) and publish each new failure
+    to the Event Mesh topic cpi/evt/02/autofix/in.
+
+    All errors are caught and logged — this loop must never crash the app.
+    """
+    try:
+        from cpi_monitor.cpi_poller import poll_failed_messages, _POLL_INTERVAL
+        from cpi_monitor.error_publisher import publish_failed_messages
+    except Exception as exc:
+        logger.error("[CPI_MONITOR] Module import failed — poller disabled: %s", exc)
+        return
+
+    while True:
+        try:
+            messages = await poll_failed_messages()
+            if messages:
+                logger.info("[CPI_MONITOR] Found %d failed messages", len(messages))
+                await publish_failed_messages(messages)
+        except Exception as exc:
+            logger.error("[CPI_MONITOR] Unhandled poller error: %s", exc)
+        await asyncio.sleep(_POLL_INTERVAL)
+
+
+# ─────────────────────────────────────────────
 # LIFESPAN
 # ─────────────────────────────────────────────
 
@@ -230,6 +260,8 @@ async def lifespan(app: FastAPI):
             )
 
     asyncio.create_task(_init_background())
+    asyncio.create_task(_run_cpi_monitor())
+    logger.info("[CPI_MONITOR] Poller started, interval=10min")
     logger.info("[Startup] FastAPI ready — agents initialising in background.")
     logger.info("[Startup] Event-driven mode active — waiting for SAP Event Mesh webhooks")
     yield
@@ -1510,6 +1542,90 @@ async def autonomous_debug2():
     except Exception as exc:
         results["api_exception"] = str(exc)
     return results
+
+
+# ─────────────────────────────────────────────
+# CPI MONITOR DEBUG / VERIFICATION
+# ─────────────────────────────────────────────
+
+@app.get("/cpi-monitor/status")
+async def cpi_monitor_status():
+    """
+    Show the current configuration and dedup-cache state of the CPI monitor.
+    Use this first to confirm env vars and destination names are set correctly.
+    """
+    from cpi_monitor.cpi_poller import (
+        _POLL_INTERVAL, _API_BASE_URL, _API_TOKEN_URL,
+        _API_CLIENT_ID, _API_CLIENT_SECRET,
+    )
+    from cpi_monitor.error_publisher import _EM_DESTINATION_NAME, _published, _em_cache
+
+    return {
+        "cpi_poll": {
+            "auth_mode":           "direct env vars (SAP_HUB_* / API_OAUTH_*)",
+            "poll_interval_secs":  _POLL_INTERVAL,
+            "api_base_url":        _API_BASE_URL or "NOT SET",
+            "api_token_url":       _API_TOKEN_URL or "NOT SET",
+            "api_client_id":       "SET" if _API_CLIENT_ID else "NOT SET",
+            "api_client_secret":   "SET" if _API_CLIENT_SECRET else "NOT SET",
+        },
+        "event_mesh_publish": {
+            "destination_name":    _EM_DESTINATION_NAME,
+            "cached_base_url":     _em_cache.get("base_url") or "not resolved yet",
+            "cached_token":        "present" if _em_cache.get("token") else "not resolved yet",
+        },
+        "dedup_cache": {
+            "tracked_guids":       len(_published),
+            "guids":               list(_published.keys()),
+        },
+        "vcap_services_present":   bool(os.getenv("VCAP_SERVICES")),
+    }
+
+
+@app.post("/cpi-monitor/trigger")
+async def cpi_monitor_trigger():
+    """
+    Manually run one CPI poll + publish cycle immediately.
+    Use this to verify the integration without waiting 10 minutes.
+    Returns what was found in CPI and what was published to Event Mesh.
+    """
+    from cpi_monitor.cpi_poller import poll_failed_messages
+    from cpi_monitor.error_publisher import publish_failed_messages, _published
+
+    result: Dict[str, Any] = {
+        "polled_messages": [],
+        "published_count": 0,
+        "skipped_duplicates": 0,
+        "errors": [],
+    }
+
+    try:
+        messages = await poll_failed_messages()
+        result["polled_messages"] = [
+            {
+                "MessageGuid":         m.get("MessageGuid"),
+                "IntegrationFlowName": m.get("IntegrationFlowName"),
+                "Status":              m.get("Status"),
+                "LogEnd":              m.get("LogEnd"),
+            }
+            for m in messages
+        ]
+
+        before = set(_published.keys())
+        if messages:
+            await publish_failed_messages(messages)
+        after = set(_published.keys())
+
+        newly_published = after - before
+        result["published_count"]    = len(newly_published)
+        result["skipped_duplicates"] = len(messages) - len(newly_published)
+        result["published_guids"]    = list(newly_published)
+
+    except Exception as exc:
+        result["errors"].append(str(exc))
+        logger.error("[CPI_MONITOR] /cpi-monitor/trigger error: %s", exc)
+
+    return result
 
 
 # ─────────────────────────────────────────────
