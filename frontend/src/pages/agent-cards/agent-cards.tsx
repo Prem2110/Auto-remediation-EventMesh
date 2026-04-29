@@ -2,16 +2,17 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchPipelineStatus, startPipeline, stopPipeline } from "../../services/api.ts";
+import SvgIcon, { type IconName } from "../../components/icons/SvgIcon.tsx";
 import _styles from "./agent-cards.module.css";
 const styles = _styles as Record<string, string>;
 
 // ── Pipeline agent meta ───────────────────────────────────────────────────────
-const PIPELINE_META: Record<string, { emoji: string; desc: string; gradient: string; accent: string }> = {
-  observer:     { emoji:"👁️",  desc:"Polls SAP CPI for failed messages, deduplicates, publishes to SAP Event Mesh.",        gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
-  classifier:   { emoji:"🏷️",  desc:"Classifies error type, confidence, and severity — zero LLM cost.",          gradient:"linear-gradient(135deg,#1e1b4b 0%,#7c3aed 100%)", accent:"#a78bfa" },
-  orchestrator: { emoji:"🎯",  desc:"Routes by confidence threshold; fan-outs to RCA + Knowledge in parallel.",   gradient:"linear-gradient(135deg,#134e4a 0%,#0f766e 100%)", accent:"#2dd4bf" },
-  rca:          { emoji:"🧠",  desc:"LLM root cause analysis via SAP AI Core (parallel with Knowledge).",         gradient:"linear-gradient(135deg,#064e3b 0%,#059669 100%)", accent:"#34d399" },
-  fixer:        { emoji:"🔧",  desc:"Generates patch, assesses risk level (LOW/MEDIUM/HIGH), sets simulation.",   gradient:"linear-gradient(135deg,#312e81 0%,#6d28d9 100%)", accent:"#c084fc" },
+const PIPELINE_META: Record<string, { icon: IconName; desc: string; gradient: string; accent: string }> = {
+  observer:     { icon:"eye",           desc:"Polls SAP CPI for failed messages, deduplicates, publishes to SAP Event Mesh.",        gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
+  classifier:   { icon:"tag",           desc:"Classifies error type, confidence, and severity — zero LLM cost.",          gradient:"linear-gradient(135deg,#1e1b4b 0%,#7c3aed 100%)", accent:"#a78bfa" },
+  orchestrator: { icon:"orchestrator",  desc:"Routes by confidence threshold; fan-outs to RCA + Knowledge in parallel.",   gradient:"linear-gradient(135deg,#134e4a 0%,#0f766e 100%)", accent:"#2dd4bf" },
+  rca:          { icon:"rca",           desc:"LLM root cause analysis via SAP AI Core (parallel with Knowledge).",         gradient:"linear-gradient(135deg,#064e3b 0%,#059669 100%)", accent:"#34d399" },
+  fixer:        { icon:"wrench",        desc:"Generates patch, assesses risk level (LOW/MEDIUM/HIGH), sets simulation.",   gradient:"linear-gradient(135deg,#312e81 0%,#6d28d9 100%)", accent:"#c084fc" },
 };
 
 export default function AgentCards() {
@@ -84,7 +85,7 @@ export default function AgentCards() {
               onMouseEnter={() => setHoveredId(`p-${key}`)}
               onMouseLeave={() => setHoveredId(null)}>
               <div className={styles.cardBanner} style={{ background: meta.gradient }}>
-                <span className={styles.cardEmoji}>{meta.emoji}</span>
+                <span className={styles.cardEmoji}><SvgIcon name={meta.icon} size={28} style={{ color: "#fff", opacity: 0.9 }} /></span>
                 <div className={styles.cardHeaderRight}>
                   <span className={`${styles.statusDot} ${isRun ? styles["status-online"] : styles["status-offline"]}`} />
                   <span className={styles.statusText}>{isRun ? "Running" : pipelineRunning ? "Stopped" : "Idle"}</span>

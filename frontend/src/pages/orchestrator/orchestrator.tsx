@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAppStore } from "../../store/app-store.ts";
 import { sendChatMessage, fetchPipelineStatus } from "../../services/api.ts";
 import type { IHistoryEntry } from "../../types/index.ts";
+import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import styles from "./orchestrator.module.css";
 
 const QUICK_PROMPTS = [
@@ -134,7 +135,7 @@ export default function Orchestrator() {
       {/* ── Welcome ── */}
       {isNewChat && chatBubbles.length === 0 && (
         <div className={styles.welcome}>
-          <div className={styles.welcomeOrb}>🤖</div>
+          <div className={styles.welcomeOrb}><SvgIcon name="agents" size={36} /></div>
           <h2 className={styles.welcomeTitle}>
             Hi {user.firstname}, how can I help?
           </h2>
@@ -173,7 +174,7 @@ export default function Orchestrator() {
             if (b.role === "error") {
               return (
                 <div key={b.id} className={styles.errorRow}>
-                  <span className={styles.errorIcon}>⚠️</span>
+                  <span className={styles.errorIcon}><SvgIcon name="warning" size={16} /></span>
                   <div className={styles.errorBubble}>
                     <span className={styles.errorText}>{b.text}</span>
                   </div>
@@ -182,7 +183,7 @@ export default function Orchestrator() {
             }
             return (
               <div key={b.id} className={styles.botRow}>
-                <div className={styles.botAvatar}>🤖</div>
+                <div className={styles.botAvatar}><SvgIcon name="agents" size={18} /></div>
                 <div className={styles.botBubble}>
                   <div
                     className={styles.botText}
@@ -197,7 +198,7 @@ export default function Orchestrator() {
           {/* Typing indicator */}
           {sending && (
             <div className={styles.botRow}>
-              <div className={styles.botAvatar}>🤖</div>
+              <div className={styles.botAvatar}><SvgIcon name="agents" size={18} /></div>
               <div className={styles.botBubble}>
                 <div className={styles.thinking}>
                   <span /><span /><span />
@@ -216,7 +217,7 @@ export default function Orchestrator() {
           <div className={styles.attachRow}>
             {attachments.map((a) => (
               <div key={a.id} className={styles.fileChip}>
-                📎 <span className={styles.chipText}>{a.name}</span>
+                <SvgIcon name="attachment" size={13} style={{ verticalAlign: "middle", marginRight: "0.25rem" }} /><span className={styles.chipText}>{a.name}</span>
                 <button className={styles.chipX} onClick={() => setAttachments((p) => p.filter((x) => x.id !== a.id))}>✕</button>
               </div>
             ))}
@@ -241,7 +242,7 @@ export default function Orchestrator() {
             onClick={() => fileInputRef.current?.click()}
             disabled={sending}
           >
-            📎
+            <SvgIcon name="attachment" size={18} />
           </button>
           <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileChange} />
 
@@ -251,7 +252,7 @@ export default function Orchestrator() {
             onClick={() => handleSend()}
             title="Send"
           >
-            ➤
+            <SvgIcon name="chevron-right" size={18} />
           </button>
         </div>
       </div>

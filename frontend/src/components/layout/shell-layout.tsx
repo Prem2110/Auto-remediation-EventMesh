@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAppStore } from "../../store/app-store.ts";
 import { fetchCurrentUser, fetchAllHistory } from "../../services/api.ts";
 import type { IUser, IHistoryEntry } from "../../types/index.ts";
+import SvgIcon, { type IconName } from "../icons/SvgIcon.tsx";
 import styles from "./shell-layout.module.css";
 
 const MOCK_USER: IUser = {
@@ -13,13 +14,13 @@ const MOCK_USER: IUser = {
   displayName: "Dummy User",
 };
 
-const NAV_ITEMS = [
-  { key: "/dashboard",     label: "Dashboard",     emoji: "📊" },
-  { key: "/agents",        label: "Agent Cards",   emoji: "🤖" },
-  { key: "/orchestrator",  label: "Orchestrator",  emoji: "💬" },
-  { key: "/test-suite",    label: "Test Suite",    emoji: "✅" },
-  { key: "/observability", label: "Observability", emoji: "📡" },
-  { key: "/pipeline",     label: "Pipeline",      emoji: "⚙️" },
+const NAV_ITEMS: { key: string; label: string; icon: IconName }[] = [
+  { key: "/dashboard",     label: "Dashboard",     icon: "dashboard"     },
+  { key: "/agents",        label: "Agent Cards",   icon: "agents"        },
+  { key: "/orchestrator",  label: "Orchestrator",  icon: "orchestrator"  },
+  { key: "/test-suite",    label: "Test Suite",    icon: "test-suite"    },
+  { key: "/observability", label: "Observability", icon: "observability" },
+  { key: "/pipeline",      label: "Pipeline",      icon: "pipeline"      },
 ];
 
 interface ShellLayoutProps {
@@ -106,7 +107,7 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
               onClick={() => navigate(item.key)}
               title={collapsed ? item.label : undefined}
             >
-              <span className={styles.navIcon}>{item.emoji}</span>
+              <span className={styles.navIcon}><SvgIcon name={item.icon} size={17} /></span>
               <span className={styles.navText}>{item.label}</span>
             </div>
           ))}
@@ -119,9 +120,9 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
             onClick={() => !collapsed && setHistoryOpen((o) => !o)}
             title={collapsed ? "History" : undefined}
           >
-            <span className={styles.navIcon}>🕑</span>
+            <span className={styles.navIcon}><SvgIcon name="history" size={17} /></span>
             <span className={styles.navText}>
-              History {!collapsed && (historyOpen ? "▾" : "▸")}
+              History {!collapsed && <SvgIcon name={historyOpen ? "chevron-down" : "chevron-right"} size={13} style={{ marginLeft: 2 }} />}
             </span>
           </div>
 

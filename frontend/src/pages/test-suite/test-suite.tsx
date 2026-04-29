@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchTestSuiteLogs } from "../../services/api.ts";
 import type { ITestLog, ITestExecution } from "../../types/index.ts";
+import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import styles from "./test-suite.module.css";
 
 function determineStatus(executions: ITestExecution[]): string {
@@ -113,7 +114,7 @@ export default function TestSuite() {
       <div className={styles.filterBar}>
         <input
           className={styles.filterInput}
-          placeholder="🔍 Search user or prompt…"
+          placeholder="Search user or prompt…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -182,7 +183,7 @@ export default function TestSuite() {
                   <td>{test.operation || "—"}</td>
                   <td>
                     <button className={styles.downloadBtn} onClick={() => handleDownload(test)} title="Download report">
-                      ⬇
+                      <SvgIcon name="download" size={14} />
                     </button>
                   </td>
                 </tr>
@@ -190,7 +191,7 @@ export default function TestSuite() {
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={6} className={styles.emptyCell}>
-                    <div style={{ fontSize: "2rem" }}>📋</div>
+                    <div style={{ fontSize: "2rem" }}><SvgIcon name="clipboard" size={32} /></div>
                     <div>No test results found</div>
                   </td>
                 </tr>

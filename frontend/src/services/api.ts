@@ -263,6 +263,16 @@ export async function fetchTickets(): Promise<{ tickets: unknown[] }> {
   return request(`${_BASE}/autonomous/tickets`);
 }
 
+export async function updateTicket(
+  ticketId: string,
+  updates: { status?: string; assigned_to?: string | null; resolution_notes?: string | null }
+): Promise<{ ticket: unknown }> {
+  return request(`${_BASE}/autonomous/tickets/${encodeURIComponent(ticketId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
 export async function fetchPendingApprovals(): Promise<{ pending: unknown[] }> {
   return request(`${_BASE}/autonomous/pending_approvals`);
 }

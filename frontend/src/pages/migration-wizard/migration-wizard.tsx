@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { uploadMigrationFiles } from "../../services/api.ts";
 import type { IUploadedFile, FileSource } from "../../types/index.ts";
+import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import styles from "./migration-wizard.module.css";
 
 type WizardStep = "upload" | "config" | "preview";
@@ -180,7 +181,7 @@ export default function MigrationWizard() {
             {files.map((f) => (
               <div key={f.fileId} className={styles.fileRow}>
                 <span className={styles.fileEmoji}>
-                  {f.source === "CODEFILE" ? "📄" : "🖼️"}
+                  <SvgIcon name={f.source === "CODEFILE" ? "document" : "image"} size={18} />
                 </span>
                 <div className={styles.fileMeta}>
                   <span className={styles.fileName}>{f.fileName}</span>
@@ -291,11 +292,11 @@ export default function MigrationWizard() {
 
         <div className={styles.stepFooter}>
           <button className={styles.btnSecondary} onClick={handleReset}>
-            ↺ Start Over
+            <SvgIcon name="refresh" size={14} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />Start Over
           </button>
           <div className={styles.footerRight}>
             <button className={styles.btnSuccess} onClick={handleDownloadResult}>
-              ⬇ Download Result
+              <SvgIcon name="download" size={14} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />Download Result
             </button>
           </div>
         </div>
@@ -323,7 +324,7 @@ function DropZone({ label, source, onDrop, onBrowse }: DropZoneProps) {
       onDragLeave={() => setHovering(false)}
       onDrop={(e) => { setHovering(false); onDrop(e); }}
     >
-      <span className={styles.dropIcon}>{isCode ? "📁" : "🖼️"}</span>
+      <span className={styles.dropIcon}><SvgIcon name={isCode ? "folder" : "image"} size={28} /></span>
       <span className={styles.dropLabel}>{label}</span>
       <span className={`${styles.dropType} ${isCode ? styles.dropTypeCode : styles.dropTypeError}`}>
         {isCode ? "Code File" : "Error / Screenshot"}

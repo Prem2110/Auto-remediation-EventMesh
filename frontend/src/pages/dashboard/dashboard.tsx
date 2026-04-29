@@ -1,4 +1,4 @@
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
@@ -9,6 +9,8 @@ import {
   fetchDashboardAll,
   fetchFailedMessagesPaginated,
   fetchActiveIncidentsPaginated,
+  fetchTickets,
+  updateTicket,
   type PaginatedMessagesResponse,
   type PaginatedIncidentsResponse,
 } from "../../services/api.ts";
@@ -109,11 +111,28 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
   );
 }
 
+interface Ticket {
+  ticket_id: string;
+  incident_id: string;
+  iflow_id: string;
+  error_type: string;
+  title: string;
+  description: string;
+  priority: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   // Chart/KPI data auto-refreshes every 60s; paginated tables do not.
   const chartOpts = { refetchInterval: 60_000, retry: 3, retryDelay: 3_000 } as const;
   const tableOpts = { retry: 2, retryDelay: 2_000, placeholderData: keepPreviousData };
+
+  const [activeTab, setActiveTab] = useState<"overview" | "tickets">("overview");
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   // ─ Fetch consolidated dashboard data (charts, KPIs) ─────────────────────────
   const { data: dashData, isLoading: dashLoading } = useQuery({
@@ -139,6 +158,31 @@ export default function Dashboard() {
     queryFn: () => fetchActiveIncidentsPaginated(incidentsPage, incidentsPageSize),
     ...tableOpts,
   });
+
+  // ─ Tickets (always fetched for tab count badge) ───────────────────────────────
+  const { data: ticketsData, isLoading: ticketsLoading } = useQuery({
+    queryKey: ["dash-tickets"],
+    queryFn: fetchTickets,
+    refetchInterval: 60_000,
+    retry: 2,
+  });
+  const tickets = (ticketsData?.tickets ?? []) as Ticket[];
+  const openTickets = tickets.filter((t) => (t.status || "").toUpperCase() === "OPEN");
+
+  async function handleMarkResolved(ticketId: string, currentStatus: string) {
+    setResolvingId(ticketId);
+    try {
+      if (currentStatus.toUpperCase() === "OPEN") {
+        await updateTicket(ticketId, { status: "IN_PROGRESS" });
+      }
+      await updateTicket(ticketId, { status: "RESOLVED" });
+    } catch {
+      // swallow — refresh to show actual state
+    } finally {
+      queryClient.invalidateQueries({ queryKey: ["dash-tickets"] });
+      setResolvingId(null);
+    }
+  }
 
   // Parse consolidated dashboard data
   const dash = (dashData ?? {}) as Record<string, unknown>;
@@ -166,6 +210,28 @@ export default function Dashboard() {
   return (
     <div className={styles.page}>
       <h2 className={styles.pageTitle}>Smart Monitoring</h2>
+
+      {/* ── Tab Navigation ── */}
+      <div className={styles.tabNav}>
+        <button
+          className={`${styles.tabNavBtn} ${activeTab === "overview" ? styles.tabNavBtnActive : ""}`}
+          onClick={() => setActiveTab("overview")}
+        >
+          Overview
+        </button>
+        <button
+          className={`${styles.tabNavBtn} ${activeTab === "tickets" ? styles.tabNavBtnActive : ""}`}
+          onClick={() => setActiveTab("tickets")}
+        >
+          Tickets
+          {openTickets.length > 0 && (
+            <span className={styles.tabBadge}>{openTickets.length}</span>
+          )}
+        </button>
+      </div>
+
+      {/* ══ OVERVIEW TAB ══ */}
+      <div style={{ display: activeTab === "overview" ? "contents" : "none" }}>
 
       {/* ── KPI Cards ── */}
       <div className={styles.kpiRow}>
@@ -379,6 +445,108 @@ export default function Dashboard() {
           />
         )}
       </div>
+
+      </div>{/* end overview tab */}
+
+      {/* ══ TICKETS TAB ══ */}
+      {activeTab === "tickets" && (
+        <div className={styles.tableBlock}>
+          <div className={styles.ticketsTabHeader}>
+            <SectionTitle title={`Escalation Tickets (${tickets.length})`} />
+            <div className={styles.ticketKpiRow}>
+              <span className={styles.ticketKpi} style={{ color: "#dc2626" }}>
+                <strong>{openTickets.length}</strong> Open
+              </span>
+              <span className={styles.ticketKpi} style={{ color: "#2563eb" }}>
+                <strong>{tickets.filter((t) => (t.status || "").toUpperCase() === "IN_PROGRESS").length}</strong> In Progress
+              </span>
+              <span className={styles.ticketKpi} style={{ color: "#16a34a" }}>
+                <strong>{tickets.filter((t) => (t.status || "").toUpperCase() === "RESOLVED").length}</strong> Resolved
+              </span>
+            </div>
+          </div>
+
+          {ticketsLoading ? (
+            <div className={styles.tableWrapper}>
+              <table className={styles.table}>
+                <tbody><SkeletonRows count={5} /></tbody>
+              </table>
+            </div>
+          ) : tickets.length === 0 ? (
+            <div className={styles.emptyCell} style={{ padding: "2.5rem", textAlign: "center" }}>
+              No escalation tickets yet. Tickets are created automatically when an iFlow fix fails.
+            </div>
+          ) : (
+            <div className={styles.tableWrapper}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Ticket ID</th>
+                    <th>iFlow</th>
+                    <th>Error Type</th>
+                    <th>RCA Summary</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tickets.map((ticket) => {
+                    const status = (ticket.status || "OPEN").toUpperCase();
+                    const priority = (ticket.priority || "MEDIUM").toUpperCase();
+                    const statusClass =
+                      status === "RESOLVED"    ? styles.stateSuccess :
+                      status === "IN_PROGRESS" ? styles.stateWarning :
+                      styles.stateError;
+                    const rcaSummary = (() => {
+                      const m = (ticket.description || "").match(/Proposed fix:\s*([^\n]+)/);
+                      return m ? m[1].trim().slice(0, 120) : (ticket.description || "").slice(0, 120);
+                    })();
+                    const isResolving = resolvingId === ticket.ticket_id;
+                    return (
+                      <tr key={ticket.ticket_id}>
+                        <td className={styles.mono}>{ticket.ticket_id.slice(0, 8)}…</td>
+                        <td>{ticket.iflow_id || "-"}</td>
+                        <td>{ticket.error_type || "-"}</td>
+                        <td className={styles.errorPreview} style={{ color: "#334155", maxWidth: 220 }} title={rcaSummary}>
+                          {rcaSummary || "-"}
+                        </td>
+                        <td>
+                          <span className={`${styles.statusBadge} ${priority === "HIGH" ? styles.stateError : styles.stateWarning}`}>
+                            {priority}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`${styles.statusBadge} ${statusClass}`}>{status}</span>
+                        </td>
+                        <td>{formatISODate(ticket.created_at)}</td>
+                        <td>
+                          <div className={styles.ticketActions}>
+                            {status !== "RESOLVED" && (
+                              <button
+                                className={styles.resolveBtn}
+                                disabled={isResolving}
+                                onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status)}
+                                title="Mark this ticket as resolved"
+                              >
+                                {isResolving ? "…" : "Mark Resolved"}
+                              </button>
+                            )}
+                            {status === "RESOLVED" && (
+                              <span style={{ color: "#16a34a", fontSize: "0.78rem" }}>✓ Resolved</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

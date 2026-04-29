@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchPipoDetails } from "../../services/api.ts";
 import type { IPipoDetail } from "../../types/index.ts";
+import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import styles from "./pipo-list.module.css";
 
 export default function PipoList() {
@@ -34,7 +35,7 @@ export default function PipoList() {
       <div className={styles.searchBar}>
         <input
           className={styles.searchInput}
-          placeholder="🔍 Search by name or issue…"
+          placeholder="Search by name or issue…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -64,7 +65,7 @@ export default function PipoList() {
               {items.length === 0 && (
                 <tr>
                   <td colSpan={2} className={styles.emptyCell}>
-                    <div style={{ fontSize: "2rem" }}>🔌</div>
+                    <div style={{ fontSize: "2rem" }}><SvgIcon name="connection" size={32} /></div>
                     <div>{search ? "No results match your search." : "No PIPO details found."}</div>
                   </td>
                 </tr>

@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import {
   fetchMonitorMessages,
   fetchMonitorMessageDetail,
@@ -9,6 +10,7 @@ import {
   applyMessageFix,
   fetchFixStatus,
   fetchTickets,
+  updateTicket,
   fetchPendingApprovals,
   approveIncident,
 } from "../../services/api.ts";
@@ -167,11 +169,11 @@ const ERROR_TYPE_META: Record<string, ErrorTypeMeta> = {
   CONNECTIVITY_ERROR:   { label: "Connectivity Error",   description: "Transient network issue — connection refused or timed out. Agent retries automatically.",                  action: "RETRY",          dot: "#3b82f6" },
 };
 
-const ACTION_GROUPS: { key: ErrorTypeMeta["action"]; icon: string; label: string; desc: string; color: string; bg: string }[] = [
-  { key: "AUTO_FIX",       icon: "⚡", label: "Auto-Fix",          desc: "Agent resolves automatically — no manual action needed",  color: "#15803d", bg: "#f0fdf4" },
-  { key: "TICKET_CREATED", icon: "🎫", label: "Ticket Created",     desc: "Escalated to a human team — a ticket has been created",   color: "#b91c1c", bg: "#fff5f5" },
-  { key: "APPROVAL",       icon: "👤", label: "Awaiting Approval",  desc: "Agent needs human sign-off before applying any fix",      color: "#92400e", bg: "#fffbeb" },
-  { key: "RETRY",          icon: "🔄", label: "Retry",              desc: "Transient issue — agent retries the iFlow automatically", color: "#1e40af", bg: "#eff6ff" },
+const ACTION_GROUPS: { key: ErrorTypeMeta["action"]; iconName: "lightning" | "tickets" | "user" | "loop"; label: string; desc: string; color: string; bg: string }[] = [
+  { key: "AUTO_FIX",       iconName: "lightning", label: "Auto-Fix",          desc: "Agent resolves automatically — no manual action needed",  color: "#15803d", bg: "#f0fdf4" },
+  { key: "TICKET_CREATED", iconName: "tickets",   label: "Ticket Created",    desc: "Escalated to a human team — a ticket has been created",   color: "#b91c1c", bg: "#fff5f5" },
+  { key: "APPROVAL",       iconName: "user",      label: "Awaiting Approval", desc: "Agent needs human sign-off before applying any fix",      color: "#92400e", bg: "#fffbeb" },
+  { key: "RETRY",          iconName: "loop",      label: "Retry",             desc: "Transient issue — agent retries the iFlow automatically", color: "#1e40af", bg: "#eff6ff" },
 ];
 
 /* ── Field-change highlight component ────────────────────────────────── */
@@ -316,7 +318,7 @@ function ErrorExplanationCard({ exp }: { exp: IErrorExplanation }) {
   return (
     <div className={styles.explainCard}>
       <div className={styles.explainCardHeader}>
-        <span className={styles.explainSparkle}>✦</span>
+        <span className={styles.explainSparkle}><SvgIcon name="rca" size={15} /></span>
         <span className={styles.explainCardTitle}>AI Error Analysis</span>
         <span className={styles.explainCategoryBadge} style={{ color: catStyle.color, background: catStyle.bg }}>
           {exp.category_label || exp.error_category}
@@ -390,6 +392,10 @@ export default function Observability() {
   // Approval action feedback
   const [approvalActionError, setApprovalActionError] = useState<string | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState<"approving" | "rejecting" | null>(null);
+
+  // Ticket resolution state
+  const [resolvingTicketId, setResolvingTicketId] = useState<string | null>(null);
+  const [ticketActionError, setTicketActionError] = useState<string | null>(null);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["monitor-messages"],
@@ -515,6 +521,23 @@ export default function Observability() {
     if (errors.length) setApprovalActionError(`${errors.length} rejection(s) failed. Others succeeded.`);
     refetchApprovals();
   }, [approvalsData, refetchApprovals]);
+
+  /* ── Mark ticket resolved ─────────────────────────────────────────── */
+  const handleMarkResolved = useCallback(async (ticketId: string, currentStatus: string) => {
+    setResolvingTicketId(ticketId);
+    setTicketActionError(null);
+    try {
+      if (currentStatus.toUpperCase() === "OPEN") {
+        await updateTicket(ticketId, { status: "IN_PROGRESS" });
+      }
+      await updateTicket(ticketId, { status: "RESOLVED" });
+      refetchTickets();
+    } catch (e) {
+      setTicketActionError(e instanceof Error ? e.message : "Failed to update ticket");
+    } finally {
+      setResolvingTicketId(null);
+    }
+  }, [refetchTickets]);
 
   /* ── Select a message and load full detail ─────────────────────────── */
   const handleSelect = useCallback(async (msg: IMonitorMessage) => {
@@ -741,33 +764,36 @@ export default function Observability() {
           className={`${styles.mainTab} ${mainTab === "messages" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("messages")}
         >
-          📨 Messages
+          <SvgIcon name="messages" size={14} style={{ verticalAlign: "middle" }} /> Messages
         </button>
         <button
           className={`${styles.mainTab} ${mainTab === "tickets" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("tickets")}
         >
-          🎫 Tickets ({tickets.length})
+          <SvgIcon name="tickets" size={14} style={{ verticalAlign: "middle" }} /> Tickets ({tickets.length})
         </button>
         <button
           className={`${styles.mainTab} ${mainTab === "approvals" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("approvals")}
         >
-          ✅ Approvals ({approvals.length})
+          <SvgIcon name="approvals" size={14} style={{ verticalAlign: "middle" }} /> Approvals ({approvals.length})
         </button>
         <button
           className={`${styles.mainTab} ${mainTab === "eventmesh" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("eventmesh")}
         >
-          🔀 Event Mesh
+          <SvgIcon name="event-mesh" size={14} style={{ verticalAlign: "middle" }} /> Event Mesh
         </button>
       </div>
 
       {/* ── Error Type Guide ── */}
       <div className={styles.errorGuide}>
         <button className={styles.errorGuideToggle} onClick={() => setGuideOpen((o) => !o)}>
-          <span>📖 Error Type Guide</span>
-          <span className={styles.errorGuideChevron}>{guideOpen ? "▲" : "▼"}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+            <SvgIcon name="document" size={14} />
+            Error Type Guide
+          </span>
+          <span className={styles.errorGuideChevron}><SvgIcon name={guideOpen ? "chevron-down" : "chevron-right"} size={14} /></span>
         </button>
         {guideOpen && (
           <div className={styles.errorGuideBody}>
@@ -776,7 +802,7 @@ export default function Observability() {
               return (
                 <div key={group.key} className={styles.errorGuideGroup}>
                   <div className={styles.errorGuideGroupHeader} style={{ color: group.color, background: group.bg }}>
-                    <span className={styles.errorGuideGroupIcon}>{group.icon}</span>
+                    <span className={styles.errorGuideGroupIcon}><SvgIcon name={group.iconName} size={16} /></span>
                     <span className={styles.errorGuideGroupLabel}>{group.label}</span>
                     <span className={styles.errorGuideGroupDesc}>{group.desc}</span>
                   </div>
@@ -1012,7 +1038,7 @@ export default function Observability() {
                             >
                               {errorExplainLoading
                                 ? <><span className={styles.explainSpinner} /> Analyzing error...</>
-                                : <><span className={styles.explainSparkle}>✦</span> Explain with AI</>
+                                : <><span className={styles.explainSparkle}><SvgIcon name="rca" size={14} /></span> Explain with AI</>
                               }
                             </button>
                           )}
@@ -1037,7 +1063,7 @@ export default function Observability() {
                           <>
                             {/* AI Recommendations header */}
                             <div className={styles.aiHeader}>
-                              <span className={styles.aiIcon}>*</span>
+                              <span className={styles.aiIcon}><SvgIcon name="rca" size={16} /></span>
                               <span className={styles.aiTitle}>AI Recommendations & Suggested Fix</span>
                             </div>
 
@@ -1113,7 +1139,7 @@ export default function Observability() {
                                     disabled={fixPatchLoading}
                                     data-tip="Ask the AI to generate a detailed step-by-step fix plan with XML change instructions"
                                   >
-                                    {fixPatchLoading ? <><span className={styles.btnSpinner} /> Generating...</> : "* Generate Fix Patch"}
+                                    {fixPatchLoading ? <><span className={styles.btnSpinner} /> Generating...</> : <><SvgIcon name="wrench" size={14} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />Generate Fix Patch</>}
                                   </button>
                                 </div>
                               )
@@ -1304,6 +1330,13 @@ export default function Observability() {
             </div>
           )}
           
+          {ticketActionError && (
+            <div className={styles.approvalErrorBanner}>
+              {ticketActionError}
+              <button onClick={() => setTicketActionError(null)} aria-label="Dismiss">✕</button>
+            </div>
+          )}
+
           {ticketsLoading ? (
             <div className={styles.centered}>
               <div className={styles.spinner} />
@@ -1311,7 +1344,7 @@ export default function Observability() {
             </div>
           ) : tickets.length === 0 ? (
             <div className={styles.emptyState}>
-              <span>🎫</span>
+              <span><SvgIcon name="tickets" size={32} /></span>
               <p>No tickets found</p>
             </div>
           ) : (
@@ -1389,6 +1422,20 @@ export default function Observability() {
                   <div className={styles.ticketFooter}>
                     <span>Created: {new Date(ticket.created_at).toLocaleString()}</span>
                     <span>Updated: {new Date(ticket.updated_at).toLocaleString()}</span>
+                    <div className={styles.approvalActions} style={{ marginLeft: "auto" }}>
+                      {(ticket.status || "").toUpperCase() !== "RESOLVED" ? (
+                        <button
+                          className={`${styles.btn} ${styles.btnApprove}`}
+                          disabled={resolvingTicketId === ticket.ticket_id}
+                          onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status)}
+                          title="Mark this ticket as resolved"
+                        >
+                          {resolvingTicketId === ticket.ticket_id ? "Resolving…" : "✓ Mark Resolved"}
+                        </button>
+                      ) : (
+                        <span style={{ color: "#16a34a", fontSize: "0.82rem", fontWeight: 600 }}>✓ Resolved</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1479,7 +1526,7 @@ export default function Observability() {
             </div>
           ) : approvals.length === 0 ? (
             <div className={styles.emptyState}>
-              <span>✅</span>
+              <span><SvgIcon name="check-circle" size={32} /></span>
               <p>No pending approvals</p>
             </div>
           ) : (

@@ -97,6 +97,9 @@ from db.database import (
     get_open_incident_by_signature,
     get_pending_approvals,
     get_escalation_tickets,
+    get_escalation_ticket_by_id,
+    create_escalation_ticket,
+    update_escalation_ticket,
     get_recent_incident_by_group_key,
     get_similar_patterns,
     get_testsuite_log_entries,
@@ -829,11 +832,93 @@ async def list_pending_approvals():
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+_CRITICAL_ERROR_TYPES = frozenset({
+    "SSL_ERROR", "BACKEND_ERROR", "SFTP_ERROR", "DUPLICATE_ERROR",
+    "PAYLOAD_SIZE_ERROR", "IDOC_ERROR", "RESOURCE_ERROR",
+})
+
+
+def _auto_create_ticket(
+    incident: Dict[str, Any],
+    fix_result: Dict[str, Any],
+    fix_status: str,
+    incident_id: str,
+) -> None:
+    """Create an EM_ESCALATION_TICKETS row after a fix failure, idempotently."""
+    try:
+        existing = get_escalation_tickets(incident_id=incident_id, limit=1)
+        if existing:
+            return
+        error_type = (incident.get("error_type") or "UNKNOWN").upper()
+        priority   = "HIGH" if error_type in _CRITICAL_ERROR_TYPES else "MEDIUM"
+        iflow_id   = incident.get("iflow_id") or incident.get("integration_flow_name") or ""
+        description = (
+            f"iFlow: {iflow_id}\n"
+            f"Error: {(incident.get('error_message') or '')[:500]}\n"
+            f"Root cause: {(incident.get('root_cause') or '')[:500]}\n"
+            f"Proposed fix: {(incident.get('proposed_fix') or '')[:500]}\n"
+            f"Fix attempted: {(fix_result.get('summary') or '')[:500]}"
+        )
+        ticket_data: Dict[str, Any] = {
+            "incident_id": incident_id,
+            "iflow_id":    iflow_id,
+            "error_type":  error_type,
+            "title":       f"Fix Failed: {iflow_id} — {error_type}",
+            "description": description,
+            "priority":    priority,
+            "status":      "OPEN",
+            "assigned_to": None,
+            "created_at":  get_hana_timestamp(),
+        }
+        ticket_id = create_escalation_ticket(ticket_data)
+        update_incident(incident_id, {"ticket_id": ticket_id, "auto_escalated": 1, "status": "TICKET_CREATED"})
+        logger.info(
+            "[AutoTicket] Created ticket %s for incident %s (status=%s priority=%s)",
+            ticket_id, incident_id, fix_status, priority,
+        )
+    except Exception as exc:
+        logger.error("[AutoTicket] Failed to create ticket for incident %s: %s", incident_id, exc)
+
+
 @app.get("/autonomous/tickets")
 async def list_escalation_tickets(status: Optional[str] = None, limit: int = 50):
     try:
         tickets = get_escalation_tickets(status=status, limit=limit)
         return {"tickets": tickets}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.patch("/autonomous/tickets/{ticket_id}")
+async def update_ticket_status(ticket_id: str, body: Dict[str, Any]):
+    """Transition ticket status: OPEN → IN_PROGRESS → RESOLVED."""
+    ticket = get_escalation_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    allowed_fields = {"status", "assigned_to", "resolution_notes"}
+    updates = {k: v for k, v in body.items() if k in allowed_fields}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    if "status" in updates:
+        valid_transitions: Dict[str, set] = {
+            "OPEN":        {"IN_PROGRESS"},
+            "IN_PROGRESS": {"RESOLVED", "OPEN"},
+            "RESOLVED":    set(),
+        }
+        current    = (ticket.get("status") or "OPEN").upper()
+        new_status = updates["status"].upper()
+        if new_status not in valid_transitions.get(current, set()):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status transition: {current} → {new_status}",
+            )
+        updates["status"] = new_status
+        if new_status == "RESOLVED":
+            updates["resolved_at"] = get_hana_timestamp()
+    try:
+        update_escalation_ticket(ticket_id, updates)
+        updated = get_escalation_ticket_by_id(ticket_id)
+        return {"ticket": updated}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -1251,6 +1336,7 @@ async def _run_fixer_task(event: Dict[str, Any]) -> None:
                 "[Agents/fixer] Fix not applied for incident=%s (stage=%s) — halting pipeline",
                 incident_id, fix_result.get("failed_stage", ""),
             )
+            _auto_create_ticket(incident, fix_result, fix_status, incident_id)
             return
 
         # Hand off to verifier — publish to verifier queue topic
@@ -1262,6 +1348,9 @@ async def _run_fixer_task(event: Dict[str, Any]) -> None:
         if incident_id:
             try:
                 update_incident(incident_id, {"status": "FIX_FAILED", "error_message": str(exc)[:500]})
+                _inc = get_incident_by_id(incident_id)
+                if _inc:
+                    _auto_create_ticket(_inc, {"summary": str(exc)[:500]}, "FIX_FAILED", incident_id)
             except Exception:
                 pass
 

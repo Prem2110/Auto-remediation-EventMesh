@@ -7,17 +7,18 @@ import {
   stopPipeline,
   fetchPipelineTrace,
 } from "../../services/api.ts";
+import SvgIcon, { type IconName } from "../../components/icons/SvgIcon.tsx";
 import _styles from "./pipeline.module.css";
 // Vite 8 types CSS module values as `unknown`; cast so className={styles.x} compiles.
 const styles = _styles as Record<string, string>;
 
 // ── Agent metadata (5 specialist agents) ─────────────────────────────────────
-const SPECIALIST_AGENTS: Record<string, { emoji: string; label: string; desc: string; tools: string; gradient: string; accent: string }> = {
-  observer:   { emoji:"👁️",  label:"Observer",   desc:"Monitors SAP CPI for failed messages, creates incidents",              tools:"3 local tools", gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
-  classifier: { emoji:"🏷️",  label:"Classifier", desc:"Classifies error type + confidence — rule-based, zero LLM cost",      tools:"3 local + 1 MCP", gradient:"linear-gradient(135deg,#1e1b4b 0%,#7c3aed 100%)", accent:"#a78bfa" },
-  rca:        { emoji:"🧠",  label:"RCA",        desc:"Root cause analysis: vector store + message logs + iFlow inspection", tools:"3 local + 2-3 MCP", gradient:"linear-gradient(135deg,#064e3b 0%,#059669 100%)", accent:"#34d399" },
-  fixer:      { emoji:"🔧",  label:"Fixer",      desc:"Get → validate → update → deploy iFlow with XML safety checks",      tools:"2 local + 6-8 MCP", gradient:"linear-gradient(135deg,#312e81 0%,#6d28d9 100%)", accent:"#c084fc" },
-  verifier:   { emoji:"✅",  label:"Verifier",   desc:"Test fixed iFlow + replay failed messages for end-to-end verification", tools:"1 local + 3-4 MCP", gradient:"linear-gradient(135deg,#4c0519 0%,#be123c 100%)", accent:"#fb7185" },
+const SPECIALIST_AGENTS: Record<string, { icon: IconName; label: string; desc: string; tools: string; gradient: string; accent: string }> = {
+  observer:   { icon:"eye",          label:"Observer",   desc:"Monitors SAP CPI for failed messages, creates incidents",              tools:"3 local tools",    gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
+  classifier: { icon:"tag",          label:"Classifier", desc:"Classifies error type + confidence — rule-based, zero LLM cost",      tools:"3 local + 1 MCP",  gradient:"linear-gradient(135deg,#1e1b4b 0%,#7c3aed 100%)", accent:"#a78bfa" },
+  rca:        { icon:"rca",          label:"RCA",        desc:"Root cause analysis: vector store + message logs + iFlow inspection", tools:"3 local + 2-3 MCP", gradient:"linear-gradient(135deg,#064e3b 0%,#059669 100%)", accent:"#34d399" },
+  fixer:      { icon:"wrench",       label:"Fixer",      desc:"Get → validate → update → deploy iFlow with XML safety checks",      tools:"2 local + 6-8 MCP", gradient:"linear-gradient(135deg,#312e81 0%,#6d28d9 100%)", accent:"#c084fc" },
+  verifier:   { icon:"check-circle", label:"Verifier",   desc:"Test fixed iFlow + replay failed messages for end-to-end verification", tools:"1 local + 3-4 MCP", gradient:"linear-gradient(135deg,#4c0519 0%,#be123c 100%)", accent:"#fb7185" },
 };
 
 const SPECIALIST_ORDER = ["observer", "classifier", "rca", "fixer", "verifier"];
@@ -136,7 +137,7 @@ export default function Pipeline() {
                 style={{ borderColor: isRunning ? meta.accent : "transparent" }}
               >
                 <div className={styles.agentBanner} style={{ background: meta.gradient }}>
-                  <span className={styles.agentEmoji}>{meta.emoji}</span>
+                  <span className={styles.agentEmoji}><SvgIcon name={meta.icon} size={26} style={{ color: meta.accent }} /></span>
                   <span className={`${styles.agentDot} ${isRunning ? styles.dotRunning : styles.dotIdle}`} />
                 </div>
                 <div className={styles.agentInfo}>

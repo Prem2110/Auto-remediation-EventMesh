@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchAemStatus, fetchAemIncidents, fetchMcpTools } from "../../services/api.ts";
 import type { AemStatusResponse, McpToolsStatus } from "../../services/api.ts";
+import SvgIcon, { type IconName } from "../../components/icons/SvgIcon.tsx";
 import styles from "./EventMeshFlow.module.css";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ function isIncident(value: Record<string, unknown>): value is Incident {
 interface LogEntry {
   id: string;
   ts: string;
-  icon: string;
+  icon: IconName;
   iflowName: string;
   stage: string;
   status: string;
@@ -91,25 +92,25 @@ function statusToStage(status: string): string {
   return "observed";
 }
 
-const STATUS_ICON: Partial<Record<string, string>> = {
-  DETECTED:             "📥",
-  CLASSIFIED:           "🔍",
-  RCA_IN_PROGRESS:      "🧠",
-  RCA_COMPLETE:         "🧠",
-  FIX_IN_PROGRESS:      "🔧",
-  FIX_DEPLOYED:         "🔧",
-  AWAITING_APPROVAL:    "⏳",
-  FIX_VERIFIED:         "✅",
-  HUMAN_INITIATED_FIX:  "✅",
-  AUTO_FIXED:           "✅",
-  RETRIED:              "✅",
-  FIX_FAILED:           "❌",
-  FIX_FAILED_UPDATE:    "❌",
-  FIX_FAILED_DEPLOY:    "❌",
-  FIX_FAILED_RUNTIME:   "❌",
-  RCA_FAILED:           "❌",
-  TICKET_CREATED:       "🎫",
-  PIPELINE_ERROR:       "⚠️",
+const STATUS_ICON: Partial<Record<string, IconName>> = {
+  DETECTED:             "inbox",
+  CLASSIFIED:           "search",
+  RCA_IN_PROGRESS:      "rca",
+  RCA_COMPLETE:         "rca",
+  FIX_IN_PROGRESS:      "wrench",
+  FIX_DEPLOYED:         "wrench",
+  AWAITING_APPROVAL:    "user",
+  FIX_VERIFIED:         "check-circle",
+  HUMAN_INITIATED_FIX:  "check-circle",
+  AUTO_FIXED:           "check-circle",
+  RETRIED:              "loop",
+  FIX_FAILED:           "warning",
+  FIX_FAILED_UPDATE:    "warning",
+  FIX_FAILED_DEPLOY:    "warning",
+  FIX_FAILED_RUNTIME:   "warning",
+  RCA_FAILED:           "warning",
+  TICKET_CREATED:       "tickets",
+  PIPELINE_ERROR:       "warning",
 };
 
 const STAGE_CFG: Record<string, { color: string; bg: string; border: string; label: string }> = {
@@ -240,7 +241,8 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
       </div>
       {!aemEnabled && (
         <div className={styles.disconnectedBanner}>
-          ⚠️ Event Mesh is disconnected — the pipeline is not receiving events
+          <SvgIcon name="warning" size={14} style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />
+          Event Mesh is disconnected — the pipeline is not receiving events
         </div>
       )}
       <div className={styles.svgWrapper}>
@@ -476,7 +478,7 @@ function EventLog({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
       <div className={styles.logScroll} ref={scrollRef}>
         {filtered.length === 0 ? (
           <div className={styles.logEmpty}>
-            <span className={styles.logEmptyIcon}>📡</span>
+            <span className={styles.logEmptyIcon}><SvgIcon name="event-mesh" size={24} /></span>
             <span className={styles.logEmptyText}>
               {entries.length === 0 ? "Waiting for events…" : "No entries match filter."}
             </span>
@@ -503,7 +505,7 @@ function EventLog({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
                   onClick={() => setExpanded(isExpanded ? null : entry.id)}
                 >
                   <span className={styles.logTs}>{timeStr}</span>
-                  <span className={styles.logIcon}>{entry.icon}</span>
+                  <span className={styles.logIcon}><SvgIcon name={entry.icon} size={13} /></span>
                   {isEmpty
                     ? <span className={styles.logIflowUnknown}>unknown</span>
                     : <span className={styles.logIflow} title={rawName}>{truncated}</span>
@@ -604,7 +606,7 @@ export default function EventMeshFlow() {
         newEntries.push({
           id:           `${inc.incident_id}-${Date.now()}-new`,
           ts:           new Date().toISOString(),
-          icon:         STATUS_ICON[statusUp] ?? "📥",
+          icon:         STATUS_ICON[statusUp] ?? "inbox",
           iflowName:    inc.iflow_name ?? inc.iflow_id ?? "—",
           stage:        statusToStage(inc.status),
           status:       inc.status,
@@ -617,7 +619,7 @@ export default function EventMeshFlow() {
         newEntries.push({
           id:           `${inc.incident_id}-${Date.now()}-chg`,
           ts:           new Date().toISOString(),
-          icon:         STATUS_ICON[statusUp] ?? "🔄",
+          icon:         STATUS_ICON[statusUp] ?? "refresh",
           iflowName:    inc.iflow_name ?? inc.iflow_id ?? "—",
           stage:        statusToStage(inc.status),
           status:       inc.status,
