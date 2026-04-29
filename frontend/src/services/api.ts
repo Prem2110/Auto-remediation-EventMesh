@@ -319,6 +319,7 @@ export interface PaginatedMessagesResponse {
 export interface AemStatusResponse {
   total_incidents: number;
   messages_retrieved: number;
+  webhook_events_count?: number;
   queue_depth: number;
   stage_counts?: Record<string, number>;
   event_mesh_enabled?: boolean;

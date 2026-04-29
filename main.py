@@ -24,7 +24,9 @@ import logging
 import os
 import sys
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, UTC
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -130,6 +132,30 @@ def _load_webhook_counter() -> int:
         return 0
 
 _webhook_counter: int = _load_webhook_counter()
+
+# ─────────────────────────────────────────────
+# AGENT WEBHOOK ROLLING COUNTER (7-day window, in-memory)
+# ─────────────────────────────────────────────
+_AGENT_WEBHOOK_WINDOW = timedelta(days=7)
+_agent_webhook_ts: deque[datetime] = deque()
+
+
+def _record_agent_webhook() -> None:
+    """Append now to the rolling deque and drop entries older than 7 days."""
+    now = datetime.now(UTC)
+    _agent_webhook_ts.append(now)
+    cutoff = now - _AGENT_WEBHOOK_WINDOW
+    while _agent_webhook_ts and _agent_webhook_ts[0] < cutoff:
+        _agent_webhook_ts.popleft()
+
+
+def _agent_webhook_count() -> int:
+    """Return number of agent webhook hits recorded in the last 7 days."""
+    cutoff = datetime.now(UTC) - _AGENT_WEBHOOK_WINDOW
+    # deque is sorted by insertion time; trim stale from the left then count
+    while _agent_webhook_ts and _agent_webhook_ts[0] < cutoff:
+        _agent_webhook_ts.popleft()
+    return len(_agent_webhook_ts)
 
 
 # ─────────────────────────────────────────────
@@ -864,18 +890,20 @@ async def event_mesh_status():
     """Return SAP Event Mesh connectivity info and pipeline stage counts."""
     queue_name = os.getenv("EVENT_MESH_QUEUE", "cpi/evt/02/autofix/orbit/orchestrator")
 
-    total_incidents = count_all_incidents()
-    stage_counts    = get_stage_counts()
+    total_incidents      = count_all_incidents()
+    stage_counts         = get_stage_counts()
+    webhook_events_count = _agent_webhook_count()
 
     return {
-        "event_mesh_queue":    queue_name,
-        "delivery_mode":       "webhook_push",
-        "webhook_active":      True,
-        "event_mesh_enabled":  True,
-        "messages_retrieved":  _webhook_counter,
-        "queue_depth":         0,
-        "stage_counts":        stage_counts,
-        "total_incidents":     total_incidents,
+        "event_mesh_queue":      queue_name,
+        "delivery_mode":         "webhook_push",
+        "webhook_active":        True,
+        "event_mesh_enabled":    True,
+        "messages_retrieved":    _webhook_counter,
+        "webhook_events_count":  webhook_events_count,
+        "queue_depth":           0,
+        "stage_counts":          stage_counts,
+        "total_incidents":       total_incidents,
     }
 
 
@@ -1047,6 +1075,7 @@ async def agent_orchestrator_webhook(request: Request, event: Dict[str, Any]):
     logger.info(f"[Agents/orchestrator] RAW PAYLOAD: {body_bytes.decode('utf-8', errors='replace')[:500]}")
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    _record_agent_webhook()
     asyncio.create_task(_run_orchestrator_task(event))
     logger.info("[Agents/orchestrator] Webhook received, dispatched")
     return {"status": "accepted"}
@@ -1114,6 +1143,7 @@ async def agent_observer_webhook(event: Dict[str, Any]):
     """
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    _record_agent_webhook()
     asyncio.create_task(_run_observer_task(event))
     logger.info("[Agents/observer] Webhook received incident=%s, dispatched", event.get("incident_id"))
     return {"status": "accepted"}
@@ -1171,6 +1201,7 @@ async def agent_rca_webhook(event: Dict[str, Any]):
     """
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    _record_agent_webhook()
     asyncio.create_task(_run_rca_task(event))
     logger.info("[Agents/rca] Webhook received incident=%s, dispatched", event.get("incident_id"))
     return {"status": "accepted"}
@@ -1243,6 +1274,7 @@ async def agent_fixer_webhook(event: Dict[str, Any]):
     """
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    _record_agent_webhook()
     asyncio.create_task(_run_fixer_task(event))
     logger.info("[Agents/fixer] Webhook received incident=%s, dispatched", event.get("incident_id"))
     return {"status": "accepted"}
@@ -1294,6 +1326,7 @@ async def agent_verifier_webhook(event: Dict[str, Any]):
     """
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    _record_agent_webhook()
     asyncio.create_task(_run_verifier_task(event))
     logger.info("[Agents/verifier] Webhook received incident=%s, dispatched", event.get("incident_id"))
     return {"status": "accepted"}
