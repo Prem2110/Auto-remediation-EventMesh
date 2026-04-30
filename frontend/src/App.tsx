@@ -1,9 +1,9 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import ShellLayout from "./components/layout/shell-layout.tsx";
-import AgentCards from "./pages/agent-cards/agent-cards.tsx";
+// import AgentCards from "./pages/agent-cards/agent-cards.tsx"; // hidden
 import Orchestrator from "./pages/orchestrator/orchestrator.tsx";
 import Observability from "./pages/observability/observability.tsx";
-import TestSuite from "./pages/test-suite/test-suite.tsx";
+// import TestSuite from "./pages/test-suite/test-suite.tsx"; // hidden
 import MigrationWizard from "./pages/migration-wizard/migration-wizard.tsx";
 import PipoList from "./pages/pipo-list/pipo-list.tsx";
 import Dashboard from "./pages/dashboard/dashboard.tsx";
