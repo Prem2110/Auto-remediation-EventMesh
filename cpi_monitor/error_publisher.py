@@ -7,23 +7,20 @@ as a structured payload to the Event Mesh topic cpi/evt/02/autofix/in.
 Publishing path (tried in order):
   1. SAP Destination service — looks up the destination named
      EVENT_MESH_DESTINATION_NAME (default: "EventMesh") to obtain a
-     pre-resolved bearer token and the Event Mesh REST base URL, then
-     POSTs directly to the topic endpoint.  This is the production path
-     when the microservice runs on SAP BTP CloudFoundry.
+     bearer token.  The publish URL comes from AEM_REST_URL env var.
+     This is the production path on SAP BTP CloudFoundry.
   2. event_bus.publish_to_next() — falls back to the in-process AEM event
-     bus (which uses AEM_REST_URL + EVENT_MESH_* env vars) if the Destination
-     service binding is unavailable (local dev, non-CF environments).
+     bus (uses AEM_REST_URL + EVENT_MESH_* env vars) when the Destination
+     service binding is unavailable (local dev / non-CF environments).
 
-Deduplication: a MessageGuid is not re-published within 30 minutes.  The
-dedup store is in-process memory — it resets on restart, which is acceptable
-because the OData query window (10 min) is far shorter than the TTL.
+Deduplication: a MessageGuid is not re-published within 30 minutes.
 """
 
 import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import httpx
@@ -33,26 +30,25 @@ from cpi_monitor.cpi_poller import get_cpi_client, get_destination_service_creds
 
 logger = logging.getLogger(__name__)
 
-_PUBLISH_TOPIC        = "cpi/evt/02/autofix/in"
-_EM_DESTINATION_NAME  = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
-_DEDUP_TTL            = 30 * 60  # 30 minutes in seconds
+_PUBLISH_TOPIC       = "cpi/evt/02/autofix/in"
+_EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
+_AEM_REST_URL        = os.getenv("AEM_REST_URL", "")
+_DEDUP_TTL           = 30 * 60  # 30 minutes in seconds
 
 # MessageGuid → monotonic expiry timestamp
 _published: Dict[str, float] = {}
 
-# Cached Event Mesh Destination resolution (URL + token)
-_em_cache: Dict[str, Any] = {"base_url": None, "token": None, "expires_at": 0.0}
+# Cached bearer token from the EventMesh destination
+_em_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
 
 
 # ── Deduplication ────────────────────────────────────────────────────────────
 
 def _is_duplicate(message_guid: str) -> bool:
-    """Return True if this guid was published within the last 30 minutes."""
     now = time.monotonic()
     expiry = _published.get(message_guid)
     if expiry and now < expiry:
         return True
-    # Opportunistic eviction of expired entries
     stale = [k for k, v in _published.items() if now >= v]
     for k in stale:
         del _published[k]
@@ -63,20 +59,17 @@ def _mark_published(message_guid: str) -> None:
     _published[message_guid] = time.monotonic() + _DEDUP_TTL
 
 
-# ── Event Mesh via SAP Destination ──────────────────────────────────────────
+# ── Bearer token from SAP Destination ────────────────────────────────────────
 
-async def _resolve_event_mesh_destination() -> Optional[Tuple[str, str]]:
+async def _resolve_em_token() -> Optional[str]:
     """
-    Look up the EventMesh SAP Destination via the Destination service and
-    return (base_url, bearer_token).
-
-    The resolved token is cached until 60 s before its expiry to avoid
-    a Destination service round-trip on every publish call.
-    Returns None if the Destination service binding is not present.
+    Look up the EventMesh SAP Destination and return only the bearer token.
+    The publish URL is taken from AEM_REST_URL env var — not from the destination.
+    Token is cached until 60 s before expiry.
     """
     now = time.monotonic()
     if _em_cache["token"] and now < _em_cache["expires_at"] - 60:
-        return _em_cache["base_url"], _em_cache["token"]
+        return _em_cache["token"]
 
     creds = get_destination_service_creds()
     if not creds:
@@ -91,7 +84,7 @@ async def _resolve_event_mesh_destination() -> Optional[Tuple[str, str]]:
         return None
 
     try:
-        # 1. Get a token scoped to the Destination service
+        # 1. Get a token scoped to the Destination service itself
         async with httpx.AsyncClient(timeout=15) as client:
             tok_resp = await client.post(
                 token_url,
@@ -115,43 +108,39 @@ async def _resolve_event_mesh_destination() -> Optional[Tuple[str, str]]:
 
         auth_tokens = dest_data.get("authTokens", [])
         if not auth_tokens:
-            logger.warning(
-                "[CPI_MONITOR] Destination '%s' returned no authTokens — cannot publish",
-                _EM_DESTINATION_NAME,
-            )
+            logger.warning("[CPI_MONITOR] Destination '%s' returned no authTokens", _EM_DESTINATION_NAME)
             return None
 
-        em_token    = auth_tokens[0].get("value", "")
-        em_url      = dest_data.get("destinationConfiguration", {}).get("URL", "")
-        expires_in  = int(auth_tokens[0].get("expires_in", 3600))
+        em_token   = auth_tokens[0].get("value", "")
+        expires_in = int(auth_tokens[0].get("expires_in", 3600))
 
-        if not (em_url and em_token):
-            logger.warning(
-                "[CPI_MONITOR] Destination '%s' missing URL or token value",
-                _EM_DESTINATION_NAME,
-            )
+        if not em_token:
             return None
 
-        _em_cache["base_url"]   = em_url
         _em_cache["token"]      = em_token
         _em_cache["expires_at"] = now + expires_in
-        logger.debug(
-            "[CPI_MONITOR] EventMesh destination resolved: url=%s expires_in=%ds",
-            em_url, expires_in,
-        )
-        return em_url, em_token
+        logger.debug("[CPI_MONITOR] EventMesh token resolved via Destination service, expires_in=%ds", expires_in)
+        return em_token
 
     except Exception as exc:
-        logger.warning("[CPI_MONITOR] EventMesh destination lookup failed: %s", exc)
+        logger.warning("[CPI_MONITOR] EventMesh destination token lookup failed: %s", exc)
         return None
 
 
-async def _publish_via_destination(
-    topic: str, payload: Dict[str, Any], base_url: str, token: str
-) -> None:
-    """POST payload directly to the Event Mesh topic endpoint."""
+# ── Publish to Event Mesh ─────────────────────────────────────────────────────
+
+async def _publish_via_destination(topic: str, payload: Dict[str, Any], token: str) -> None:
+    """
+    POST payload to Event Mesh using:
+      - AEM_REST_URL  as the base publish endpoint
+      - token         from the EventMesh SAP Destination
+    """
+    if not _AEM_REST_URL:
+        raise RuntimeError("AEM_REST_URL is not set — cannot publish via Destination")
+
     encoded_topic = quote(topic, safe="")
-    url = f"{base_url.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+    url = f"{_AEM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
             url,
@@ -163,18 +152,13 @@ async def _publish_via_destination(
             },
         )
     if resp.status_code not in (200, 202, 204):
-        raise RuntimeError(
-            f"Event Mesh publish HTTP {resp.status_code}: {resp.text[:200]}"
-        )
+        raise RuntimeError(f"Event Mesh publish HTTP {resp.status_code}: {resp.text[:200]}")
 
 
-# ── Error detail fetch ───────────────────────────────────────────────────────
+# ── Error detail fetch ────────────────────────────────────────────────────────
 
 async def _fetch_error_detail(message_guid: str, base_url: str, bearer_token: str) -> str:
-    """
-    Fetch the raw error text for a MessageGuid from CPI OData.
-    Returns an empty string on any failure so publishing still proceeds.
-    """
+    """Fetch raw error text for a MessageGuid from CPI OData."""
     url = (
         f"{base_url.rstrip('/')}/api/v1/MessageProcessingLogs('{message_guid}')"
         f"/ErrorInformation/$value"
@@ -183,35 +167,26 @@ async def _fetch_error_detail(message_guid: str, base_url: str, bearer_token: st
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 url,
-                headers={
-                    "Authorization": f"Bearer {bearer_token}",
-                    "Accept":        "text/plain",
-                },
+                headers={"Authorization": f"Bearer {bearer_token}", "Accept": "text/plain"},
             )
         if resp.status_code == 200:
             return resp.text.strip()
-        logger.warning(
-            "[CPI_MONITOR] ErrorInformation HTTP %d for MessageGuid=%s",
-            resp.status_code, message_guid,
-        )
+        logger.warning("[CPI_MONITOR] ErrorInformation HTTP %d for %s", resp.status_code, message_guid)
     except Exception as exc:
-        logger.warning(
-            "[CPI_MONITOR] ErrorInformation fetch failed for MessageGuid=%s: %s",
-            message_guid, exc,
-        )
+        logger.warning("[CPI_MONITOR] ErrorInformation fetch failed for %s: %s", message_guid, exc)
     return ""
 
 
-# ── Main entry point ─────────────────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
     """
-    For each FAILED message: fetch CPI error details, build the payload,
-    then publish to the Event Mesh topic cpi/evt/02/autofix/in.
+    For each FAILED message: fetch CPI error details, build payload, publish
+    to Event Mesh topic cpi/evt/02/autofix/in.
 
-    Publishing tries the SAP Destination service ('EventMesh' destination)
-    first; falls back to event_bus.publish_to_next() if the binding is absent.
-    Silently skips duplicates.  Never raises.
+    Uses SAP Destination for the bearer token + AEM_REST_URL for the endpoint.
+    Falls back to event_bus.publish_to_next() if Destination is unavailable.
+    Skips duplicates. Never raises.
     """
     if not messages:
         return
@@ -220,20 +195,18 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
     try:
         cpi = await get_cpi_client()
         if cpi is None:
-            logger.error("[CPI_MONITOR] Cannot resolve CPI credentials — error fetch skipped")
+            logger.error("[CPI_MONITOR] No CPI credentials — error fetch skipped")
             return
         cpi_base_url, cpi_token = cpi
     except Exception as exc:
-        logger.error("[CPI_MONITOR] CPI auth resolution failed in error_publisher: %s", exc)
+        logger.error("[CPI_MONITOR] CPI auth failed: %s", exc)
         return
 
-    # Resolve Event Mesh publishing credentials once for the whole batch
-    em_client = await _resolve_event_mesh_destination()
-    if em_client:
-        em_base_url, em_token = em_client
-        logger.debug("[CPI_MONITOR] Publishing via SAP Destination '%s'", _EM_DESTINATION_NAME)
+    # Resolve Event Mesh bearer token once for the whole batch
+    em_token = await _resolve_em_token()
+    if em_token:
+        logger.debug("[CPI_MONITOR] Publishing via SAP Destination '%s' + AEM_REST_URL", _EM_DESTINATION_NAME)
     else:
-        em_base_url = em_token = None
         logger.debug("[CPI_MONITOR] SAP Destination unavailable — falling back to event_bus")
 
     for msg in messages:
@@ -259,18 +232,13 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
                 "ErrorMessage":        error_text,
             }
 
-            if em_base_url and em_token:
-                await _publish_via_destination(_PUBLISH_TOPIC, payload, em_base_url, em_token)
+            if em_token:
+                await _publish_via_destination(_PUBLISH_TOPIC, payload, em_token)
             else:
                 await event_bus.publish_to_next(_PUBLISH_TOPIC, payload)
 
             _mark_published(guid)
-            logger.info(
-                "[CPI_MONITOR] Published MessageGuid=%s iflow=%s",
-                guid, iflow,
-            )
+            logger.info("[CPI_MONITOR] Published MessageGuid=%s iflow=%s", guid, iflow)
+
         except Exception as exc:
-            logger.error(
-                "[CPI_MONITOR] Failed to publish MessageGuid=%s: %s",
-                guid, exc,
-            )
+            logger.error("[CPI_MONITOR] Failed to publish MessageGuid=%s: %s", guid, exc)

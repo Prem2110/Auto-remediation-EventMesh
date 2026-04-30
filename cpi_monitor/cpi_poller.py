@@ -102,7 +102,6 @@ async def _fetch_failed_messages(base_url: str, bearer_token: str) -> List[Dict[
         "$filter":  (
             f"Status eq 'FAILED' "
             f"and LogEnd ge datetime'{from_time}' "
-            f"and IntegrationFlowName ne 'FailedLogs_capturing_EM_Topic_Based'"
         ),
         "$orderby": "LogEnd desc",
         "$format":  "json",

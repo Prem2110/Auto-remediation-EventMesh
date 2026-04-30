@@ -219,15 +219,18 @@ export default function Dashboard() {
         >
           Overview
         </button>
-        <button
-          className={`${styles.tabNavBtn} ${activeTab === "tickets" ? styles.tabNavBtnActive : ""}`}
-          onClick={() => setActiveTab("tickets")}
-        >
-          Tickets
-          {openTickets.length > 0 && (
-            <span className={styles.tabBadge}>{openTickets.length}</span>
-          )}
-        </button>
+        {/* Tickets tab — hidden */}
+        {false && (
+          <button
+            className={`${styles.tabNavBtn} ${activeTab === "tickets" ? styles.tabNavBtnActive : ""}`}
+            onClick={() => setActiveTab("tickets")}
+          >
+            Tickets
+            {openTickets.length > 0 && (
+              <span className={styles.tabBadge}>{openTickets.length}</span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* ══ OVERVIEW TAB ══ */}
@@ -448,8 +451,8 @@ export default function Dashboard() {
 
       </div>{/* end overview tab */}
 
-      {/* ══ TICKETS TAB ══ */}
-      {activeTab === "tickets" && (
+      {/* ══ TICKETS TAB ══ — hidden */}
+      {false && activeTab === "tickets" && (
         <div className={styles.tableBlock}>
           <div className={styles.ticketsTabHeader}>
             <SectionTitle title={`Escalation Tickets (${tickets.length})`} />

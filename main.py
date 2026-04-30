@@ -1571,7 +1571,7 @@ async def cpi_monitor_status():
         },
         "event_mesh_publish": {
             "destination_name":    _EM_DESTINATION_NAME,
-            "cached_base_url":     _em_cache.get("base_url") or "not resolved yet",
+            "publish_url":         os.getenv("AEM_REST_URL", "NOT SET"),
             "cached_token":        "present" if _em_cache.get("token") else "not resolved yet",
         },
         "dedup_cache": {

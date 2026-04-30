@@ -16,9 +16,9 @@ const MOCK_USER: IUser = {
 
 const NAV_ITEMS: { key: string; label: string; icon: IconName }[] = [
   { key: "/dashboard",     label: "Dashboard",     icon: "dashboard"     },
-  { key: "/agents",        label: "Agent Cards",   icon: "agents"        },
+  // { key: "/agents",        label: "Agent Cards",   icon: "agents"        },  // hidden
   { key: "/orchestrator",  label: "Orchestrator",  icon: "orchestrator"  },
-  { key: "/test-suite",    label: "Test Suite",    icon: "test-suite"    },
+  // { key: "/test-suite",    label: "Test Suite",    icon: "test-suite"    },  // hidden
   { key: "/observability", label: "Observability", icon: "observability" },
   { key: "/pipeline",      label: "Pipeline",      icon: "pipeline"      },
 ];
@@ -112,36 +112,41 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
             </div>
           ))}
 
-          <hr className={styles.navDivider} />
+          {/* <hr className={styles.navDivider} /> */}{/* hidden — History section */}
 
-          {/* History */}
-          <div
-            className={styles.navItem}
-            onClick={() => !collapsed && setHistoryOpen((o) => !o)}
-            title={collapsed ? "History" : undefined}
-          >
-            <span className={styles.navIcon}><SvgIcon name="history" size={17} /></span>
-            <span className={styles.navText}>
-              History {!collapsed && <SvgIcon name={historyOpen ? "chevron-down" : "chevron-right"} size={13} style={{ marginLeft: 2 }} />}
-            </span>
-          </div>
-
-          {historyOpen && !collapsed &&
-            history.map((entry) => (
+          {/* History — hidden */}
+          {false && (
+            <>
+              <hr className={styles.navDivider} />
               <div
-                key={entry.id}
-                className={`${styles.navSubItem} ${
-                  location.pathname === `/orchestrator/${entry.id}` ? styles.navSubItemActive : ""
-                }`}
-                onClick={() => navigate(`/orchestrator/${entry.id}`)}
-                title={entry.header}
+                className={styles.navItem}
+                onClick={() => !collapsed && setHistoryOpen((o) => !o)}
+                title={collapsed ? "History" : undefined}
               >
-                <span className={styles.historyDot} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {entry.header || entry.id}
+                <span className={styles.navIcon}><SvgIcon name="history" size={17} /></span>
+                <span className={styles.navText}>
+                  History {!collapsed && <SvgIcon name={historyOpen ? "chevron-down" : "chevron-right"} size={13} style={{ marginLeft: 2 }} />}
                 </span>
               </div>
-            ))}
+
+              {historyOpen && !collapsed &&
+                history.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className={`${styles.navSubItem} ${
+                      location.pathname === `/orchestrator/${entry.id}` ? styles.navSubItemActive : ""
+                    }`}
+                    onClick={() => navigate(`/orchestrator/${entry.id}`)}
+                    title={entry.header}
+                  >
+                    <span className={styles.historyDot} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {entry.header || entry.id}
+                    </span>
+                  </div>
+                ))}
+            </>
+          )}
         </aside>
 
         {/* ── Main content ── */}
