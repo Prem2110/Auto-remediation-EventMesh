@@ -18,9 +18,7 @@ Topic layout:
 Configuration (all via .env):
   AEM_ENABLED=false              — master switch; false = in-memory fallback only
   AEM_REST_URL                   — SAP Event Mesh REST Delivery Endpoint base URL
-  EVENT_MESH_TOKEN_URL           — OAuth2 token endpoint URL
-  EVENT_MESH_CLIENT_ID           — OAuth2 client ID
-  EVENT_MESH_CLIENT_SECRET       — OAuth2 client secret
+  EVENT_MESH_DESTINATION_NAME    — SAP BTP Destination name for EventMesh (default: "EventMesh")
 
 Exports:
   AEMEventBus
@@ -34,52 +32,79 @@ import json
 import logging
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List
 from urllib.parse import quote
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-_AEM_ENABLED              = os.getenv("AEM_ENABLED", "false").lower() == "true"
-_AEM_REST_URL             = os.getenv("AEM_REST_URL", "")
-_EVENT_MESH_TOKEN_URL     = os.getenv("EVENT_MESH_TOKEN_URL", "")
-_EVENT_MESH_CLIENT_ID     = os.getenv("EVENT_MESH_CLIENT_ID", "")
-_EVENT_MESH_CLIENT_SECRET = os.getenv("EVENT_MESH_CLIENT_SECRET", "")
+_AEM_ENABLED         = os.getenv("AEM_ENABLED", "false").lower() == "true"
+_AEM_REST_URL        = os.getenv("AEM_REST_URL", "")
+_EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
 
 # Module-level token cache shared across all AEMEventBus instances
 _token_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
 
 
-async def _fetch_oauth_token() -> Tuple[str, int]:
-    """Obtain a fresh client-credentials token from EVENT_MESH_TOKEN_URL."""
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            _EVENT_MESH_TOKEN_URL,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": _EVENT_MESH_CLIENT_ID,
-                "client_secret": _EVENT_MESH_CLIENT_SECRET,
-            },
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"OAuth token fetch failed: HTTP {resp.status_code} — {resp.text[:200]}"
-        )
-    body = resp.json()
-    return body["access_token"], int(body.get("expires_in", 3600))
-
-
 async def _get_bearer_token() -> str:
-    """Return a cached bearer token, refreshing 60 s before expiry."""
+    """
+    Return a cached EventMesh bearer token resolved via the SAP Destination service.
+    Refreshes 60 s before expiry.  Raises RuntimeError if the token cannot be obtained.
+    """
     now = time.monotonic()
     if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
         return _token_cache["token"]
-    token, expires_in = await _fetch_oauth_token()
-    _token_cache["token"] = token
+
+    from cpi_monitor.cpi_poller import get_destination_service_creds
+    creds = get_destination_service_creds()
+    if not creds:
+        raise RuntimeError("[EventMesh] SAP Destination service binding not found in VCAP_SERVICES")
+
+    dest_uri   = creds.get("uri", "")
+    token_url  = creds.get("url", "").rstrip("/") + "/oauth/token"
+    client_id  = creds.get("clientid", "")
+    client_sec = creds.get("clientsecret", "")
+
+    if not (dest_uri and client_id and client_sec):
+        raise RuntimeError("[EventMesh] Incomplete SAP Destination service credentials in VCAP_SERVICES")
+
+    # 1. Obtain a token scoped to the Destination service itself
+    async with httpx.AsyncClient(timeout=15) as client:
+        tok_resp = await client.post(
+            token_url,
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     client_id,
+                "client_secret": client_sec,
+            },
+        )
+    tok_resp.raise_for_status()
+    dest_token = tok_resp.json()["access_token"]
+
+    # 2. Fetch the named EventMesh destination to get the EventMesh bearer token
+    async with httpx.AsyncClient(timeout=10) as client:
+        dest_resp = await client.get(
+            f"{dest_uri.rstrip('/')}/destination-configuration/v1/destinations/{_EM_DESTINATION_NAME}",
+            headers={"Authorization": f"Bearer {dest_token}"},
+        )
+    dest_resp.raise_for_status()
+    dest_data = dest_resp.json()
+
+    auth_tokens = dest_data.get("authTokens", [])
+    if not auth_tokens:
+        raise RuntimeError(f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' returned no authTokens")
+
+    em_token   = auth_tokens[0].get("value", "")
+    expires_in = int(auth_tokens[0].get("expires_in", 3600))
+
+    if not em_token:
+        raise RuntimeError(f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' authToken value is empty")
+
+    _token_cache["token"]      = em_token
     _token_cache["expires_at"] = now + expires_in
-    logger.debug("[EventMesh] OAuth token refreshed, expires in %ds", expires_in)
-    return token
+    logger.debug("[EventMesh] Bearer token resolved via Destination '%s', expires_in=%ds", _EM_DESTINATION_NAME, expires_in)
+    return em_token
 
 # Known pipeline stages in order
 PIPELINE_STAGES = ("observed", "classified", "rca", "fix", "verified")
