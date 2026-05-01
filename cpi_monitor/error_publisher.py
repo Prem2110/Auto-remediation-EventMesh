@@ -2,7 +2,7 @@
 cpi_monitor/error_publisher.py
 ===============================
 Fetches per-message error details from CPI and publishes each failed message
-as a structured payload to the Event Mesh topic cpi/evt/02/autofix/in.
+as a structured payload to the Event Mesh topic default/sierra.automation/1/autofix/in.
 
 Publishing path (tried in order):
   1. SAP Destination service — looks up the destination named
@@ -30,7 +30,7 @@ from cpi_monitor.cpi_poller import get_cpi_client, get_destination_service_creds
 
 logger = logging.getLogger(__name__)
 
-_PUBLISH_TOPIC       = "cpi/evt/02/autofix/in"
+_PUBLISH_TOPIC       = "default/sierra.automation/1/autofix/in"
 _EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
 _AEM_REST_URL        = os.getenv("AEM_REST_URL", "")
 _DEDUP_TTL           = 30 * 60  # 30 minutes in seconds
@@ -182,7 +182,7 @@ async def _fetch_error_detail(message_guid: str, base_url: str, bearer_token: st
 async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
     """
     For each FAILED message: fetch CPI error details, build payload, publish
-    to Event Mesh topic cpi/evt/02/autofix/in.
+    to Event Mesh topic default/sierra.automation/1/autofix/in.
 
     Uses SAP Destination for the bearer token + AEM_REST_URL for the endpoint.
     Falls back to event_bus.publish_to_next() if Destination is unavailable.

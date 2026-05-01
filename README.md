@@ -77,7 +77,7 @@ writing the final outcome to the database.
 │  Fetch ErrorInformation/$value for each GUID                    │
 │                │                                                │
 │                ▼                                                │
-│  POST to Event Mesh topic: cpi/evt/02/autofix/in                │
+│  POST to Event Mesh topic: default/sierra.automation/1/autofix/in                │
 │        (auth: EventMesh SAP BTP Destination)                    │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
@@ -85,11 +85,11 @@ writing the final outcome to the database.
 │  PATH B — Direct SAP Event Mesh webhook (legacy / external)     │
 │                                                                 │
 │  CPI iFlow or external system publishes directly to             │
-│  topic: cpi/evt/02/autofix/in                                   │
+│  topic: default/sierra.automation/1/autofix/in                                   │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼ SAP Event Mesh delivers to queue
-                           │ cpi/evt/02/autofix/orbit/orchestrator
+                           │ default/sierra.automation/1/autofix/orbit/orchestrator
                            │ webhook push
                            ▼
 ```
@@ -105,20 +105,20 @@ POST /agents/orchestrator
   • Dedup check (signature + burst window)
   • Create incident in DB  →  status: CLASSIFIED
         │
-        │  publish_to_next → cpi/evt/02/autofix/agent/orbit/observer
+        │  publish_to_next → default/sierra.automation/1/autofix/orbit/observer
         ▼
 POST /agents/observer
   • Fetch OData metadata (sender, receiver, log timestamps)
   • Enrich incident in DB  →  status: OBSERVED
         │
-        │  publish_to_next → cpi/evt/02/autofix/agent/orbit/rca
+        │  publish_to_next → default/sierra.automation/1/autofix/orbit/rca
         ▼
 POST /agents/rca
   • Run LLM root cause analysis (reads iFlow XML via MCP)
   • Update DB: root_cause, proposed_fix, rca_confidence
   • status: RCA_IN_PROGRESS → RCA_COMPLETE
         │
-        │  publish_to_next → cpi/evt/02/autofix/agent/orbit/fixer
+        │  publish_to_next → default/sierra.automation/1/autofix/orbit/fixer
         ▼
 POST /agents/fixer
   • Apply fix: get-iflow → update-iflow → deploy-iflow (via MCP)
@@ -126,7 +126,7 @@ POST /agents/fixer
   • status: FIX_IN_PROGRESS → FIX_DEPLOYED
   • Halt pipeline on failure — does NOT publish to verifier
         │
-        │  publish_to_next → cpi/evt/02/autofix/agent/orbit/verifier
+        │  publish_to_next → default/sierra.automation/1/autofix/orbit/verifier
         ▼
 POST /agents/verifier
   • Check iFlow runtime status
@@ -183,7 +183,7 @@ Startup → asyncio.create_task(_run_cpi_monitor())
               "LogEnd":              "<timestamp>",
               "ErrorMessage":        "<raw error text>"
             }
-          • POST to topic cpi/evt/02/autofix/in
+          • POST to topic default/sierra.automation/1/autofix/in
             via EventMesh SAP BTP Destination (bearer token resolved at runtime)
             fallback → event_bus.publish_to_next() (uses AEM_REST_URL env vars)
 ```
@@ -251,7 +251,7 @@ The microservice looks this destination up at runtime via the SAP Destination se
   - Apply signature dedup — if same iFlow + error type is already open, increment occurrence count and stop
   - Apply burst dedup — absorb rapid repeat events within `BURST_DEDUP_WINDOW_SECONDS`
   - Create a new incident record in HANA with status `CLASSIFIED`
-- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/observer`
+- **Publishes to:** `default/sierra.automation/1/autofix/orbit/observer`
 - **On failure:** Logs error; no incident is written to DB
 
 ### Stage 2 — Observer (`/agents/observer`)
@@ -262,7 +262,7 @@ The microservice looks this destination up at runtime via the SAP Destination se
   - Call SAP CPI OData `MessageProcessingLogs('<guid>')` API
   - Enrich incident with: `iflow_id`, `sender`, `receiver`, `log_start`, `log_end`
   - Update DB status to `OBSERVED`
-- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/rca`
+- **Publishes to:** `default/sierra.automation/1/autofix/orbit/rca`
 - **On failure:** Sets status `OBS_FAILED`
 
 ### Stage 3 — RCA Agent (`/agents/rca`)
@@ -274,7 +274,7 @@ The microservice looks this destination up at runtime via the SAP Destination se
   - Read the iFlow XML and CPI message logs to determine root cause
   - Update DB: `root_cause`, `proposed_fix`, `rca_confidence`, `affected_component`
   - Status progression: `RCA_IN_PROGRESS` → `RCA_COMPLETE`
-- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/fixer`
+- **Publishes to:** `default/sierra.automation/1/autofix/orbit/fixer`
 - **On failure:** Sets status `RCA_FAILED`
 
 ### Stage 4 — Fixer Agent (`/agents/fixer`)
@@ -286,7 +286,7 @@ The microservice looks this destination up at runtime via the SAP Destination se
   - Evaluate outcome: `fix_applied AND deploy_success`
   - Update DB: `fix_summary`, `fix_applied`, `status`
   - Only publish to verifier if fix was successfully applied and deployed; otherwise halt
-- **Publishes to:** `cpi/evt/02/autofix/agent/orbit/verifier` (success only)
+- **Publishes to:** `default/sierra.automation/1/autofix/orbit/verifier` (success only)
 - **On failure:** Sets status `FIX_FAILED`
 
 ### Stage 5 — Verifier Agent (`/agents/verifier`) — Terminal
@@ -311,11 +311,11 @@ Create the following 5 queues in your SAP Event Mesh service instance:
 
 | Queue Name | Topic Subscription | Purpose |
 |---|---|---|
-| `cpi/evt/02/autofix/orbit/orchestrator` | `cpi/evt/02/autofix/in` | Receives raw iFlow error events (from CPI Monitor or legacy iFlow) |
-| `cpi/evt/02/autofix/orbit/observer` | `cpi/evt/02/autofix/agent/orbit/observer` | Receives classified incidents for enrichment |
-| `cpi/evt/02/autofix/orbit/rca` | `cpi/evt/02/autofix/agent/orbit/rca` | Receives enriched incidents for RCA |
-| `cpi/evt/02/autofix/orbit/fixer` | `cpi/evt/02/autofix/agent/orbit/fixer` | Receives RCA-complete incidents for fix |
-| `cpi/evt/02/autofix/orbit/verifier` | `cpi/evt/02/autofix/agent/orbit/verifier` | Receives deployed fixes for verification |
+| `default/sierra.automation/1/autofix/orbit/orchestrator` | `default/sierra.automation/1/autofix/in` | Receives raw iFlow error events (from CPI Monitor or legacy iFlow) |
+| `default/sierra.automation/1/autofix/orbit/observer` | `default/sierra.automation/1/autofix/orbit/observer` | Receives classified incidents for enrichment |
+| `default/sierra.automation/1/autofix/orbit/rca` | `default/sierra.automation/1/autofix/orbit/rca` | Receives enriched incidents for RCA |
+| `default/sierra.automation/1/autofix/orbit/fixer` | `default/sierra.automation/1/autofix/orbit/fixer` | Receives RCA-complete incidents for fix |
+| `default/sierra.automation/1/autofix/orbit/verifier` | `default/sierra.automation/1/autofix/orbit/verifier` | Receives deployed fixes for verification |
 
 Recommended queue settings: **Access type: Exclusive**, **Message retention: 7 days**
 
@@ -325,17 +325,17 @@ Create one REST delivery webhook per queue:
 
 | Subscription Name | Source Queue | Webhook URL |
 |---|---|---|
-| `orbit-orchestrator` | `cpi/evt/02/autofix/orbit/orchestrator` | `https://<backend-url>/agents/orchestrator` |
-| `orbit-observer` | `cpi/evt/02/autofix/orbit/observer` | `https://<backend-url>/agents/observer` |
-| `orbit-rca` | `cpi/evt/02/autofix/orbit/rca` | `https://<backend-url>/agents/rca` |
-| `orbit-fixer` | `cpi/evt/02/autofix/orbit/fixer` | `https://<backend-url>/agents/fixer` |
-| `orbit-verifier` | `cpi/evt/02/autofix/orbit/verifier` | `https://<backend-url>/agents/verifier` |
+| `orbit-orchestrator` | `default/sierra.automation/1/autofix/orbit/orchestrator` | `https://<backend-url>/agents/orchestrator` |
+| `orbit-observer` | `default/sierra.automation/1/autofix/orbit/observer` | `https://<backend-url>/agents/observer` |
+| `orbit-rca` | `default/sierra.automation/1/autofix/orbit/rca` | `https://<backend-url>/agents/rca` |
+| `orbit-fixer` | `default/sierra.automation/1/autofix/orbit/fixer` | `https://<backend-url>/agents/fixer` |
+| `orbit-verifier` | `default/sierra.automation/1/autofix/orbit/verifier` | `https://<backend-url>/agents/verifier` |
 
 Webhook settings: **Content-Type: application/json**, **Method: POST**
 
 ### Inbound Topic
 
-The `cpi/evt/02/autofix/in` topic receives error events from two sources:
+The `default/sierra.automation/1/autofix/in` topic receives error events from two sources:
 
 | Source | Description |
 |---|---|
@@ -442,8 +442,8 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `EVENT_MESH_TOKEN_URL` | — | OAuth2 token endpoint |
 | `EVENT_MESH_CLIENT_ID` | — | OAuth2 client ID |
 | `EVENT_MESH_CLIENT_SECRET` | — | OAuth2 client secret |
-| `EVENT_MESH_QUEUE` | `cpi/evt/02/autofix` | Inbound queue name |
-| `AEM_OBSERVER_QUEUE` | `cpi/evt/02/autofix` | Observer queue alias |
+| `EVENT_MESH_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Inbound queue name |
+| `AEM_OBSERVER_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Observer queue alias |
 | `EVENT_MESH_AMQP_HOST` | — | AMQP host (legacy iFlow adapter only) |
 | `EVENT_MESH_AMQP_PORT` | `443` | AMQP port |
 | `EVENT_MESH_AMQP_PATH` | `/protocols/amqp10ws` | AMQP WebSocket path |

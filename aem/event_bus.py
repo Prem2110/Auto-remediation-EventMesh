@@ -9,11 +9,11 @@ bus falls back to in-process direct calls (the current behaviour is fully
 preserved).
 
 Topic layout:
-  cpi/evt/02/autofix/agent/orbit/observed/{incident_id}
-  cpi/evt/02/autofix/agent/orbit/classified/{incident_id}
-  cpi/evt/02/autofix/agent/orbit/rca/{incident_id}
-  cpi/evt/02/autofix/agent/orbit/fix/{incident_id}
-  cpi/evt/02/autofix/agent/orbit/verified/{incident_id}
+  default/sierra.automation/1/autofix/orbit/observed/{incident_id}
+  default/sierra.automation/1/autofix/orbit/classified/{incident_id}
+  default/sierra.automation/1/autofix/orbit/rca/{incident_id}
+  default/sierra.automation/1/autofix/orbit/fix/{incident_id}
+  default/sierra.automation/1/autofix/orbit/verified/{incident_id}
 
 Configuration (all via .env):
   AEM_ENABLED=false              — master switch; false = in-memory fallback only
@@ -183,7 +183,7 @@ class AEMEventBus:
 
     def make_topic(self, stage: str, incident_id: str = "") -> str:
         """Build the canonical topic string for a pipeline stage."""
-        base = f"cpi/evt/02/autofix/agent/orbit/{stage}"
+        base = f"default/sierra.automation/1/autofix/orbit/{stage}"
         return f"{base}/{incident_id}" if incident_id else base
 
     async def publish_to_next(self, topic: str, payload: Dict[str, Any]) -> None:

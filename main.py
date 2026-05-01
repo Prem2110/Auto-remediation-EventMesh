@@ -169,7 +169,7 @@ async def _run_cpi_monitor() -> None:
     """
     Background polling loop: query CPI for FAILED messages every
     CPI_POLL_INTERVAL_SECONDS (default 600) and publish each new failure
-    to the Event Mesh topic cpi/evt/02/autofix/in.
+    to the Event Mesh topic default/sierra.automation/1/autofix/in.
 
     All errors are caught and logged — this loop must never crash the app.
     """
@@ -1005,7 +1005,7 @@ async def inject_test_incident(background_tasks: BackgroundTasks):
 @app.get("/aem/status")
 async def event_mesh_status():
     """Return SAP Event Mesh connectivity info and pipeline stage counts."""
-    queue_name = os.getenv("EVENT_MESH_QUEUE", "cpi/evt/02/autofix/orbit/orchestrator")
+    queue_name = os.getenv("EVENT_MESH_QUEUE", "default/sierra.automation/1/autofix/orbit/orchestrator")
 
     total_incidents      = count_all_incidents()
     stage_counts         = get_stage_counts()
@@ -1034,7 +1034,7 @@ async def event_mesh_webhook(event: Dict[str, Any]):
     """
     SAP Event Mesh webhook push endpoint.
 
-    SAP Event Mesh posts messages from queue cpi/evt/02/autofix/orbit/orchestrator
+    SAP Event Mesh posts messages from queue default/sierra.automation/1/autofix/orbit/orchestrator
     here via HTTPS POST.  The body is JSON — the multimap envelope produced
     by the iFlow's XML-to-JSON converter step.
 
