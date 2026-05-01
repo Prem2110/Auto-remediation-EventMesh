@@ -261,7 +261,7 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_init_background())
     asyncio.create_task(_run_cpi_monitor())
-    logger.info("[CPI_MONITOR] Poller started, interval=10min")
+    logger.info("[CPI_MONITOR] Poller started, interval=%ds", int(os.getenv("CPI_POLL_INTERVAL_SECONDS", "600")))
     logger.info("[Startup] FastAPI ready — agents initialising in background.")
     logger.info("[Startup] Event-driven mode active — waiting for SAP Event Mesh webhooks")
     yield
@@ -1451,6 +1451,16 @@ async def agent_verifier_webhook(event: Dict[str, Any]):
     asyncio.create_task(_run_verifier_task(event))
     logger.info("[Agents/verifier] Webhook received incident=%s, dispatched", event.get("incident_id"))
     return {"status": "accepted"}
+
+
+@app.options("/agents/{agent_name}")
+async def agents_options_preflight(agent_name: str):
+    """
+    Handles OPTIONS preflight from SAP Event Mesh webhook subscription validation.
+    CORS middleware only intercepts requests that carry an Origin header; AEM sends
+    plain OPTIONS without one, so a dedicated handler is required.
+    """
+    return JSONResponse(status_code=200, content={"status": "ok"})
 
 
 # ─────────────────────────────────────────────

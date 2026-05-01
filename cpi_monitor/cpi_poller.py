@@ -23,6 +23,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = int(os.getenv("CPI_POLL_INTERVAL_SECONDS", "600"))
+logger.info("[CPI_MONITOR] Poll interval set to %ds", _POLL_INTERVAL)
 
 # CPI credentials — prefer SAP_HUB_* (plain base URL, no /api/v1 suffix).
 # API_BASE_URL includes /api/v1, so strip it to keep URL construction uniform.
