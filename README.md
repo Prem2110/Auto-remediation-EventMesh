@@ -2,9 +2,9 @@
 
 An event-driven, multi-agent system that automatically detects, diagnoses, and fixes
 errors in SAP Integration Suite (CPI) iFlows. When a CPI iFlow fails, the system
-detects the failure (via a background poller or a direct SAP Event Mesh webhook),
-runs root cause analysis using an LLM, applies a fix to the iFlow XML, redeploys it,
-and verifies the fix — all without human intervention.
+detects the failure via a background Python microservice, runs root cause analysis
+using an LLM, applies a fix to the iFlow XML, redeploys it, and verifies the fix —
+all without human intervention.
 
 ---
 
@@ -21,6 +21,7 @@ and verifies the fix — all without human intervention.
 9. [Deployment (Cloud Foundry)](#9-deployment-cloud-foundry)
 10. [Database](#10-database)
 11. [Frontend](#11-frontend)
+12. [What's New](#12-whats-new)
 
 ---
 
@@ -29,14 +30,15 @@ and verifies the fix — all without human intervention.
 **What it does:**
 
 SAP CPI iFlows occasionally fail due to mapping errors, missing fields, endpoint
-timeouts, or schema mismatches. Orbit monitors these failures in real time using two
-complementary paths:
+timeouts, or schema mismatches. Orbit monitors these failures in real time:
 
-- **CPI Monitor** — a background microservice poller (replaces the old error-capturing
-  iFlow) that queries CPI OData every 10 minutes for `FAILED` messages and publishes
-  them to Event Mesh via the `EventMesh` SAP BTP Destination.
-- **Event Mesh webhook** — SAP Event Mesh pushes the published event to the
-  orchestrator webhook, triggering the 5-stage agent pipeline.
+- **CPI Monitor** — a background Python microservice (replaces the old error-capturing
+  iFlow) that queries CPI OData every `CPI_POLL_INTERVAL_SECONDS` (default 600 s) for
+  `FAILED` messages and publishes them to Event Mesh using the `EventMesh` SAP BTP
+  Destination. No hardcoded OAuth credentials — all auth goes through the SAP Destination
+  service binding.
+- **SAP Event Mesh** — routes the published event to the orchestrator webhook, triggering
+  the 5-stage AI agent pipeline.
 
 The pipeline determines the root cause using an LLM, edits the iFlow XML to apply the
 fix, deploys the updated iFlow back to SAP Integration Suite, and verifies it works —
@@ -48,11 +50,11 @@ writing the final outcome to the database.
 |---|---|
 | API framework | FastAPI + Uvicorn |
 | Agent orchestration | LangChain (tool-calling agents) |
-| LLM | SAP AI Core — GPT-5 / Claude Sonnet via OpenAI-compatible API |
+| LLM | SAP AI Core — GPT-4 / Claude Sonnet via OpenAI-compatible API |
 | MCP tool protocol | fastmcp `>=2.14.5`, langchain-mcp-adapters |
-| Event bus | SAP Event Mesh (REST publishing, OAuth2, x-qos 0/1) |
+| Event bus | SAP Event Mesh (`em_automation`, namespace `default/sierra.automation/1`) |
 | SAP CPI integration | OData API (OAuth2), Design-time / Runtime REST APIs |
-| SAP BTP Destination | `EventMesh` destination for Event Mesh publishing |
+| SAP BTP Destination | `EventMesh` destination — single auth source for all Event Mesh publishing |
 | Database | SAP HANA Cloud via hdbcli |
 | Object storage | AWS S3 via boto3 |
 | Frontend | React + TypeScript (Vite) |
@@ -63,40 +65,54 @@ writing the final outcome to the database.
 
 ## 2. Architecture
 
-### Two Entry Paths into the Pipeline
+### System Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  PATH A — CPI Monitor (background poller)                       │
-│                                                                 │
-│  Every 10 minutes:                                              │
-│  GET /api/v1/MessageProcessingLogs?$filter=Status eq 'FAILED'   │
-│        (CPI OData — auth: SAP_HUB_* env vars)                   │
-│                │                                                │
-│                ▼                                                │
-│  Fetch ErrorInformation/$value for each GUID                    │
-│                │                                                │
-│                ▼                                                │
-│  POST to Event Mesh topic: default/sierra.automation/1/autofix/in                │
-│        (auth: EventMesh SAP BTP Destination)                    │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-┌─────────────────────────────────────────────────────────────────┐
-│  PATH B — Direct SAP Event Mesh webhook (legacy / external)     │
-│                                                                 │
-│  CPI iFlow or external system publishes directly to             │
-│  topic: default/sierra.automation/1/autofix/in                                   │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼ SAP Event Mesh delivers to queue
-                           │ default/sierra.automation/1/autofix/orbit/orchestrator
-                           │ webhook push
-                           ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  SAP CPI                                                             │
+│  iFlow FAILED  ──────────────────────────────────────────────────┐   │
+└──────────────────────────────────────────────────────────────────│───┘
+                                                                   │
+┌──────────────────────────────────────────────────────────────────▼───┐
+│  cpi_monitor/ (Python microservice — background asyncio task)        │
+│                                                                       │
+│  Every CPI_POLL_INTERVAL_SECONDS (default: 600 s):                   │
+│  GET /api/v1/MessageProcessingLogs?$filter=Status eq 'FAILED'        │
+│        (CPI OData — auth: SAP_HUB_* env vars)                        │
+│                │                                                      │
+│                ▼                                                      │
+│  GET /api/v1/MessageProcessingLogs('{guid}')/ErrorInformation/$value │
+│                │                                                      │
+│                ▼                                                      │
+│  POST to SAP Event Mesh topic:                                        │
+│    default/sierra.automation/1/autofix/in                            │
+│    auth: EventMesh SAP BTP Destination (resolved via VCAP_SERVICES)  │
+└──────────────────────────────────────┬───────────────────────────────┘
+                                       │
+                                       ▼  SAP Event Mesh (em_automation)
+                                       │  delivers to queue
+                                       │  default/sierra.automation/1/autofix/orbit/orchestrator
+                                       │
+┌──────────────────────────────────────▼───────────────────────────────┐
+│  5-Stage AI Agent Pipeline                                           │
+│                                                                      │
+│  POST /agents/orchestrator  ──► classify + create incident           │
+│         │  publish_to_next → default/sierra.automation/1/autofix/orbit/observer
+│         ▼                                                            │
+│  POST /agents/observer      ──► enrich with OData metadata           │
+│         │  publish_to_next → default/sierra.automation/1/autofix/orbit/rca
+│         ▼                                                            │
+│  POST /agents/rca           ──► LLM root cause analysis              │
+│         │  publish_to_next → default/sierra.automation/1/autofix/orbit/fixer
+│         ▼                                                            │
+│  POST /agents/fixer         ──► apply fix + deploy iFlow             │
+│         │  publish_to_next → default/sierra.automation/1/autofix/orbit/verifier
+│         ▼                                                            │
+│  POST /agents/verifier      ──► verify fix  ──► FIX_VERIFIED ✓      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5-Stage Agent Pipeline
-
-After an event lands in the orchestrator queue, the pipeline runs:
+### 5-Stage Agent Pipeline Detail
 
 ```
 POST /agents/orchestrator
@@ -167,8 +183,7 @@ Startup → asyncio.create_task(_run_cpi_monitor())
           poll_failed_messages()
                │  GET /api/v1/MessageProcessingLogs
                │  filter: Status eq 'FAILED'
-               │         LogEnd ge datetime'{now - 10min}'
-               │         IntegrationFlowName ne 'FailedLogs_capturing_EM_Topic_Based'
+               │         LogEnd ge datetime'{now - poll_interval}'
                │
                ▼
           For each FAILED message:
@@ -184,8 +199,8 @@ Startup → asyncio.create_task(_run_cpi_monitor())
               "ErrorMessage":        "<raw error text>"
             }
           • POST to topic default/sierra.automation/1/autofix/in
-            via EventMesh SAP BTP Destination (bearer token resolved at runtime)
-            fallback → event_bus.publish_to_next() (uses AEM_REST_URL env vars)
+            auth: EventMesh SAP BTP Destination
+            (bearer token resolved at runtime via SAP Destination service — VCAP_SERVICES)
 ```
 
 ### Files
@@ -193,7 +208,7 @@ Startup → asyncio.create_task(_run_cpi_monitor())
 | File | Purpose |
 |---|---|
 | [cpi_monitor/\_\_init\_\_.py](cpi_monitor/__init__.py) | Empty package marker |
-| [cpi_monitor/cpi_poller.py](cpi_monitor/cpi_poller.py) | OData poll loop, OAuth token cache, `get_cpi_client()` |
+| [cpi_monitor/cpi_poller.py](cpi_monitor/cpi_poller.py) | OData poll loop, OAuth token cache, `get_cpi_client()`, `get_destination_service_creds()` |
 | [cpi_monitor/error_publisher.py](cpi_monitor/error_publisher.py) | Error detail fetch, Event Mesh publish via Destination, 30-min dedup |
 
 ### Auth
@@ -201,8 +216,11 @@ Startup → asyncio.create_task(_run_cpi_monitor())
 | Operation | Credentials used |
 |---|---|
 | CPI OData polling | `SAP_HUB_TENANT_URL` + `SAP_HUB_TOKEN_URL` + `SAP_HUB_CLIENT_ID/SECRET` |
-| Event Mesh publishing (on CF) | `EventMesh` SAP BTP Destination → resolved bearer token via Destination service |
-| Event Mesh publishing (local) | `AEM_REST_URL` + `EVENT_MESH_TOKEN_URL` + `EVENT_MESH_CLIENT_ID/SECRET` |
+| Event Mesh publishing | `EventMesh` SAP BTP Destination resolved via `VCAP_SERVICES` (Destination service binding) |
+
+All Event Mesh authentication goes through the SAP Destination service.
+`EVENT_MESH_CLIENT_ID`, `EVENT_MESH_CLIENT_SECRET`, and `EVENT_MESH_TOKEN_URL` are no
+longer used anywhere in this codebase.
 
 ### SAP BTP Destination — `EventMesh`
 
@@ -213,28 +231,33 @@ Create (or confirm) a Destination in your SAP BTP subaccount → Connectivity �
 | Name | `EventMesh` |
 | Type | `HTTP` |
 | Authentication | `OAuth2ClientCredentials` |
-| URL | Event Mesh REST messaging base URL |
+| URL | `https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com` |
 | Client ID | `sb-default-...xbem-service-broker-!b732` |
 | Client Secret | `<your-secret>` |
-| Token Service URL | `https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/token` |
-| Additional Header | `x-qos: 1` |
+| Token Service URL | `https://<subdomain>.authentication.us10.hana.ondemand.com/oauth/token` |
+| Additional Header | `Content-Type: application/json`, `x-qos: 1` |
 
 The microservice looks this destination up at runtime via the SAP Destination service
-(`VCAP_SERVICES` binding on CF). On local dev it falls back to the `AEM_REST_URL` env var.
+binding (`VCAP_SERVICES` on CF). The app must have the Destination service instance bound
+(see `manifest.yml` → `services: [destination-service]`).
 
 ### Startup Log
 
 ```
-[CPI_MONITOR] Poller started, interval=10min
+[CPI_MONITOR] Poll interval set to 600s
+[CPI_MONITOR] Poller started, interval=600s
 ```
 
 ### Runtime Logs
 
 ```
-[CPI_MONITOR] Found 2 failed messages
-[CPI_MONITOR] Publishing via SAP Destination 'EventMesh'
+[CPI_MONITOR] Poll complete, found 2 failed messages
+[CPI_MONITOR] EventMesh destination token resolved successfully
 [CPI_MONITOR] Published MessageGuid=abc-123 iflow=MyIflow
-[CPI_MONITOR] Skipping duplicate MessageGuid=abc-123   ← dedup hit
+[CPI_MONITOR] Skipping duplicate MessageGuid=abc-123        ← dedup hit
+
+[CPI_MONITOR] EventMesh destination token resolution FAILED - check destination binding
+                                                            ← binding missing / misconfigured
 ```
 
 ---
@@ -305,13 +328,21 @@ The microservice looks this destination up at runtime via the SAP Destination se
 
 ## 5. SAP Event Mesh Setup
 
+### Event Mesh Instance
+
+| Field | Value |
+|---|---|
+| Instance name | `em_automation` |
+| Namespace | `default/sierra.automation/1` |
+| Region | `us10` |
+
 ### Queues
 
-Create the following 5 queues in your SAP Event Mesh service instance:
+Create the following 5 queues in the `em_automation` Event Mesh service instance:
 
 | Queue Name | Topic Subscription | Purpose |
 |---|---|---|
-| `default/sierra.automation/1/autofix/orbit/orchestrator` | `default/sierra.automation/1/autofix/in` | Receives raw iFlow error events (from CPI Monitor or legacy iFlow) |
+| `default/sierra.automation/1/autofix/orbit/orchestrator` | `default/sierra.automation/1/autofix/in` | Receives raw iFlow error events from CPI Monitor |
 | `default/sierra.automation/1/autofix/orbit/observer` | `default/sierra.automation/1/autofix/orbit/observer` | Receives classified incidents for enrichment |
 | `default/sierra.automation/1/autofix/orbit/rca` | `default/sierra.automation/1/autofix/orbit/rca` | Receives enriched incidents for RCA |
 | `default/sierra.automation/1/autofix/orbit/fixer` | `default/sierra.automation/1/autofix/orbit/fixer` | Receives RCA-complete incidents for fix |
@@ -333,19 +364,15 @@ Create one REST delivery webhook per queue:
 
 Webhook settings: **Content-Type: application/json**, **Method: POST**
 
+> **Note:** SAP Event Mesh sends an OPTIONS request to each webhook URL during subscription
+> creation. The backend handles this automatically via `OPTIONS /agents/{agent_name}` →
+> HTTP 200. No additional configuration is needed.
+
 ### Inbound Topic
 
-The `default/sierra.automation/1/autofix/in` topic receives error events from two sources:
-
-| Source | Description |
-|---|---|
-| **CPI Monitor** (microservice) | Background poller publishes FAILED messages via the `EventMesh` SAP BTP Destination |
-| Legacy CPI iFlow | If still active, publishes via the AMQP 1.0 adapter (see AMQP settings below) |
-
-AMQP connection details (for legacy iFlow adapter):
-- Host: `EVENT_MESH_AMQP_HOST`
-- Port: `EVENT_MESH_AMQP_PORT` (443)
-- Path: `EVENT_MESH_AMQP_PATH` (`/protocols/amqp10ws`)
+The `default/sierra.automation/1/autofix/in` topic receives error events from the
+CPI Monitor microservice. The orchestrator queue subscribes to this topic and delivers
+events to `POST /agents/orchestrator`.
 
 ---
 
@@ -396,7 +423,7 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `SAP_DESIGN_TIME_CLIENT_ID` | Client ID |
 | `SAP_DESIGN_TIME_CLIENT_SECRET` | Client secret |
 
-### SAP Hub — CPI OData Polling (used by CPI Monitor and Observer agent)
+### SAP Hub — CPI OData Polling (CPI Monitor + Observer agent)
 
 | Variable | Description |
 |---|---|
@@ -409,8 +436,20 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 
 | Variable | Default | Description |
 |---|---|---|
-| `EVENT_MESH_DESTINATION_NAME` | `EventMesh` | SAP BTP Destination name used for Event Mesh publishing. Resolved via Destination service on CF; falls back to `AEM_REST_URL` locally. |
-| `CPI_POLL_INTERVAL_SECONDS` | `600` | How often the poller queries CPI for FAILED messages (seconds). |
+| `CPI_POLL_INTERVAL_SECONDS` | `600` | How often the poller queries CPI for FAILED messages (seconds). Set to `30` for rapid local testing. |
+
+### SAP Event Mesh
+
+| Variable | Default | Description |
+|---|---|---|
+| `AEM_ENABLED` | `false` | `true` = publish to SAP Event Mesh REST API via Destination; `false` = in-process fallback only |
+| `AEM_REST_URL` | — | Event Mesh REST gateway base URL (`https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com`) |
+| `EVENT_MESH_DESTINATION_NAME` | `EventMesh` | SAP BTP Destination name. Resolved at runtime via the Destination service binding (`VCAP_SERVICES`). |
+| `EVENT_MESH_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Inbound queue name (shown in `/aem/status`) |
+
+> **Removed:** `EVENT_MESH_TOKEN_URL`, `EVENT_MESH_CLIENT_ID`, and `EVENT_MESH_CLIENT_SECRET`
+> are no longer used. All Event Mesh authentication now goes through the SAP Destination
+> service. Remove these from any existing `.env` or `cf set-env` configuration.
 
 ### MCP Servers
 
@@ -433,21 +472,6 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `HANA_TABLE_EM_FIX_PATTERNS` | `EM_FIX_PATTERNS` | Fix patterns table |
 | `HANA_TABLE_EM_ESCALATION_TICKETS` | `EM_ESCALATION_TICKETS` | Escalation tickets table |
 
-### SAP Event Mesh
-
-| Variable | Default | Description |
-|---|---|---|
-| `AEM_ENABLED` | `false` | `true` = publish to SAP Event Mesh REST API; `false` = in-process only |
-| `AEM_REST_URL` | — | Event Mesh REST gateway base URL (local dev fallback for CPI Monitor publishing) |
-| `EVENT_MESH_TOKEN_URL` | — | OAuth2 token endpoint |
-| `EVENT_MESH_CLIENT_ID` | — | OAuth2 client ID |
-| `EVENT_MESH_CLIENT_SECRET` | — | OAuth2 client secret |
-| `EVENT_MESH_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Inbound queue name |
-| `AEM_OBSERVER_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Observer queue alias |
-| `EVENT_MESH_AMQP_HOST` | — | AMQP host (legacy iFlow adapter only) |
-| `EVENT_MESH_AMQP_PORT` | `443` | AMQP port |
-| `EVENT_MESH_AMQP_PATH` | `/protocols/amqp10ws` | AMQP WebSocket path |
-
 ### AWS S3 Object Store
 
 | Variable | Description |
@@ -468,7 +492,6 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `AUTO_FIX_CONFIDENCE` | `0.90` | Min RCA confidence to auto-apply a fix |
 | `SUGGEST_FIX_CONFIDENCE` | `0.70` | Min confidence to suggest (not apply) a fix |
 | `USE_REAL_FIXES` | `true` | Actually deploy; `false` = dry-run (no iFlow changes) |
-| `POLL_INTERVAL_SECONDS` | `60` | Interval between autonomous CPI polling cycles |
 | `FAILED_MESSAGES_PAGE_SIZE` | `400` | Page size for CPI failed message fetch |
 | `FAILED_MESSAGES_MAX_TOTAL` | `50000` | Max messages to fetch per cycle |
 | `MAX_CONSECUTIVE_FAILURES` | `5` | Circuit breaker: escalate after N consecutive failures |
@@ -503,13 +526,7 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 | `POST` | `/agents/rca` | Run root cause analysis → publish to fixer |
 | `POST` | `/agents/fixer` | Apply fix + deploy iFlow → publish to verifier (success only) |
 | `POST` | `/agents/verifier` | Verify fix, write final status — terminal stage |
-
-### Legacy Event Mesh Webhooks (backward-compatible)
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/aem/events` | Full inline pipeline via `_route_stage()` |
-| `POST` | `/event-mesh/events` | Alias for `/aem/events` |
+| `OPTIONS` | `/agents/{name}` | Responds 200 to SAP Event Mesh webhook subscription validation |
 
 ### Event Mesh Status
 
@@ -523,7 +540,7 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/cpi-monitor/status` | Current poller config: base URL, token state, dedup cache, VCAP presence |
-| `POST` | `/cpi-monitor/trigger` | Manually run one poll + publish cycle immediately (no need to wait 10 min) |
+| `POST` | `/cpi-monitor/trigger` | Manually run one poll + publish cycle immediately |
 
 ### Autonomous Pipeline
 
@@ -536,11 +553,9 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 | `GET` | `/autonomous/incidents` | List incidents (params: `status`, `limit`) |
 | `GET` | `/autonomous/incidents/{id}` | Single incident detail |
 | `GET` | `/autonomous/incidents/{id}/view_model` | Rich UI view model |
-| `GET` | `/autonomous/incidents/{id}/fix_progress` | Live fix progress (SSE) |
 | `POST` | `/autonomous/incidents/{id}/approve` | Approve or reject a pending fix |
 | `POST` | `/autonomous/incidents/{id}/generate_fix` | Manually trigger fix generation |
 | `POST` | `/autonomous/incidents/{id}/retry_rca` | Re-run RCA on an existing incident |
-| `GET` | `/autonomous/incidents/{id}/fix_patterns` | Similar patterns from knowledge base |
 | `GET` | `/autonomous/pending_approvals` | Incidents awaiting human approval |
 | `GET` | `/autonomous/tickets` | Escalation tickets |
 | `POST` | `/autonomous/manual_trigger` | Push a raw error through the pipeline manually |
@@ -570,7 +585,6 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 | `POST` | `/query` | General chatbot query (full MCP agent) |
 | `POST` | `/fix` | Direct fix request |
 | `GET` | `/get_all_history` | Chatbot query history for a user |
-| `GET` | `/get_testsuite_logs` | Test suite run logs |
 
 ### Debug
 
@@ -614,18 +628,17 @@ cp .env.example .env
 ### Run in In-Process Mode (`AEM_ENABLED=false`)
 
 Recommended for local development. No SAP Event Mesh connectivity required.
-The CPI Monitor poller will still run and attempt to poll CPI, publishing via the
-`AEM_REST_URL` fallback. The five agents call each other in-process via the
-in-memory event bus.
+The five agents call each other in-process via the in-memory event bus.
 
 ```bash
-# Set in .env:
+# .env settings:
 AEM_ENABLED=false
+CPI_POLL_INTERVAL_SECONDS=30    # faster polling for local testing
 
 uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-Verify the CPI Monitor immediately without waiting 10 minutes:
+Trigger one poll cycle immediately (no need to wait):
 
 ```bash
 curl -X POST http://localhost:8080/cpi-monitor/trigger
@@ -648,17 +661,20 @@ curl -X POST http://localhost:8080/autonomous/test_incident \
 ### Run with SAP Event Mesh (`AEM_ENABLED=true`)
 
 Requires the 5 queues and webhook subscriptions configured (see [Section 5](#5-sap-event-mesh-setup)).
-The app must have a public HTTPS URL reachable from SAP Event Mesh — use ngrok for local testing.
+The app must have a public HTTPS URL reachable from SAP Event Mesh.
+
+All auth goes through the SAP Destination service. On Cloud Foundry this is handled
+automatically via the `destination-service` binding. For local testing, simulate it by
+setting `VCAP_SERVICES` manually, or use `cf ssh` tunnelling.
 
 ```bash
-# Set in .env:
+# .env settings:
 AEM_ENABLED=true
-AEM_REST_URL=https://<em-service-host>
-EVENT_MESH_TOKEN_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/token
-EVENT_MESH_CLIENT_ID=<client-id>
-EVENT_MESH_CLIENT_SECRET=<client-secret>
-EVENT_MESH_DESTINATION_NAME=EventMesh   # Destination service not available locally;
-                                        # poller uses AEM_REST_URL fallback above
+AEM_REST_URL=https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com
+EVENT_MESH_DESTINATION_NAME=EventMesh
+
+# VCAP_SERVICES must be set for the Destination service lookup to work.
+# For local dev, either simulate it or use cf ssh tunnelling.
 
 uvicorn main:app --host 0.0.0.0 --port 8080
 ```
@@ -682,74 +698,73 @@ VITE_API_PRIMARY=http://localhost:8080
 
 ## 9. Deployment (Cloud Foundry)
 
-### Backend
+### manifest.yml
 
-Use `manifest.yml` at the project root, then push:
+```yaml
+applications:
+  - name: orbit-is-be
+    memory: 1G
+    buildpacks:
+      - python_buildpack
+    command: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+    services:
+      - destination-service   # SAP BTP Destination service binding
+    env:
+      EVENT_MESH_DESTINATION_NAME: EventMesh
+      CPI_POLL_INTERVAL_SECONDS: "600"
+```
+
+All sensitive credentials are set via `cf set-env` — never commit them.
+
+### Deploy
 
 ```bash
 cf push
 ```
 
-Or push manually:
+### Required `cf set-env` Variables
 
 ```bash
-cf push nd-orbit-eventmesh-be \
-  --buildpack python_buildpack \
-  --memory 2G \
-  --disk 1G \
-  --start-command "uvicorn main:app --host 0.0.0.0 --port 8080"
-```
-
-**Bind the SAP BTP Destination service** (required for CPI Monitor Event Mesh publishing):
-
-```bash
-cf bind-service nd-orbit-eventmesh-be <your-destination-service-instance>
-cf restage nd-orbit-eventmesh-be
-```
-
-Set environment variables:
-
-```bash
-# CPI Monitor
-cf set-env nd-orbit-eventmesh-be EVENT_MESH_DESTINATION_NAME "EventMesh"
-cf set-env nd-orbit-eventmesh-be CPI_POLL_INTERVAL_SECONDS   "600"
-
 # Event Mesh
-cf set-env nd-orbit-eventmesh-be AEM_ENABLED             "true"
-cf set-env nd-orbit-eventmesh-be AEM_REST_URL             "https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com"
-cf set-env nd-orbit-eventmesh-be EVENT_MESH_TOKEN_URL     "https://<subdomain>.authentication.us10.hana.ondemand.com/oauth/token"
-cf set-env nd-orbit-eventmesh-be EVENT_MESH_CLIENT_ID     "<client-id>"
-cf set-env nd-orbit-eventmesh-be EVENT_MESH_CLIENT_SECRET "<client-secret>"
+cf set-env orbit-is-be AEM_ENABLED   "true"
+cf set-env orbit-is-be AEM_REST_URL  "https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com"
 
 # SAP CPI (used by CPI Monitor + Observer agent)
-cf set-env nd-orbit-eventmesh-be SAP_HUB_TENANT_URL   "https://<tenant>.it-cpi<n>.cfapps.<region>.hana.ondemand.com"
-cf set-env nd-orbit-eventmesh-be SAP_HUB_TOKEN_URL    "https://<tenant>.authentication.<region>.hana.ondemand.com/oauth/token"
-cf set-env nd-orbit-eventmesh-be SAP_HUB_CLIENT_ID    "<client-id>"
-cf set-env nd-orbit-eventmesh-be SAP_HUB_CLIENT_SECRET "<client-secret>"
+cf set-env orbit-is-be SAP_HUB_TENANT_URL    "https://<tenant>.it-cpi<n>.cfapps.<region>.hana.ondemand.com"
+cf set-env orbit-is-be SAP_HUB_TOKEN_URL     "https://<tenant>.authentication.<region>.hana.ondemand.com/oauth/token"
+cf set-env orbit-is-be SAP_HUB_CLIENT_ID     "<client-id>"
+cf set-env orbit-is-be SAP_HUB_CLIENT_SECRET "<client-secret>"
 
 # HANA
-cf set-env nd-orbit-eventmesh-be HANA_HOST     "<hana-host>"
-cf set-env nd-orbit-eventmesh-be HANA_USER     "<user>"
-cf set-env nd-orbit-eventmesh-be HANA_PASSWORD "<password>"
-cf set-env nd-orbit-eventmesh-be HANA_SCHEMA   "<schema>"
+cf set-env orbit-is-be HANA_HOST     "<hana-host>"
+cf set-env orbit-is-be HANA_USER     "<user>"
+cf set-env orbit-is-be HANA_PASSWORD "<password>"
+cf set-env orbit-is-be HANA_SCHEMA   "<schema>"
 
 # AI Core
-cf set-env nd-orbit-eventmesh-be LLM_DEPLOYMENT_ID   "<deployment-id>"
-cf set-env nd-orbit-eventmesh-be AICORE_CLIENT_ID     "<client-id>"
-cf set-env nd-orbit-eventmesh-be AICORE_CLIENT_SECRET "<client-secret>"
-cf set-env nd-orbit-eventmesh-be AICORE_AUTH_URL      "https://<subdomain>.authentication.us10.hana.ondemand.com"
-cf set-env nd-orbit-eventmesh-be AICORE_BASE_URL      "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2"
+cf set-env orbit-is-be LLM_DEPLOYMENT_ID    "<deployment-id>"
+cf set-env orbit-is-be AICORE_CLIENT_ID     "<client-id>"
+cf set-env orbit-is-be AICORE_CLIENT_SECRET "<client-secret>"
+cf set-env orbit-is-be AICORE_AUTH_URL      "https://<subdomain>.authentication.us10.hana.ondemand.com"
+cf set-env orbit-is-be AICORE_BASE_URL      "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2"
 
-cf restage nd-orbit-eventmesh-be
+cf restage orbit-is-be
 ```
 
-**Deployed backend URL:** `https://nd-orbit-eventmesh-be.cfapps.us10-001.hana.ondemand.com`
+> **Note:** Do **not** set `EVENT_MESH_CLIENT_ID`, `EVENT_MESH_CLIENT_SECRET`, or
+> `EVENT_MESH_TOKEN_URL`. These are no longer used. Event Mesh auth is handled entirely
+> by the `destination-service` binding.
+
+### After Deployment — Wire Event Mesh Webhooks
+
+Once the backend is live, update all 5 webhook subscriptions in `em_automation` to use
+`https://orbit-is-be.cfapps.us10-001.hana.ondemand.com/agents/*`.
 
 ### Frontend
 
 ```bash
 cd frontend
-npm run build      # outputs production build to dist/
+npm run build
 
 cf push nd-orbit-eventmesh-fe \
   --buildpack staticfile_buildpack \
@@ -758,11 +773,6 @@ cf push nd-orbit-eventmesh-fe \
 ```
 
 **Deployed frontend URL:** `https://nd-orbit-eventmesh-fe.cfapps.us10-001.hana.ondemand.com`
-
-### After Deployment — Wire Event Mesh Webhooks
-
-Once the backend is live, update all 5 webhook subscriptions in SAP Event Mesh to use
-`https://nd-orbit-eventmesh-be.cfapps.us10-001.hana.ondemand.com/agents/*`.
 
 ---
 
@@ -805,7 +815,7 @@ FIX_DEPLOYED            iFlow redeployed successfully
     ├──► FIX_VERIFIED          verifier confirmed the fix works       ✓
     └──► FIX_FAILED_RUNTIME    verifier found the iFlow still failing ✗
 
-── Failure variants (pipeline halts) ──────────────────────────────
+── Failure variants (pipeline halts) ──────────────────────────────────
 OBS_FAILED              observer threw an exception
 RCA_FAILED              RCA agent threw an exception
 FIX_FAILED              fixer threw an unhandled exception
@@ -813,7 +823,7 @@ FIX_FAILED_UPDATE       SAP CPI rejected the iFlow XML update
 FIX_FAILED_DEPLOY       deploy step failed
 FIX_FAILED_RUNTIME      post-deploy verification failed
 
-── Special statuses ────────────────────────────────────────────────
+── Special statuses ────────────────────────────────────────────────────
 ARTIFACT_MISSING           iFlow not found in SAP CPI design time
 AWAITING_APPROVAL          human must approve before fix is applied
 TICKET_CREATED             escalated; ticket raised in external system
@@ -872,9 +882,58 @@ Uses `@tanstack/react-query` for polling, CSS Modules for styling (dark theme,
 
 The frontend reads `VITE_API_BASE` (defaults to `/api`) for the backend base URL.
 In production on Cloud Foundry, an nginx reverse-proxy rule forwards `/api/*` to the
-backend application, so no hard-coded URLs are needed in the built artefact.
+backend application.
 
 **Deployed frontend URL:** `https://nd-orbit-eventmesh-fe.cfapps.us10-001.hana.ondemand.com`
+
+---
+
+## 12. What's New
+
+### CPI iFlow replaced by Python microservice
+
+The SAP CPI iFlow that previously captured failed messages and published them to Event
+Mesh has been replaced by `cpi_monitor/` — a lightweight Python asyncio background task
+that starts with the FastAPI app. No iFlow deployment or SAP CPI design-time changes are
+needed for the ingestion path.
+
+### SAP Destination Service for all Event Mesh auth
+
+Previously, Event Mesh credentials were passed as plain env vars (`EVENT_MESH_CLIENT_ID`,
+`EVENT_MESH_CLIENT_SECRET`, `EVENT_MESH_TOKEN_URL`). These have been removed entirely.
+Both `cpi_monitor/error_publisher.py` (inbound publish) and `aem/event_bus.py`
+(agent-to-agent publish) now resolve their bearer token exclusively via the SAP
+Destination service — the `EventMesh` destination configured in BTP Connectivity and
+exposed through the `VCAP_SERVICES` binding.
+
+### New Event Mesh instance — `em_automation`
+
+The pipeline now uses the `em_automation` Event Mesh service instance with namespace
+`default/sierra.automation/1`. All topics and queue names follow the pattern
+`default/sierra.automation/1/autofix/...`.
+
+### OPTIONS endpoint for SAP Event Mesh webhook validation
+
+SAP Event Mesh sends a plain HTTP OPTIONS request to each webhook URL during subscription
+creation to verify the endpoint is reachable. A single route `OPTIONS /agents/{name}`
+now handles all five agent paths and returns HTTP 200, satisfying the handshake without
+any per-agent configuration.
+
+### Configurable poll interval with startup logging
+
+`CPI_POLL_INTERVAL_SECONDS` is now logged at startup so operators can confirm the
+configured value:
+
+```
+[CPI_MONITOR] Poll interval set to 600s
+[CPI_MONITOR] Poller started, interval=600s
+```
+
+After each poll cycle the result count is also logged:
+
+```
+[CPI_MONITOR] Poll complete, found 3 failed messages
+```
 
 ---
 
@@ -907,8 +966,9 @@ auto-remediation - EventMesh/
 │   └── orchestrator_agent.py        # Pipeline coordinator, dedup logic, chatbot
 │
 ├── aem/
-│   └── event_bus.py                 # SAP Event Mesh publisher (OAuth2 token cache,
-│                                    #   publish / publish_to_next / in-process fallback)
+│   └── event_bus.py                 # SAP Event Mesh publisher — bearer token via SAP
+│                                    #   Destination service, publish / publish_to_next /
+│                                    #   in-process fallback (AEM_ENABLED=false)
 │
 ├── core/
 │   ├── constants.py                 # Tuning constants, prompt templates, error rules
