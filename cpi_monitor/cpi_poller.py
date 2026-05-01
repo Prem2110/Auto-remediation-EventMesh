@@ -133,7 +133,9 @@ async def poll_failed_messages() -> List[Dict[str, Any]]:
             logger.warning("[CPI_MONITOR] No CPI credentials configured — skipping poll")
             return []
         base_url, token = client
-        return await _fetch_failed_messages(base_url, token)
+        results = await _fetch_failed_messages(base_url, token)
+        logger.info("[CPI_MONITOR] Poll complete, found %d failed messages", len(results))
+        return results
     except Exception as exc:
         logger.error("[CPI_MONITOR] poll_failed_messages error: %s", exc)
         return []

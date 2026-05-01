@@ -201,8 +201,9 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
     # Resolve Event Mesh bearer token once for the whole batch
     em_token = await _resolve_em_token()
     if not em_token:
-        logger.error("[CPI_MONITOR] SAP Destination token unavailable — skipping publish")
+        logger.error("[CPI_MONITOR] EventMesh destination token resolution FAILED - check destination binding")
         return
+    logger.info("[CPI_MONITOR] EventMesh destination token resolved successfully")
     logger.debug("[CPI_MONITOR] Publishing via SAP Destination '%s' + AEM_REST_URL", _EM_DESTINATION_NAME)
 
     for msg in messages:

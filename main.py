@@ -1440,16 +1440,28 @@ async def _run_verifier_task(event: Dict[str, Any]) -> None:
 
 
 @app.post("/agents/verifier")
-async def agent_verifier_webhook(event: Dict[str, Any]):
+async def agent_verifier_webhook(request: Request, event: Dict[str, Any]):
     """
     Receives verification requests from the verifier queue.
     Tests the deployed iFlow and writes the final status to the DB.
     """
+    body_bytes = await request.body()
+    logger.info("[Agents/verifier] RAW PAYLOAD: %s", body_bytes.decode("utf-8", errors="replace")[:500])
+
+    # Fallback: if FastAPI body-parsing silently produced an empty dict (e.g. AEM
+    # delivered with a non-application/json Content-Type), re-parse from raw bytes.
+    if not event and body_bytes:
+        try:
+            event = json.loads(body_bytes)
+        except Exception:
+            pass
+
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    incident_id = event.get("incident_id", "")
     _record_agent_webhook()
     asyncio.create_task(_run_verifier_task(event))
-    logger.info("[Agents/verifier] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    logger.info("[Agents/verifier] Webhook received incident=%s, dispatched", incident_id)
     return {"status": "accepted"}
 
 
