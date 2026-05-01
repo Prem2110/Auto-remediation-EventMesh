@@ -4,14 +4,11 @@ cpi_monitor/error_publisher.py
 Fetches per-message error details from CPI and publishes each failed message
 as a structured payload to the Event Mesh topic default/sierra.automation/1/autofix/in.
 
-Publishing path (tried in order):
-  1. SAP Destination service — looks up the destination named
-     EVENT_MESH_DESTINATION_NAME (default: "EventMesh") to obtain a
-     bearer token.  The publish URL comes from AEM_REST_URL env var.
-     This is the production path on SAP BTP CloudFoundry.
-  2. event_bus.publish_to_next() — falls back to the in-process AEM event
-     bus (uses AEM_REST_URL + EVENT_MESH_* env vars) when the Destination
-     service binding is unavailable (local dev / non-CF environments).
+Publishing path:
+  SAP Destination service — looks up the destination named
+  EVENT_MESH_DESTINATION_NAME (default: "EventMesh") to obtain a
+  bearer token.  The publish URL comes from AEM_REST_URL env var.
+  If the Destination is unavailable the message is skipped (logged as error).
 
 Deduplication: a MessageGuid is not re-published within 30 minutes.
 """
@@ -25,7 +22,6 @@ from urllib.parse import quote
 
 import httpx
 
-from aem.event_bus import event_bus
 from cpi_monitor.cpi_poller import get_cpi_client, get_destination_service_creds
 
 logger = logging.getLogger(__name__)
@@ -185,7 +181,7 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
     to Event Mesh topic default/sierra.automation/1/autofix/in.
 
     Uses SAP Destination for the bearer token + AEM_REST_URL for the endpoint.
-    Falls back to event_bus.publish_to_next() if Destination is unavailable.
+    Skips the message (logs error) if the Destination token is unavailable.
     Skips duplicates. Never raises.
     """
     if not messages:
@@ -204,10 +200,10 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
 
     # Resolve Event Mesh bearer token once for the whole batch
     em_token = await _resolve_em_token()
-    if em_token:
-        logger.debug("[CPI_MONITOR] Publishing via SAP Destination '%s' + AEM_REST_URL", _EM_DESTINATION_NAME)
-    else:
-        logger.debug("[CPI_MONITOR] SAP Destination unavailable — falling back to event_bus")
+    if not em_token:
+        logger.error("[CPI_MONITOR] SAP Destination token unavailable — skipping publish")
+        return
+    logger.debug("[CPI_MONITOR] Publishing via SAP Destination '%s' + AEM_REST_URL", _EM_DESTINATION_NAME)
 
     for msg in messages:
         guid    = msg.get("MessageGuid", "")
@@ -232,10 +228,7 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
                 "ErrorMessage":        error_text,
             }
 
-            if em_token:
-                await _publish_via_destination(_PUBLISH_TOPIC, payload, em_token)
-            else:
-                await event_bus.publish_to_next(_PUBLISH_TOPIC, payload)
+            await _publish_via_destination(_PUBLISH_TOPIC, payload, em_token)
 
             _mark_published(guid)
             logger.info("[CPI_MONITOR] Published MessageGuid=%s iflow=%s", guid, iflow)
