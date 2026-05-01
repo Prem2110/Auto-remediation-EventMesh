@@ -719,6 +719,12 @@ Must do:
             if _comp and _comp.lower() != "unknown"
             else "            → No specific component confirmed — infer from error type and iFlow structure."
         )
+        # Only inject rules relevant to the error type to keep the prompt focused
+        _et = (error_type or "UNKNOWN").upper()
+        _groovy_relevant = {"MAPPING_ERROR", "DATA_VALIDATION", "UNKNOWN_ERROR"}
+        _struct_relevant = {"MAPPING_ERROR", "DATA_VALIDATION", "UNKNOWN_ERROR", "AUTH_CONFIG_ERROR"}
+        _groovy_rules_ctx = CPI_IFLOW_GROOVY_RULES if _et in _groovy_relevant else ""
+        _xml_patterns_ctx = CPI_IFLOW_XML_PATTERNS if _et in _struct_relevant else ""
         prompt = FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
             iflow_id=iflow_id,
             error_type=error_type or "UNKNOWN",
@@ -731,8 +737,8 @@ Must do:
             pattern_history=pattern_history,
             sap_notes=sap_notes,
             error_type_guidance=error_type_guidance,
-            groovy_rules=CPI_IFLOW_GROOVY_RULES,
-            iflow_xml_patterns=CPI_IFLOW_XML_PATTERNS,
+            groovy_rules=_groovy_rules_ctx,
+            iflow_xml_patterns=_xml_patterns_ctx,
         )
         messages  = [{"role": "user", "content": prompt}]
         tracker   = TestExecutionTracker(user_id, f"fix:{iflow_id}", timestamp)
@@ -744,113 +750,97 @@ Must do:
             "failed_stage": "agent", "summary": "No result from fix agent.",
             "technical_details": "", "failed_steps": [],
         }
-        _current_messages = messages
-        for attempt in range(3):
-            try:
-                _result = await asyncio.wait_for(
-                    agent.ainvoke(
-                        {"messages": _current_messages},
-                        config={"callbacks": [logger_cb], "recursion_limit": 18},
-                    ),
-                    timeout=600.0,
+        # ── ATTEMPT 2: Single LLM full-rewrite ──────────────────────────────────
+        try:
+            _result = await asyncio.wait_for(
+                agent.ainvoke(
+                    {"messages": messages},
+                    config={"callbacks": [logger_cb], "recursion_limit": 18},
+                ),
+                timeout=600.0,
+            )
+        except asyncio.TimeoutError:
+            diagnosis = self._diagnose_timeout(logger_cb.steps, iflow_id)
+            logger.error("[FIX_DEPLOY] agent timed out | iflow=%s stage=%s",
+                         iflow_id, diagnosis["failed_stage"])
+            if diagnosis["failed_stage"] == "deploy" and iflow_id:
+                poll = await self._poll_deploy_status(iflow_id)
+                if poll["deploy_confirmed"]:
+                    return {
+                        **diagnosis,
+                        "success": True, "deploy_success": True, "failed_stage": None,
+                        "summary": (
+                            f"iFlow '{iflow_id}' updated and deployed successfully. "
+                            f"Confirmed via runtime status poll (status: {poll['status']})."
+                        ),
+                        "technical_details": (
+                            f"deploy-iflow SSE timed out; runtime poll confirmed '{poll['status']}'."
+                        ),
+                        "steps": logger_cb.steps,
+                    }
+            return {**diagnosis, "steps": logger_cb.steps}
+        except Exception as exc:
+            logger.error("[FIX_DEPLOY] agent error: %s", exc)
+            return {
+                "success": False, "fix_applied": False, "deploy_success": False,
+                "failed_stage": "agent",
+                "technical_details": str(exc),
+                "summary": "Fix execution failed while generating or applying the iFlow change plan.",
+                "steps": logger_cb.steps,
+            }
+
+        _final_msg = _result["messages"][-1]
+        answer     = _final_msg.content if hasattr(_final_msg, "content") else str(_final_msg)
+        evaluation = self.evaluate_fix_result(logger_cb.steps, answer)
+
+        # Validation retry: one targeted retry when the agent skipped validate_iflow_xml
+        # or validate_iflow_xml returned errors before update-iflow was called.
+        if not evaluation.get("success") and evaluation.get("failed_stage") != "locked":
+            _val_skipped = not any(
+                "validate_iflow_xml" in str(s.get("tool", "")) for s in logger_cb.steps
+            )
+            _val_error = next(
+                (str(s.get("output", "")) for s in logger_cb.steps
+                 if "validate_iflow_xml" in str(s.get("tool", "")) and "ERRORS:" in str(s.get("output", ""))),
+                "",
+            )
+            if _val_skipped or _val_error:
+                _val_hint = (
+                    "You skipped validate_iflow_xml. Call it BEFORE update-iflow."
+                    if _val_skipped else
+                    f"validate_iflow_xml errors: {_val_error[:300]}. Fix these before calling update-iflow."
                 )
-            except asyncio.TimeoutError:
-                diagnosis = self._diagnose_timeout(logger_cb.steps, iflow_id)
-                logger.error("[FIX_DEPLOY] agent timed out | iflow=%s stage=%s",
-                             iflow_id, diagnosis["failed_stage"])
-                if diagnosis["failed_stage"] == "deploy" and iflow_id:
-                    poll = await self._poll_deploy_status(iflow_id)
-                    if poll["deploy_confirmed"]:
-                        return {
-                            **diagnosis,
-                            "success": True, "deploy_success": True, "failed_stage": None,
-                            "summary": (
-                                f"iFlow '{iflow_id}' updated and deployed successfully. "
-                                f"Confirmed via runtime status poll (status: {poll['status']})."
-                            ),
-                            "technical_details": (
-                                f"deploy-iflow SSE timed out; runtime poll confirmed '{poll['status']}'."
-                            ),
-                            "steps": logger_cb.steps,
-                        }
-                return {**diagnosis, "steps": logger_cb.steps}
-            except Exception as exc:
-                if attempt < 2:
-                    await asyncio.sleep(2)
-                    continue
-                logger.error("[FIX_DEPLOY] agent error: %s", exc)
-                return {
-                    "success": False, "fix_applied": False, "deploy_success": False,
-                    "failed_stage": "agent",
-                    "technical_details": str(exc),
-                    "summary": "Fix execution failed while generating or applying the iFlow change plan.",
-                    "steps": logger_cb.steps,
-                }
-
-            _final_msg = _result["messages"][-1]
-            answer     = _final_msg.content if hasattr(_final_msg, "content") else str(_final_msg)
-            evaluation = self.evaluate_fix_result(logger_cb.steps, answer)
-
-            if evaluation.get("success"):
-                break
-
-            # On a logical failure (not a lock — handled separately below), retry with
-            # the failure detail appended so the agent can take a different approach.
-            _stage = evaluation.get("failed_stage", "")
-            if attempt < 2 and _stage not in ("locked", None, ""):
-                _detail = evaluation.get("technical_details", "")
-                logger.warning(
-                    "[FIX_DEPLOY] Attempt %d/3 failed (stage=%s) — retrying with failure context",
-                    attempt + 1, _stage,
-                )
-                _current_messages = [
-                    *messages,
-                    {"role": "assistant", "content": answer},
-                    {"role": "user", "content": (
-                        f"The previous attempt failed at the '{_stage}' stage.\n"
-                        f"Error detail: {_detail}\n"
-                        f"Call get-iflow again to re-read the current state of iFlow '{iflow_id}', "
-                        f"then apply a more targeted fix that avoids the previous failure."
-                    )},
-                ]
-                logger_cb = StepLogger(
-                    TestExecutionTracker(user_id, f"fix:{iflow_id}:retry{attempt + 2}", timestamp),
+                _logger_cb_val = StepLogger(
+                    TestExecutionTracker(user_id, f"fix:{iflow_id}:val_retry", timestamp),
                     progress_fn=progress_fn,
                 )
-
-        # ── Re-diagnosis: if Phase 2 exhausted and still failing, ask diagnosis agent
-        #    to derive a completely different structured fix using the failure as context ──
-        if not evaluation.get("success") and evaluation.get("failed_stage") != "locked":
-            if _original_xml and _original_filepath:
-                _failure_ctx = (
-                    f"PREVIOUS ATTEMPT FAILED — stage={evaluation.get('failed_stage', 'unknown')}. "
-                    f"Detail: {evaluation.get('technical_details', '')[:400]}. "
-                    f"Propose a completely different fix approach."
-                )
-                _revised_ops = await self._get_fix_operation(
-                    iflow_id=iflow_id,
-                    error_type=error_type or "UNKNOWN",
-                    error_message=error_message or "",
-                    proposed_fix=(proposed_fix or "") + "\n" + _failure_ctx,
-                    root_cause=root_cause or "",
-                    affected_component=affected_component or "",
-                    original_xml=_original_xml,
-                    pattern_history=pattern_history,
-                    sap_notes=sap_notes,
-                    error_type_guidance=error_type_guidance,
-                )
-                _revised_applicable = [op for op in _revised_ops if op.get("change_type") != "structural"]
-                if _revised_applicable:
-                    _revised_result = await self._apply_structured_fix(
-                        iflow_id=iflow_id,
-                        operations=_revised_applicable,
-                        original_xml=_original_xml,
-                        original_filepath=_original_filepath,
+                try:
+                    _result_val = await asyncio.wait_for(
+                        agent.ainvoke(
+                            {"messages": [
+                                *messages,
+                                {"role": "assistant", "content": answer},
+                                {"role": "user", "content": (
+                                    f"VALIDATION REQUIRED: {_val_hint}\n"
+                                    f"Call get-iflow for '{iflow_id}', apply the fix, "
+                                    f"call validate_iflow_xml (must return VALID), "
+                                    f"then update-iflow, then deploy-iflow."
+                                )},
+                            ]},
+                            config={"callbacks": [_logger_cb_val], "recursion_limit": 18},
+                        ),
+                        timeout=600.0,
                     )
-                    if _revised_result.get("success"):
-                        logger.info("[FIX] Re-diagnosis structured fix succeeded: iflow=%s", iflow_id)
-                        evaluation = _revised_result
-                        answer = _revised_result.get("summary", "")
+                    _answer_val = _result_val["messages"][-1]
+                    _answer_val = _answer_val.content if hasattr(_answer_val, "content") else str(_answer_val)
+                    _eval_val   = self.evaluate_fix_result(_logger_cb_val.steps, _answer_val)
+                    if _eval_val.get("success") or _eval_val.get("fix_applied"):
+                        evaluation = _eval_val
+                        logger_cb  = _logger_cb_val
+                        answer     = _answer_val
+                        logger.info("[FIX_DEPLOY] Validation retry succeeded: iflow=%s", iflow_id)
+                except Exception as _val_exc:
+                    logger.warning("[FIX_DEPLOY] Validation retry failed: %s", _val_exc)
 
         # ── Locked mid-run: unlock + one retry ───────────────────────────────
         if evaluation.get("failed_stage") == "locked" and iflow_id:
@@ -970,6 +960,13 @@ Must do:
                     "Use 'Deploy Only' to retry deployment without re-applying the fix."
                 )
 
+        if not evaluation.get("success"):
+            logger.error(
+                "[FIX_FAILED] iflow=%s stage=%s reason=%s",
+                iflow_id,
+                evaluation.get("failed_stage", "unknown"),
+                evaluation.get("summary", "")[:200],
+            )
         self._mcp.update_memory(session_id, f"Fix {iflow_id}", evaluation["summary"])
         logger.info(
             "[FIX_DEPLOY] iflow=%s fix_applied=%s deploy_success=%s",
