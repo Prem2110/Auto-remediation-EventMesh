@@ -20,6 +20,7 @@ Exports:
 import hashlib
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List
 
@@ -309,6 +310,63 @@ class ClassifierAgent:
                 }
         except Exception as exc:
             logger.warning("[Classifier] LLM fallback failed: %s", exc)
+        return {}
+
+    # ── reclassify_with_llm ─────────────────────────────────────────────────
+
+    async def reclassify_with_llm(
+        self, error_message: str, iflow_id: str
+    ) -> dict:
+        """Second-pass LLM classification for UNKNOWN_ERROR cases."""
+        _mcp   = getattr(self, "_mcp", None)
+        _agent = self._agent
+        if _mcp is None and _agent is None:
+            return {}
+
+        prompt = (
+            "You are an SAP CPI error classifier.\n"
+            "Classify this error into EXACTLY ONE category:\n"
+            "- MAPPING_ERROR: field doesn't exist, schema mismatch, mapping failed\n"
+            "- BACKEND_ERROR: HTTP 404/500/502, not found, server error\n"
+            "- AUTH_ERROR: 401/403, unauthorized, certificate, credential\n"
+            "- CONNECTIVITY_ERROR: connection refused, timeout, unreachable\n"
+            "- SFTP_ERROR: no such file, sftp, ftp, directory not found\n"
+            "- SCRIPT_ERROR: groovy, NullPointerException, compilation failed\n"
+            "- DATA_VALIDATION: mandatory field, required, null value\n"
+            "- DEPLOY_ERROR: has no inputs, IllegalArgumentException, deploy failed\n"
+            "- UNKNOWN_ERROR: cannot classify\n\n"
+            f"Error: {error_message[:800]}\n"
+            f"iFlow: {iflow_id}\n\n"
+            'Return ONLY JSON: {"error_type": "...", "confidence": 0.0, "reasoning": "..."}'
+        )
+        try:
+            if _mcp is not None:
+                _tmp_agent = await _mcp.build_agent(
+                    tools=[],
+                    system_prompt="You are an SAP CPI error classifier. Return ONLY JSON.",
+                    deployment_id=os.getenv("LLM_DEPLOYMENT_ID_RCA") or None,
+                )
+                result   = await _tmp_agent.ainvoke(
+                    {"messages": [{"role": "user", "content": prompt}]},
+                    config={"recursion_limit": 3},
+                )
+                final    = result["messages"][-1]
+                answer   = final.content if hasattr(final, "content") else str(final)
+            else:
+                result = await _agent.ainvoke({"input": prompt})
+                answer = result.get("output", "") if isinstance(result, dict) else str(result)
+
+            clean = re.sub(r"```(?:json)?|```", "", answer).strip()
+            match = re.search(r"\{[^{}]+\}", clean)
+            if match:
+                parsed = json.loads(match.group())
+                return {
+                    "error_type": parsed.get("error_type", "UNKNOWN_ERROR"),
+                    "confidence": float(parsed.get("confidence", 0.0)),
+                    "reasoning":  parsed.get("reasoning", ""),
+                }
+        except Exception as exc:
+            logger.warning("[Classifier] reclassify_with_llm failed: %s", exc)
         return {}
 
     # ── error_signature ──────────────────────────────────────────────────────

@@ -714,6 +714,25 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 f"Use this as a reference — apply the same change if the root cause matches.\n"
             )
 
+        # Cross-iFlow pattern lookup — same error type, any iFlow
+        from db.database import get_patterns_by_error_type  # noqa: PLC0415
+        cross_patterns = get_patterns_by_error_type(error_type or "", min_success_count=1)
+        cross_pattern_text = ""
+        if cross_patterns:
+            lines = ["=== CROSS-IFLOW FIX PATTERNS (same error, different iFlows) ==="]
+            for p in cross_patterns[:3]:
+                lines.append(
+                    f"iFlow: {p.get('iflow_id')} | "
+                    f"root_cause: {p.get('root_cause', '')[:100]} | "
+                    f"fix: {p.get('fix_applied', '')[:150]} | "
+                    f"success_count: {p.get('success_count', 0)}"
+                )
+            cross_pattern_text = "\n".join(lines)
+            logger.info(
+                "[FIX] Found %d cross-iFlow patterns for error_type=%s",
+                len(cross_patterns), error_type,
+            )
+
         # SAP Notes from vector store — gives the fixer knowledge base context
         _vs = get_vector_store()
         _notes = _vs.retrieve_relevant_notes(error_message or "", error_type or "", iflow_id, limit=3)
@@ -807,6 +826,8 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             groovy_rules=_groovy_rules_ctx,
             iflow_xml_patterns=_xml_patterns_ctx,
         )
+        if cross_pattern_text:
+            prompt += f"\n\n{cross_pattern_text}"
         messages  = [{"role": "user", "content": prompt}]
         tracker   = TestExecutionTracker(user_id, f"fix:{iflow_id}", timestamp)
         logger_cb = StepLogger(tracker, progress_fn=progress_fn)

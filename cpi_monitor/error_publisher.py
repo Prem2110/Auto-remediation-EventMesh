@@ -23,6 +23,7 @@ from urllib.parse import quote
 import httpx
 
 from cpi_monitor.cpi_poller import get_cpi_client, get_destination_service_creds
+from utils.utils import clean_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,7 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
                 "IntegrationFlowName": iflow,
                 "Status":              "FAILED",
                 "LogEnd":              log_end,
-                "ErrorMessage":        error_text,
+                "ErrorMessage":        clean_error_message(error_text),
             }
 
             await _publish_via_destination(_PUBLISH_TOPIC, payload, em_token)

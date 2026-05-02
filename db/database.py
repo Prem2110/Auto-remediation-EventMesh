@@ -896,6 +896,34 @@ def get_similar_patterns(error_signature: str) -> List[Dict]:
         return []
 
 
+def get_patterns_by_error_type(
+    error_type: str,
+    min_success_count: int = 1,
+    limit: int = 5,
+) -> List[Dict]:
+    """
+    Get successful fix patterns for a given error_type,
+    regardless of which iFlow they came from.
+    Used for cross-iFlow pattern reuse.
+    """
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            f'SELECT iflow_id, error_type, root_cause, fix_applied, '
+            f'"success_count", applied_count FROM "{_FIX_TABLE}" '
+            f'WHERE error_type = ? AND "success_count" >= ? '
+            f'ORDER BY "success_count" DESC LIMIT ?',
+            (error_type, min_success_count, limit),
+        )
+        rows = _rows_to_dicts(cur)
+        conn.close()
+        return rows
+    except Exception as e:
+        logger.error(f"get_patterns_by_error_type: {e}")
+        return []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ESCALATION TICKETS
 # ─────────────────────────────────────────────────────────────────────────────

@@ -24,7 +24,7 @@ from agents.base import StepLogger, TestExecutionTracker
 from agents.classifier_agent import ClassifierAgent
 from core.constants import FALLBACK_FIX_BY_ERROR_TYPE
 from db.database import get_similar_patterns
-from utils.utils import get_hana_timestamp
+from utils.utils import clean_error_message, get_hana_timestamp
 from utils.vector_store import get_vector_store
 
 logger = logging.getLogger(__name__)
@@ -179,9 +179,27 @@ Return exactly:
             incident.get("designtime_artifact_id")
             or incident.get("iflow_id", "")
         )
-        error_message = incident.get("error_message", "")
+        error_message = clean_error_message(incident.get("error_message", ""))
         message_guid  = incident.get("message_guid", "")
         error_type    = incident.get("error_type", "UNKNOWN")
+
+        # LLM second-pass reclassification for low-signal UNKNOWN_ERROR cases
+        if error_type in ("UNKNOWN_ERROR", "", None):
+            try:
+                self._classifier._mcp = self._mcp
+                reclassified = await self._classifier.reclassify_with_llm(
+                    error_message, iflow_id
+                )
+                if reclassified.get("confidence", 0) > 0.60:
+                    logger.info(
+                        "[RCA] UNKNOWN_ERROR reclassified → %s (%.2f)",
+                        reclassified["error_type"],
+                        reclassified["confidence"],
+                    )
+                    error_type = reclassified["error_type"]
+                    incident["error_type"] = error_type
+            except Exception as e:
+                logger.warning("[RCA] LLM reclassification failed: %s", e)
 
         agent = self._agent or self._mcp.agent
         if agent is None:
