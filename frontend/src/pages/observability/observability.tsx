@@ -231,6 +231,52 @@ function FixPlanSteps({ steps }: { steps: IFixPlanStep[] }) {
   );
 }
 
+/* ── Pipeline stage rail (shown during fix execution) ───────────────── */
+const FIX_STAGES = ["Submit", "Get iFlow", "Validate", "Patch", "Deploy"] as const;
+
+function PipelineStageRail({ stepIndex, totalSteps }: { stepIndex: number; totalSteps: number }) {
+  const slots = FIX_STAGES.length;
+  const active = Math.min(
+    stepIndex <= 0 ? 0 : Math.round((stepIndex / Math.max(totalSteps, 1)) * (slots - 1)),
+    slots - 1
+  );
+  return (
+    <div className={styles.stageRail}>
+      {FIX_STAGES.map((label, i) => {
+        const done     = i < active;
+        const isActive = i === active;
+        return (
+          <div key={label} style={{ display: "contents" }}>
+            <div className={styles.stageStep}>
+              <div
+                className={[
+                  styles.stageDot,
+                  done     ? styles.stageDotDone   : "",
+                  isActive ? styles.stageDotActive : "",
+                ].filter(Boolean).join(" ")}
+              >
+                {done ? "✓" : i + 1}
+              </div>
+              <span
+                className={[
+                  styles.stageLabel,
+                  isActive ? styles.stageLabelActive : "",
+                  done     ? styles.stageLabelDone   : "",
+                ].filter(Boolean).join(" ")}
+              >
+                {label}
+              </span>
+            </div>
+            {i < slots - 1 && (
+              <div className={[styles.stageConnector, done ? styles.stageConnectorDone : ""].filter(Boolean).join(" ")} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Timeline component for History tab ──────────────────────────────── */
 function Timeline({ entries }: { entries: IHistoryTimelineEntry[] }) {
   const statusIcon: Record<string, string> = {
@@ -1100,8 +1146,8 @@ export default function Observability() {
                               </div>
                             )}
 
-                            {/* Fix Patch section */}
-                            {fixPatch ? (
+                            {/* Fix Patch section — action bar lives in the sticky footer */}
+                            {fixPatch && (
                               <div className={styles.fixPatchSection}>
                                 <h4 className={styles.fixPatchTitle}>Steps (Fix Plan)</h4>
                                 {fixPatch.summary && (
@@ -1110,77 +1156,6 @@ export default function Observability() {
                                   </div>
                                 )}
                                 <FixPlanSteps steps={fixPatch.steps} />
-
-                                {/* Apply Fix button */}
-                                {fixPatch.can_apply && (
-                                  <div className={styles.fixActionBar}>
-                                    <button
-                                      className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
-                                      onClick={handleApplyFix}
-                                      disabled={fixState === "loading" || fixState === "success"}
-                                      data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
-                                    >
-                                      {fixState === "idle"    && "Apply Fix"}
-                                      {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
-                                      {fixState === "success" && "Fix Applied"}
-                                      {fixState === "error"   && "Retry Fix"}
-                                    </button>
-                                  </div>
-                                )}
-
-                              </div>
-                            ) : (
-                              /* Generate Fix Patch button */
-                              detail.ai_recommendation.can_generate_fix && (
-                                <div className={styles.fixActionBar}>
-                                  <button
-                                    className={styles.generateFixBtn}
-                                    onClick={handleGenerateFixPatch}
-                                    disabled={fixPatchLoading}
-                                    data-tip="Ask the AI to generate a detailed step-by-step fix plan with XML change instructions"
-                                  >
-                                    {fixPatchLoading ? <><span className={styles.btnSpinner} /> Generating...</> : <><SvgIcon name="wrench" size={14} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />Generate Fix Patch</>}
-                                  </button>
-                                </div>
-                              )
-                            )}
-
-                            {/* Fix progress / result — always visible, restored from DB even after page reload */}
-                            {fixState !== "idle" && (
-                              <div className={styles.fixStatusSection}>
-                                {fixState === "loading" && fixProgress && (
-                                  <div className={styles.fixProgressBox}>
-                                    <div className={styles.fixProgressHeader}>
-                                      <span className={styles.fixProgressSpinner} />
-                                      <span className={styles.fixProgressStep}>
-                                        {fixProgress.stepIndex > 0
-                                          ? `Step ${fixProgress.stepIndex} of ${fixProgress.totalSteps}`
-                                          : "Starting…"}
-                                      </span>
-                                    </div>
-                                    <div className={styles.fixProgressMessage}>{fixProgress.currentStep}</div>
-                                    {fixProgress.stepIndex > 0 && (
-                                      <div className={styles.fixProgressTrack}>
-                                        <div
-                                          className={styles.fixProgressFill}
-                                          style={{ width: `${Math.round((fixProgress.stepIndex / fixProgress.totalSteps) * 100)}%` }}
-                                        />
-                                      </div>
-                                    )}
-                                    {fixProgress.stepsDone.length > 0 && (
-                                      <div className={styles.fixProgressDone}>
-                                        {fixProgress.stepsDone.map((s, i) => (
-                                          <span key={i} className={styles.fixProgressDoneItem}>✓ {s}</span>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {fixResult && (
-                                  <div className={`${styles.fixResultBanner} ${styles[`fixResultBanner_${fixState}`] || ""}`}>
-                                    {fixResult}
-                                  </div>
-                                )}
                               </div>
                             )}
 
@@ -1278,6 +1253,63 @@ export default function Observability() {
                 ) : (
                   <div className={styles.centered}>
                     <span>Could not load message details.</span>
+                  </div>
+                )}
+
+                {/* ── Sticky fix-action footer ───────────────────────────────
+                     Sibling of detailBody — always visible regardless of scroll */}
+                {detail && activeTab === "ai" && detail.ai_recommendation?.diagnosis && (
+                  <div className={styles.fixFooter}>
+                    {fixState === "loading" && fixProgress && (
+                      <div className={styles.fixProgressInline}>
+                        <PipelineStageRail
+                          stepIndex={fixProgress.stepIndex}
+                          totalSteps={fixProgress.totalSteps}
+                        />
+                        <div className={styles.fixProgressCurrentStep}>
+                          <span className={styles.fixProgressSpinner} />
+                          <span>{fixProgress.currentStep}</span>
+                        </div>
+                      </div>
+                    )}
+                    {fixResult && (
+                      <div className={`${styles.fixResultBanner} ${styles[`fixResultBanner_${fixState}`] || ""}`}>
+                        {fixResult}
+                      </div>
+                    )}
+                    <div className={styles.fixFooterActions}>
+                      {fixPatch ? (
+                        <button
+                          className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
+                          onClick={handleApplyFix}
+                          disabled={fixState === "loading" || fixState === "success"}
+                          data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
+                        >
+                          {fixState === "idle"    && <><SvgIcon name="lightning" size={13} style={{ marginRight: "0.35rem", verticalAlign: "middle" }} />Apply Fix</>}
+                          {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
+                          {fixState === "success" && "✓ Fix Applied"}
+                          {fixState === "error"   && "↺ Retry Fix"}
+                        </button>
+                      ) : (
+                        detail.ai_recommendation.can_generate_fix && (
+                          <button
+                            className={styles.generateFixBtn}
+                            onClick={handleGenerateFixPatch}
+                            disabled={fixPatchLoading}
+                            data-tip="Ask the AI to generate a detailed step-by-step fix plan with XML change instructions"
+                          >
+                            {fixPatchLoading
+                              ? <><span className={styles.btnSpinner} /> Generating...</>
+                              : <><SvgIcon name="wrench" size={14} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />Generate Fix Patch</>}
+                          </button>
+                        )
+                      )}
+                      {fixPatch && fixState === "idle" && (
+                        <span className={styles.fixFooterHint}>
+                          Fix plan ready — click Apply Fix to execute the automated patch &amp; deploy.
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

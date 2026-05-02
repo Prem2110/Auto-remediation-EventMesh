@@ -1077,6 +1077,147 @@
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Sticky fix-action footer ────────────────────────────────────────── */
+.fixFooter {
+  flex-shrink: 0;
+  border-top: 1px solid var(--orbit-gray-200, #e5e7eb);
+  background: #fafbff;
+  padding: 0.625rem 1.125rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  animation: fade-in-up 0.2s ease both;
+}
+
+.fixFooterActions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.fixFooterHint {
+  font-size: 0.72rem;
+  color: var(--orbit-gray-500, #6b7280);
+  font-style: italic;
+}
+
+/* ── Pipeline stage rail ─────────────────────────────────────────────── */
+.stageRail {
+  display: flex;
+  align-items: flex-start;
+  padding: 0.25rem 0 0;
+}
+
+.stageStep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.stageDot {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #94a3b8;
+  font-size: 0.6rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.35s, color 0.35s, box-shadow 0.35s;
+  flex-shrink: 0;
+}
+
+.stageDotDone {
+  background: #22c55e;
+  color: #fff;
+}
+
+.stageDotActive {
+  background: #2563eb;
+  color: #fff;
+  animation: stagePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes stagePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.45); }
+  50%       { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); }
+}
+
+.stageConnector {
+  flex: 1;
+  height: 2px;
+  background: #e2e8f0;
+  margin-top: 0.75rem; /* aligns with dot vertical-center */
+  transition: background 0.4s;
+  min-width: 0.5rem;
+}
+
+.stageConnectorDone {
+  background: #22c55e;
+}
+
+.stageLabel {
+  font-size: 0.6rem;
+  color: #94a3b8;
+  text-align: center;
+  white-space: nowrap;
+  font-weight: 500;
+  transition: color 0.3s;
+}
+
+.stageLabelActive {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.stageLabelDone {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+/* ── Inline progress row (below stage rail) ──────────────────────────── */
+.fixProgressInline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.fixProgressCurrentStep {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.775rem;
+  color: #0369a1;
+  font-weight: 500;
+  padding-left: 0.125rem;
+}
+
+/* ── Status dot pulse for active pipeline messages ───────────────────── */
+@keyframes dotPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+.statusDotPulse {
+  animation: dotPulse 1.4s ease-in-out infinite;
+}
+
+/* ── Detail panel slide-in (ensure keyframe is local too) ────────────── */
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 @keyframes slide-in-right { from { opacity: 0; transform: translateX(1rem); } to { opacity: 1; transform: none; } }
 @keyframes fade-in-up { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
 /* Main tab navigation */
