@@ -1,7 +1,9 @@
 ---
 applications:
-  - name: Orbit-IS-V1
-    memory: 3G
+  - name: ND-ORBIT-EventMesh-FE
+    memory: 2G
+    disk_quota: 2G
+    instances: 1
     buildpacks:
       - staticfile_buildpack
     path: dist
