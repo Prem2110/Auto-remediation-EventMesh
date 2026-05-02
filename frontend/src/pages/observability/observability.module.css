@@ -693,6 +693,14 @@
 .applyFixBtn_error   { background: #dc2626; }
 .applyFixBtn_error:hover:not(:disabled) { background: #b91c1c; }
 
+.checkStatusBtn {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.4rem 0.85rem; border-radius: 6px; font-size: 0.775rem;
+  font-weight: 600; cursor: pointer; border: 1.5px solid #2563eb;
+  background: transparent; color: #2563eb; transition: background 0.18s, color 0.18s;
+}
+.checkStatusBtn:hover { background: #eff6ff; }
+
 .fixResultText {
   font-size: 0.775rem;
   color: var(--orbit-gray-700, #374151);

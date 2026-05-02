@@ -715,7 +715,8 @@ export default function Observability() {
     }
     if (!resolved && !pollAbortRef.current.cancelled) {
       setFixProgress(null);
-      setFixResult("Still in progress. Refresh later for final status.");
+      setFixState("error");
+      setFixResult("Fix is taking longer than expected. Click 'Check Status' to poll again, or reload the message.");
     }
   }, []);
 
@@ -779,6 +780,17 @@ export default function Observability() {
       }
     }
   }, [selectedGuid, fixPatch, detail, startFixPolling]);
+
+  /* ── Manual status re-check (after timeout or user request) ────────── */
+  const handleCheckStatus = useCallback(async () => {
+    const incidentId = detail?.incident_id || "";
+    if (!incidentId) return;
+    setFixState("loading");
+    setFixResult("");
+    setFixProgress({ currentStep: "Reconnecting to fix pipeline…", stepIndex: 0, totalSteps: 4, stepsDone: [] });
+    pollAbortRef.current.cancelled = false;
+    await startFixPolling(incidentId);
+  }, [detail, startFixPolling]);
 
   /* ── Auto-resume fix state from DB on message select ───────────────── */
   useEffect(() => {
@@ -1297,17 +1309,27 @@ export default function Observability() {
                     )}
                     <div className={styles.fixFooterActions}>
                       {fixPatch ? (
-                        <button
-                          className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
-                          onClick={handleApplyFix}
-                          disabled={fixState === "loading" || fixState === "success"}
-                          data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
-                        >
-                          {fixState === "idle"    && <><SvgIcon name="lightning" size={13} style={{ marginRight: "0.35rem", verticalAlign: "middle" }} />Apply Fix</>}
-                          {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
-                          {fixState === "success" && "✓ Fix Applied"}
-                          {fixState === "error"   && "↺ Retry Fix"}
-                        </button>
+                        <>
+                          <button
+                            className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
+                            onClick={handleApplyFix}
+                            disabled={fixState === "loading" || fixState === "success"}
+                            data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
+                          >
+                            {fixState === "idle"    && <><SvgIcon name="lightning" size={13} style={{ marginRight: "0.35rem", verticalAlign: "middle" }} />Apply Fix</>}
+                            {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
+                            {fixState === "success" && "✓ Fix Applied"}
+                            {fixState === "error"   && "↺ Retry Fix"}
+                          </button>
+                          {fixState === "error" && detail?.incident_id && (
+                            <button
+                              className={styles.checkStatusBtn}
+                              onClick={handleCheckStatus}
+                            >
+                              Check Status
+                            </button>
+                          )}
+                        </>
                       ) : (
                         detail.ai_recommendation.can_generate_fix && (
                           <button
