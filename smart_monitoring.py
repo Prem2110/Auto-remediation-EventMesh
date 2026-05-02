@@ -85,9 +85,9 @@ class _MCPCompat:
     async def run_rca(self, incident):
         return await self._orchestrator._rca.run_rca(incident)
 
-    async def execute_incident_fix(self, incident, human_approved: bool = False, deploy_only: bool = False):
+    async def execute_incident_fix(self, incident, human_approved: bool = False, deploy_only: bool = False, force: bool = False):
         return await self._orchestrator.execute_incident_fix(
-            incident, human_approved=human_approved, deploy_only=deploy_only
+            incident, human_approved=human_approved, deploy_only=deploy_only, force=force
         )
 
     async def ask(self, query: str, user_id: str, session_id: str, timestamp: str):
