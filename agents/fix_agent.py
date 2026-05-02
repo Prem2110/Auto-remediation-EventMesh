@@ -1,26 +1,17 @@
 """
 agents/fix_agent.py
 ===================
-FixAgent — handles the get → update → deploy pipeline for a CPI iFlow.
+FixAgent — coordinator for the get → update → deploy pipeline.
 
-Responsibilities:
-  - ask_fix_and_deploy()     — main entry: build prompt, invoke agent, verify output
-  - ask_deploy_only()        — re-deploy without re-applying the fix
-  - apply_fix()              — thin wrapper used by OrchestratorAgent
-  - _try_unlock_iflow_via_api() — cancel checkout before/after fix
-  - verify_iflow_exists()    — existence check via get-iflow MCP tool
-  - get_deploy_error_details() — retrieve deploy errors from MCP + SAP OData
-  - evaluate_fix_result()    — classify step output → success/failed_stage dict
-  - _diagnose_timeout()      — diagnose which pipeline stage timed out
-  - _poll_deploy_status()    — post-timeout runtime artifact poll
-
-All fix-specific helper methods that were previously on MultiMCP live here.
+Delegates strategy selection to FixPlanner, LLM generation to FixGenerator,
+structural validation to FixValidator, and MCP execution to FixApplier.
 
 Exports:
   FixAgent
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -30,16 +21,11 @@ from typing import Any, Callable, Dict, List, Optional
 import httpx
 
 from agents.base import StepLogger, TestExecutionTracker
-from core.constants import (
-    CPI_IFLOW_GROOVY_RULES,
-    CPI_IFLOW_XML_PATTERNS,
-    ERROR_TYPE_FIX_GUIDANCE,
-    FIX_AND_DEPLOY_PROMPT_TEMPLATE,
-    FIX_OPERATION_PROMPT_TEMPLATE,
-    GROOVY_STRIPE_HTTP_ADAPTER,
-    GROOVY_WOOCOMMERCE_HTTP_ADAPTER,
-)
-from core.xml_patcher import PatcherError, apply_fix_operations
+from agents.fix_applier import ApplyResult, FixApplier
+from agents.fix_context import FixContext
+from agents.fix_generator import FixGenerator
+from agents.fix_planner import FixPlanner
+from agents.fix_validator import FixValidator
 from core.validators import _extract_iflow_file, _fix_ctx
 from db.database import get_similar_patterns
 from utils.utils import get_hana_timestamp
@@ -52,189 +38,47 @@ _SAP_TENANT = os.getenv("SAP_HUB_TENANT_URL", "")
 
 class FixAgent:
     """
-    Executes the fix + deploy pipeline for a CPI iFlow.
-    Holds a reference to MultiMCP for tool access and the error_fetcher
-    (injected from ObserverAgent at startup) for deploy status polling.
+    Coordinates the iFlow fix pipeline.
+
+    __init__ and apply_fix() signatures are unchanged so OrchestratorAgent
+    continues to work without modification.
     """
 
     def __init__(self, mcp, error_fetcher=None):
-        self._mcp               = mcp
-        self.error_fetcher      = error_fetcher   # SAPErrorFetcher, injected after construction
-        self._agent             = None            # filtered agent (fix tools only)
-        self._diagnosis_agent   = None            # read-only agent for structured fix operations
+        self._mcp          = mcp
+        self.error_fetcher = error_fetcher
+        self._agent        = None          # set from FixGenerator after build_agent()
+
+        self._planner   = FixPlanner(mcp)
+        self._generator = FixGenerator(mcp)
+        self._validator = FixValidator(error_fetcher)
+        self._applier   = FixApplier(mcp)
 
     def set_error_fetcher(self, error_fetcher) -> None:
         self.error_fetcher = error_fetcher
+        self._validator.set_error_fetcher(error_fetcher)
 
     async def build_agent(self) -> None:
-        """Build a fix+deploy agent with local validate_iflow_xml @tool + 3 specific MCP tools."""
-        from langchain_core.tools import tool as _tool   # noqa: PLC0415
-        from core.validators import _check_iflow_xml, _fix_ctx as _validator_ctx  # noqa: PLC0415
+        """Delegate agent construction to planner and generator."""
+        await self._planner.build_agent()
+        await self._generator.build_agent()
+        # Keep a local reference for ask_deploy_only() (unchanged interface)
+        self._agent = self._generator._agent
+        logger.info("[Fix] FixAgent coordinator ready.")
 
-        @_tool
-        def validate_iflow_xml(xml_content: str) -> str:
-            """
-            Validate iFlow XML structure before sending to SAP CPI.
-            Runs 7 structural checks (namespace, BPMN shape IDs, property files, etc.).
-            Returns 'VALID' or 'ERRORS: <list>'.
-            """
-            ctx = _validator_ctx.get()
-            original_xml = ctx.get("xml", "") if ctx else ""
-            errors = _check_iflow_xml(original_xml, xml_content)
-            if not errors:
-                return "VALID"
-            return "ERRORS: " + " | ".join(errors)
-
-        @_tool
-        def record_fix_outcome(
-            iflow_id: str,
-            error_type: str,
-            root_cause: str,
-            fix_applied: str,
-            outcome: str,
-        ) -> str:
-            """Record a fix outcome (SUCCESS or FAILED) in fix_patterns table."""
-            from db.database import upsert_fix_pattern  # noqa: PLC0415
-            import hashlib  # noqa: PLC0415
-            sig = hashlib.md5(f"{iflow_id}:{error_type}".encode()).hexdigest()[:16]
-            try:
-                upsert_fix_pattern({
-                    "error_signature": sig,
-                    "iflow_id":        iflow_id,
-                    "error_type":      error_type,
-                    "root_cause":      root_cause,
-                    "fix_applied":     fix_applied,
-                    "outcome":         outcome,
-                })
-                return f"Fix pattern recorded for {iflow_id} ({outcome})"
-            except Exception as e:
-                return f"Error recording fix pattern: {e}"
-
-        # Exactly 3 MCP tools — no testing, no docs
-        get_iflow_tool    = self._mcp.get_mcp_tool("integration_suite", "get-iflow")
-        update_iflow_tool = self._mcp.get_mcp_tool("integration_suite", "update-iflow")
-        deploy_iflow_tool = self._mcp.get_mcp_tool("integration_suite", "deploy-iflow")
-
-        mcp_tools = [t for t in [get_iflow_tool, update_iflow_tool, deploy_iflow_tool] if t]
-        if not mcp_tools:
-            # Fallback: use all integration_suite tools if specific tools not yet discovered
-            mcp_tools = [t for t in self._mcp.tools if t.server == "integration_suite"]
-
-        all_tools = [validate_iflow_xml, record_fix_outcome] + mcp_tools
-
-        system_prompt = """You are the FixAgent in a SAP CPI self-healing pipeline.
-Your ONLY job is to fix and deploy broken SAP CPI iFlows.
-
-=== MANDATORY TOOL CALLS — EXECUTE IN ORDER, NO SKIPPING ===
-
-STEP 1: Call get-iflow with the iFlow ID provided in the user message.
-  - If get-iflow fails → STOP immediately. Return failed_stage="get".
-
-STEP 2: Determine the exact XML changes based on error_type:
-  - BACKEND_ERROR / 404: Find <Address> tag with broken URL — fix the path or trailing slash.
-  - MAPPING_ERROR: Find the renamed/missing field in Message Mapping XML. Update ALL occurrences.
-  - AUTH_ERROR / AUTH_CONFIG_ERROR: Fix the Credential Name property in the adapter config.
-  - CONNECTIVITY_ERROR: Fix <Address> or <Url> in the receiver adapter.
-  - DEPLOY_ERROR (structural):
-      A. Call list-iflow-examples to find a reference iFlow.
-      B. Call get-iflow-example to download the reference XML.
-      C. Find the disconnected step in the broken iFlow.
-      D. Insert the missing <bpmn2:SequenceFlow> to wire it up.
-      E. Do NOT change adapter config or message mappings.
-  - SCRIPT_ERROR / XSLT_ERROR: Check Groovy script file path references.
-
-STEP 3: Call validate_iflow_xml with the modified XML.
-  - If ERRORS returned → fix the XML issues and re-validate.
-  - Do NOT call update-iflow until validate_iflow_xml returns "VALID".
-
-STEP 4: Call update-iflow with id, files, autoDeploy=true.
-  - If response contains "artifact is locked": call cancel-checkout → retry ONCE.
-    If still locked → STOP, return failed_stage="locked".
-  - If any other failure → STOP, return failed_stage="update".
-
-STEP 5: Call deploy-iflow with the iFlow ID.
-  - If FAILS: call get-deploy-error to retrieve diagnostic details.
-  - Return failed_stage="deploy" with the error details.
-
-STEP 6: Call record_fix_outcome with iflow_id, error_type, root_cause, fix_applied summary,
-  and outcome="SUCCESS" or "FAILED".
-
-=== GROOVY SCRIPT RULES ===
-- Physical file path in iFlow archive: src/main/resources/script/<Name>.groovy
-- Model reference inside iFlow XML: /script/<Name>.groovy
-- Never use /src/main/resources, scripts/<Name>.groovy, or absolute paths.
-- Verify both the file path and the model reference before calling update-iflow.
-
-=== CRITICAL — DO NOT HALLUCINATE TOOL RESULTS ===
-- Every tool call MUST be a real invocation using an available tool.
-- The pipeline verifies tool_calls in the message history.
-- If no tool_calls are found in the message history → the fix is treated as FAILED.
-- Never invent tool responses or claim a step succeeded without calling the tool.
-
-=== FINAL OUTPUT (MANDATORY) ===
-After completing all steps, return EXACTLY this JSON — no markdown, no extra text:
-{"fix_applied": true/false, "deploy_success": true/false, "update_response": "<short summary>",
- "deploy_response": "<short summary>", "summary": "<2 sentences: what changed and deploy outcome>",
- "failed_stage": null}
-If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" | "validation"
-"""
-        self._agent = await self._mcp.build_agent(
-            tools=all_tools,
-            system_prompt=system_prompt,
-            deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or None,
-        )
-
-        # Diagnosis-only agent: get-iflow only (no update/deploy).
-        # Used in Phase 1 to derive a structured operation JSON from the iFlow XML.
-        _diag_tools = [t for t in [get_iflow_tool] if t]
-        if _diag_tools:
-            self._diagnosis_agent = await self._mcp.build_agent(
-                tools=_diag_tools,
-                system_prompt=(
-                    "You are a read-only SAP CPI iFlow analyser. "
-                    "You MAY call get-iflow if the XML is not in the prompt. "
-                    "Return ONLY a JSON fix operation — no markdown, no tool calls other than get-iflow."
-                ),
-                deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or None,
-            )
-
-        logger.info(
-            "[Fix] Agent ready — 2 local @tools + %d MCP tools (diagnosis_agent=%s).",
-            len(mcp_tools), self._diagnosis_agent is not None,
-        )
-
-    # ── tool output success detectors ────────────────────────────────────────
+    # ── tool output success detectors (kept for retries below) ───────────────
 
     @staticmethod
     def _update_succeeded(output: str) -> bool:
-        text = (output or "").lower()
-        return any(s in text for s in (
-            '"status":200', '"status": 200',
-            "successfully updated", "update successful", "saved successfully",
-            '"result":"ok"', '"result": "ok"',
-            '"success":true', '"success": true',
-        ))
+        return FixApplier._update_succeeded(output)
 
     @staticmethod
     def _deploy_succeeded(output: str) -> bool:
-        text = (output or "").lower()
-        return any(s in text for s in (
-            '"deploystatus":"success"', '"deploystatus": "success"',
-            '"status":"success"', '"status": "success"',
-            '"result":"success"', '"result": "success"',
-            "deployed successfully", "deployment successful",
-            "successfully deployed",
-            '"deploy_success": true', '"deploy_success":true',
-        ))
+        return FixApplier._deploy_succeeded(output)
 
     @staticmethod
     def _is_locked_error(output: str) -> bool:
-        text = (output or "").lower()
-        return (
-            "is locked" in text
-            or "artifact as it is locked" in text
-            or ("cannot update the artifact" in text and "locked" in text)
-        )
+        return FixApplier._is_locked_error(output)
 
     # ── timeout diagnosis ────────────────────────────────────────────────────
 
@@ -317,78 +161,6 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
 
         return {"deploy_confirmed": False, "status": "timeout"}
 
-    # ── fix result evaluator ─────────────────────────────────────────────────
-
-    def evaluate_fix_result(self, steps: List[Dict], answer: str) -> Dict[str, Any]:
-        def compact(text: str) -> str:
-            return re.sub(r"\s+", " ", str(text or "")).strip()[:500]
-
-        update_ok         = False
-        deploy_ok         = False
-        update_output     = deploy_output = ""
-        validation_called = False
-        validation_failed = False
-        for step in steps:
-            tool_name = str(step.get("tool", ""))
-            output    = str(step.get("output", ""))
-            if "validate_iflow_xml" in tool_name:
-                validation_called = True
-                if "ERRORS:" in output:
-                    validation_failed = True
-                    logger.warning(
-                        "[FIX_DEPLOY] validate_iflow_xml returned errors but agent may still update: %s",
-                        compact(output),
-                    )
-            elif "update_iflow" in tool_name or "update-iflow" in tool_name:
-                update_output = output
-                update_ok     = self._update_succeeded(output)
-                if update_ok and not validation_called:
-                    logger.warning(
-                        "[FIX_DEPLOY] update-iflow succeeded without prior validate_iflow_xml call"
-                    )
-                elif update_ok and validation_failed:
-                    logger.warning(
-                        "[FIX_DEPLOY] update-iflow called despite validate_iflow_xml reporting ERRORS"
-                    )
-            elif "deploy_iflow" in tool_name or "deploy-iflow" in tool_name:
-                deploy_output = output
-                deploy_ok     = self._deploy_succeeded(output)
-
-        if not update_ok:
-            is_locked = self._is_locked_error(update_output)
-            return {
-                "success": False, "fix_applied": False, "deploy_success": False,
-                "failed_stage": "locked" if is_locked else "update",
-                "technical_details": compact(update_output),
-                "summary": (
-                    "iFlow is locked in SAP CPI Integration Flow Designer. "
-                    "Cancel/close the checkout in SAP CPI and retry."
-                    if is_locked else
-                    "iFlow update failed during the SAP Integration Suite update step."
-                ),
-                "failed_steps": ["update-iflow"],
-            }
-        if not deploy_ok:
-            return {
-                "success": False, "fix_applied": True, "deploy_success": False,
-                "failed_stage": "deploy",
-                "technical_details": compact(deploy_output),
-                "summary": "iFlow content was updated but deployment did not complete successfully.",
-                "failed_steps": ["deploy-iflow"],
-            }
-        _validation_note = ""
-        if not validation_called:
-            _validation_note = " [warn: XML validation step was skipped by agent]"
-        elif validation_failed:
-            _validation_note = " [warn: agent proceeded despite XML validation errors]"
-        return {
-            "success": True, "fix_applied": True, "deploy_success": True,
-            "failed_stage": None,
-            "technical_details": _validation_note.strip(),
-            "summary": f"iFlow updated and deployed successfully. {compact(answer)}{_validation_note}",
-            "failed_steps": [],
-        }
-
     # ── iFlow unlock ─────────────────────────────────────────────────────────
 
     async def _try_unlock_iflow_via_api(self, iflow_id: str) -> Dict[str, Any]:
@@ -426,7 +198,6 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             except Exception as exc:
                 logger.debug("[UNLOCK] %s exception for %s: %s", method, iflow_id, exc)
 
-        # Try MCP cancel/unlock tool
         unlock_tools = [
             t.mcp_tool_name for t in self._mcp.tools
             if t.server == "integration_suite" and any(
@@ -465,9 +236,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             result = await self._mcp.execute_integration_tool("get-iflow", {"id": iflow_id})
             if result.get("success"):
                 output     = result.get("output", {})
-                iflow_data = (
-                    output if isinstance(output, dict) else {}
-                )
+                iflow_data = output if isinstance(output, dict) else {}
                 if isinstance(output, str):
                     try:
                         iflow_data = json.loads(output)
@@ -476,10 +245,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 return {"exists": True, "verified": True, "status_code": 200,
                         "message": f"iFlow '{iflow_id}' exists in SAP CPI", "detail": iflow_data}
 
-            error_msg = str(result.get("output", "")).lower()
-            # Only mark verified=True when the error unambiguously refers to the
-            # artifact itself (genuine CPI 404), not an MCP/network/auth failure
-            # that happens to contain generic "not found" text.
+            error_msg    = str(result.get("output", "")).lower()
             _artifact_terms = ("artifact", "iflow", "integration", "designtime", "content")
             _is_artifact_404 = "404" in error_msg and any(t in error_msg for t in _artifact_terms)
             _is_named_missing = (
@@ -488,11 +254,10 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             )
             if _is_artifact_404 or _is_named_missing:
                 return {"exists": False, "verified": True, "status_code": 404,
-                        "message": f"iFlow '{iflow_id}' does not exist in SAP CPI",
-                        "detail": {}}
+                        "message": f"iFlow '{iflow_id}' does not exist in SAP CPI", "detail": {}}
             return {"exists": False, "verified": False, "status_code": 0,
-                    "message": f"iFlow '{iflow_id}' existence could not be confirmed. "
-                               f"Error: {str(result.get('output', ''))[:200]}",
+                    "message": (f"iFlow '{iflow_id}' existence could not be confirmed. "
+                                f"Error: {str(result.get('output', ''))[:200]}"),
                     "detail": {}}
         except Exception as exc:
             return {"exists": False, "verified": False, "status_code": 0,
@@ -523,144 +288,6 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             f"Could not retrieve deploy error detail for '{iflow_id}'. "
             f"Check SAP CPI monitoring: {_SAP_TENANT}/itspaces/shell/monitor/messages"
         )
-
-    # ── _get_fix_operation ────────────────────────────────────────────────────
-
-    async def _get_fix_operation(
-        self,
-        iflow_id: str,
-        error_type: str,
-        error_message: str,
-        proposed_fix: str,
-        root_cause: str,
-        affected_component: str,
-        original_xml: str,
-        pattern_history: str,
-        sap_notes: str,
-        error_type_guidance: str,
-    ) -> List[Dict]:
-        """
-        Phase 1 — ask the diagnosis-only agent to return a structured fix operation.
-        The iFlow XML is injected directly so the agent rarely needs to call get-iflow.
-        Returns a list of operation dicts (may be empty if parsing fails).
-        """
-        agent = self._diagnosis_agent
-        if agent is None:
-            logger.debug("[FIX] No diagnosis agent — skipping structured path.")
-            return []
-
-        prompt = FIX_OPERATION_PROMPT_TEMPLATE.format(
-            iflow_id=iflow_id,
-            error_type=error_type,
-            error_message=(error_message or "")[:3000],
-            proposed_fix=proposed_fix or "",
-            root_cause=root_cause or "",
-            affected_component=affected_component or "",
-            original_xml=original_xml or "",
-            pattern_history=pattern_history or "",
-            sap_notes=sap_notes or "",
-            error_type_guidance=error_type_guidance or "",
-        )
-        try:
-            result = await asyncio.wait_for(
-                agent.ainvoke(
-                    {"messages": [{"role": "user", "content": prompt}]},
-                    config={"recursion_limit": 6},
-                ),
-                timeout=240.0,
-            )
-            final_msg = result["messages"][-1]
-            answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
-            clean     = re.sub(r"```(?:json)?|```", "", answer).strip()
-            parsed    = json.loads(clean)
-            ops: List[Dict] = parsed if isinstance(parsed, list) else [parsed]
-            logger.info(
-                "[FIX] Structured operation(s) from diagnosis agent: %d op(s) for iflow=%s",
-                len(ops), iflow_id,
-            )
-            return ops
-        except asyncio.TimeoutError:
-            logger.warning("[FIX] Diagnosis agent timed out for iflow=%s — falling back.", iflow_id)
-        except Exception as exc:
-            logger.warning("[FIX] _get_fix_operation failed for iflow=%s: %s", iflow_id, exc)
-        return []
-
-    # ── _apply_structured_fix ─────────────────────────────────────────────────
-
-    async def _apply_structured_fix(
-        self,
-        iflow_id: str,
-        operations: List[Dict],
-        original_xml: str,
-        original_filepath: str,
-    ) -> Dict[str, Any]:
-        """
-        Phase 2 — apply the structured operations via the patcher, then call
-        update-iflow and deploy-iflow directly (no LLM free-XML rewriting).
-        Returns a result dict compatible with evaluate_fix_result output.
-        """
-        from core.validators import _check_iflow_xml  # noqa: PLC0415
-
-        # Apply all operations via the patcher
-        try:
-            patched_xml = apply_fix_operations(original_xml, operations)
-        except PatcherError as exc:
-            return {
-                "success": False, "fix_applied": False, "deploy_success": False,
-                "failed_stage": "patcher",
-                "summary": f"Structured patcher failed: {exc}",
-                "technical_details": str(exc),
-            }
-
-        # Validate patched XML before touching SAP
-        errors = _check_iflow_xml(original_xml, patched_xml)
-        if errors:
-            return {
-                "success": False, "fix_applied": False, "deploy_success": False,
-                "failed_stage": "validation",
-                "summary": f"Patched XML failed structural validation: {errors[0]}",
-                "technical_details": " | ".join(errors),
-            }
-
-        # Call update-iflow directly
-        update_result = await self._mcp.execute_integration_tool(
-            "update-iflow",
-            {"id": iflow_id, "files": [{"filepath": original_filepath, "content": patched_xml}]},
-        )
-        update_out = str(update_result.get("output", ""))
-        if not self._update_succeeded(update_out):
-            return {
-                "success": False, "fix_applied": False, "deploy_success": False,
-                "failed_stage": "update",
-                "summary": f"update-iflow failed after structured patch: {update_out[:200]}",
-                "technical_details": update_out,
-            }
-
-        # Call deploy-iflow directly
-        deploy_result = await self._mcp.execute_integration_tool(
-            "deploy-iflow", {"id": iflow_id}
-        )
-        deploy_out = str(deploy_result.get("output", ""))
-        deploy_ok  = self._deploy_succeeded(deploy_out)
-
-        op_summary = "; ".join(
-            f"{op.get('change_type')} '{op.get('field')}' on '{op.get('target_component')}'"
-            for op in operations
-        )
-        if deploy_ok:
-            logger.info("[FIX] Structured fix succeeded: iflow=%s ops=[%s]", iflow_id, op_summary)
-            return {
-                "success": True, "fix_applied": True, "deploy_success": True,
-                "failed_stage": None,
-                "summary": f"Structured fix applied and deployed. Changes: {op_summary}",
-                "technical_details": op_summary,
-            }
-        return {
-            "success": False, "fix_applied": True, "deploy_success": False,
-            "failed_stage": "deploy",
-            "summary": f"Patch applied but deploy failed: {deploy_out[:200]}",
-            "technical_details": deploy_out,
-        }
 
     # ── ask_fix_and_deploy ────────────────────────────────────────────────────
 
@@ -714,7 +341,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 f"Use this as a reference — apply the same change if the root cause matches.\n"
             )
 
-        # Cross-iFlow pattern lookup — same error type, any iFlow
+        # Cross-iFlow pattern lookup
         from db.database import get_patterns_by_error_type  # noqa: PLC0415
         cross_patterns = get_patterns_by_error_type(error_type or "", min_success_count=1)
         cross_pattern_text = ""
@@ -728,13 +355,12 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     f"success_count: {p.get('success_count', 0)}"
                 )
             cross_pattern_text = "\n".join(lines)
-            logger.info(
-                "[FIX] Found %d cross-iFlow patterns for error_type=%s",
-                len(cross_patterns), error_type,
-            )
+            logger.info("[FIX] Found %d cross-iFlow patterns for error_type=%s",
+                        len(cross_patterns), error_type)
 
-        # SAP Notes from vector store — gives the fixer knowledge base context
-        _vs = get_vector_store()
+        # SAP Notes from vector store
+        from core.constants import ERROR_TYPE_FIX_GUIDANCE  # noqa: PLC0415
+        _vs    = get_vector_store()
         _notes = _vs.retrieve_relevant_notes(error_message or "", error_type or "", iflow_id, limit=3)
         sap_notes = _vs.format_notes_for_prompt(_notes) if _notes else ""
         if sap_notes:
@@ -742,8 +368,8 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
 
         error_type_guidance = ERROR_TYPE_FIX_GUIDANCE.get(error_type or "", "")
 
-        # ── Pre-fetch iFlow XML: shared by patcher, validator, and rollback ──
-        _original_xml: Optional[str] = None
+        # Pre-fetch iFlow XML
+        _original_xml: Optional[str]      = None
         _original_filepath: Optional[str] = None
         try:
             _get_result = await self._mcp.execute_integration_tool("get-iflow", {"id": iflow_id})
@@ -755,100 +381,53 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     _original_filepath = _fp
                     _original_xml      = _xml
                     _fix_ctx.set({"filepath": _fp, "xml": _xml})
-                    logger.debug(
-                        "[FIX_DEPLOY] Snapshot captured: filepath=%s xml_len=%d",
-                        _fp, len(_xml),
-                    )
+                    logger.debug("[FIX_DEPLOY] Snapshot captured: filepath=%s xml_len=%d",
+                                 _fp, len(_xml))
                 elif _out_str:
                     _original_xml = _out_str
         except Exception as _pre_exc:
-            logger.debug("[FIX_DEPLOY] Pre-fetch for rollback/snapshot failed (non-fatal): %s", _pre_exc)
+            logger.debug("[FIX_DEPLOY] Pre-fetch failed (non-fatal): %s", _pre_exc)
 
-        # ── PHASE 1: Structured fix path (programmatic XML surgery) ─────────
-        if _original_xml and _original_filepath:
-            _operations   = await self._get_fix_operation(
-                iflow_id=iflow_id,
-                error_type=error_type or "UNKNOWN",
-                error_message=error_message or "",
-                proposed_fix=proposed_fix or "",
-                root_cause=root_cause or "",
-                affected_component=affected_component or "",
-                original_xml=_original_xml,
-                pattern_history=pattern_history,
-                sap_notes=sap_notes,
-                error_type_guidance=error_type_guidance,
-            )
-            _applicable = [op for op in _operations if op.get("change_type") != "structural"]
-            if _applicable:
-                _operations = _applicable
-                _struct_result = await self._apply_structured_fix(
-                    iflow_id=iflow_id,
-                    operations=_operations,
-                    original_xml=_original_xml,
-                    original_filepath=_original_filepath,
-                )
-                if _struct_result.get("success"):
-                    self._mcp.update_memory(session_id, f"Fix {iflow_id}", _struct_result["summary"])
-                    logger.info("[FIX] Structured path succeeded: iflow=%s", iflow_id)
-                    return {**_struct_result, "steps": []}
-                logger.warning(
-                    "[FIX] Structured path failed (stage=%s) — falling back to free-XML agent: %s",
-                    _struct_result.get("failed_stage"), _struct_result.get("summary"),
-                )
-
-        # ── PHASE 2: Free-XML fallback (LLM rewrites full XML) ──────────────
-        _comp = (affected_component or "").strip()
-        targeted_component_hint = (
-            f'            → CONFIRMED failing component: "{_comp}"\n'
-            f'              Search for id="{_comp}" in the XML and go directly to this step.\n'
-            f"              Limit your change to this component — do not modify anything else."
-            if _comp and _comp.lower() != "unknown"
-            else "            → No specific component confirmed — infer from error type and iFlow structure."
-        )
-        # Only inject rules relevant to the error type to keep the prompt focused
-        _et = (error_type or "UNKNOWN").upper()
-        _groovy_relevant = {"MAPPING_ERROR", "DATA_VALIDATION", "UNKNOWN_ERROR"}
-        _struct_relevant = {"MAPPING_ERROR", "DATA_VALIDATION", "UNKNOWN_ERROR", "AUTH_CONFIG_ERROR"}
-        _groovy_rules_ctx = CPI_IFLOW_GROOVY_RULES if _et in _groovy_relevant else ""
-        _xml_patterns_ctx = CPI_IFLOW_XML_PATTERNS if _et in _struct_relevant else ""
-        prompt = FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
+        # Build shared context
+        ctx = FixContext(
             iflow_id=iflow_id,
             error_type=error_type or "UNKNOWN",
-            error_message=(error_message or "")[:3000],
-            message_guid=message_guid or "N/A",
-            root_cause=root_cause or error_message,
-            proposed_fix=proposed_fix or f"Investigate and fix the error: {error_message}",
-            affected_component=affected_component or "unknown",
-            targeted_component_hint=targeted_component_hint,
+            error_message=error_message or "",
+            proposed_fix=proposed_fix or "",
+            root_cause=root_cause or "",
+            affected_component=affected_component or "",
+            original_xml=_original_xml or "",
+            original_filepath=_original_filepath or "",
             pattern_history=pattern_history,
             sap_notes=sap_notes,
             error_type_guidance=error_type_guidance,
-            groovy_rules=_groovy_rules_ctx,
-            iflow_xml_patterns=_xml_patterns_ctx,
+            cross_pattern_text=cross_pattern_text,
+            message_guid=message_guid,
+            user_id=user_id,
+            session_id=session_id,
+            timestamp=timestamp,
         )
-        if cross_pattern_text:
-            prompt += f"\n\n{cross_pattern_text}"
-        messages  = [{"role": "user", "content": prompt}]
-        tracker   = TestExecutionTracker(user_id, f"fix:{iflow_id}", timestamp)
-        logger_cb = StepLogger(tracker, progress_fn=progress_fn)
 
-        answer: str = ""
-        evaluation: Dict[str, Any] = {
-            "success": False, "fix_applied": False, "deploy_success": False,
-            "failed_stage": "agent", "summary": "No result from fix agent.",
-            "technical_details": "", "failed_steps": [],
-        }
-        # ── ATTEMPT 2: Single LLM full-rewrite ──────────────────────────────────
-        try:
-            _result = await asyncio.wait_for(
-                agent.ainvoke(
-                    {"messages": messages},
-                    config={"callbacks": [logger_cb], "recursion_limit": 18},
-                ),
-                timeout=600.0,
-            )
-        except asyncio.TimeoutError:
-            diagnosis = self._diagnose_timeout(logger_cb.steps, iflow_id)
+        # ── Core pipeline ─────────────────────────────────────────────────────
+        strategy, sliced_xml = await self._planner.plan(ctx)
+        ctx   = dataclasses.replace(ctx, sliced_xml=sliced_xml)
+        patch = await self._generator.generate(ctx, strategy, progress_fn=progress_fn)
+        vresult  = self._validator.pre_validate(ctx, patch)
+        result   = await self._applier.apply(ctx, patch, vresult)
+
+        evaluation: Dict[str, Any] = result.to_dict()
+        logger_steps = patch.steps
+        answer       = patch.raw_answer
+
+        # Structured path succeeded — skip retry machinery
+        if strategy.strategy == "structured" and evaluation.get("success"):
+            self._mcp.update_memory(session_id, f"Fix {iflow_id}", evaluation["summary"])
+            logger.info("[FIX] Structured path succeeded: iflow=%s", iflow_id)
+            return evaluation
+
+        # ── Timeout recovery ──────────────────────────────────────────────────
+        if evaluation.get("failed_stage") == "timeout":
+            diagnosis = self._diagnose_timeout(logger_steps, iflow_id)
             logger.error("[FIX_DEPLOY] agent timed out | iflow=%s stage=%s",
                          iflow_id, diagnosis["failed_stage"])
             if diagnosis["failed_stage"] == "deploy" and iflow_id:
@@ -864,50 +443,17 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                         "technical_details": (
                             f"deploy-iflow SSE timed out; runtime poll confirmed '{poll['status']}'."
                         ),
-                        "steps": logger_cb.steps,
+                        "steps": logger_steps,
                     }
-            return {**diagnosis, "steps": logger_cb.steps}
-        except Exception as exc:
-            logger.error("[FIX_DEPLOY] agent error: %s", exc)
-            return {
-                "success": False, "fix_applied": False, "deploy_success": False,
-                "failed_stage": "agent",
-                "technical_details": str(exc),
-                "summary": "Fix execution failed while generating or applying the iFlow change plan.",
-                "steps": logger_cb.steps,
-            }
+            return {**diagnosis, "steps": logger_steps}
 
-        _final_msg = _result["messages"][-1]
-        answer     = _final_msg.content if hasattr(_final_msg, "content") else str(_final_msg)
-
-        # Verify the LLM actually invoked tools — not just described what to do
-        invoked_tools: List[str] = []
-        for msg in _result["messages"]:
-            tool_calls = getattr(msg, "tool_calls", None) or []
-            for tc in tool_calls:
-                name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
-                if name and name not in invoked_tools:
-                    invoked_tools.append(name)
-        if not invoked_tools:
-            logger.warning("[FIX] NO tool calls made — LLM described fix without executing. Treating as FAILED.")
-            return {
-                "success": False, "fix_applied": False, "deploy_success": False,
-                "failed_stage": "no_tool_calls",
-                "summary": "LLM did not execute any tools.",
-                "steps": logger_cb.steps,
-            }
-        answer += f"\n\n__TOOLS_INVOKED__={','.join(invoked_tools)}"
-        logger.info("[FIX] Tools invoked: %s", invoked_tools)
-        evaluation = self.evaluate_fix_result(logger_cb.steps, answer)
-
-        # Validation retry: one targeted retry when the agent skipped validate_iflow_xml
-        # or validate_iflow_xml returned errors before update-iflow was called.
+        # ── Validation retry ──────────────────────────────────────────────────
         if not evaluation.get("success") and evaluation.get("failed_stage") != "locked":
             _val_skipped = not any(
-                "validate_iflow_xml" in str(s.get("tool", "")) for s in logger_cb.steps
+                "validate_iflow_xml" in str(s.get("tool", "")) for s in logger_steps
             )
             _val_error = next(
-                (str(s.get("output", "")) for s in logger_cb.steps
+                (str(s.get("output", "")) for s in logger_steps
                  if "validate_iflow_xml" in str(s.get("tool", "")) and "ERRORS:" in str(s.get("output", ""))),
                 "",
             )
@@ -921,11 +467,12 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     TestExecutionTracker(user_id, f"fix:{iflow_id}:val_retry", timestamp),
                     progress_fn=progress_fn,
                 )
+                _original_messages = [{"role": "user", "content": patch.raw_answer.split("\n\n__TOOLS_INVOKED__")[0]}]
                 try:
                     _result_val = await asyncio.wait_for(
                         agent.ainvoke(
                             {"messages": [
-                                *messages,
+                                *_original_messages,
                                 {"role": "assistant", "content": answer},
                                 {"role": "user", "content": (
                                     f"VALIDATION REQUIRED: {_val_hint}\n"
@@ -940,11 +487,11 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     )
                     _answer_val = _result_val["messages"][-1]
                     _answer_val = _answer_val.content if hasattr(_answer_val, "content") else str(_answer_val)
-                    _eval_val   = self.evaluate_fix_result(_logger_cb_val.steps, _answer_val)
+                    _eval_val   = self._applier.evaluate_fix_result(_logger_cb_val.steps, _answer_val)
                     if _eval_val.get("success") or _eval_val.get("fix_applied"):
-                        evaluation = _eval_val
-                        logger_cb  = _logger_cb_val
-                        answer     = _answer_val
+                        evaluation   = _eval_val
+                        logger_steps = _logger_cb_val.steps
+                        answer       = _answer_val
                         logger.info("[FIX_DEPLOY] Validation retry succeeded: iflow=%s", iflow_id)
                 except Exception as _val_exc:
                     logger.warning("[FIX_DEPLOY] Validation retry failed: %s", _val_exc)
@@ -954,23 +501,51 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             logger.info("[FIX_DEPLOY] Locked mid-run — attempting unlock + retry: %s", iflow_id)
             unlock_retry = await self._try_unlock_iflow_via_api(iflow_id)
             if unlock_retry["success"]:
+                from core.constants import FIX_AND_DEPLOY_PROMPT_TEMPLATE  # noqa: PLC0415
+                from core.constants import (  # noqa: PLC0415
+                    CPI_IFLOW_GROOVY_RULES, CPI_IFLOW_XML_PATTERNS, ERROR_TYPE_FIX_GUIDANCE,
+                    GROOVY_STRIPE_HTTP_ADAPTER, GROOVY_WOOCOMMERCE_HTTP_ADAPTER,
+                )
+                _comp = (ctx.affected_component or "").strip()
+                _targeted = (
+                    f'            → CONFIRMED failing component: "{_comp}"\n'
+                    f"              Limit your change to this component."
+                    if _comp and _comp.lower() != "unknown"
+                    else "            → No specific component confirmed."
+                )
+                _et             = (ctx.error_type or "UNKNOWN").upper()
+                _retry_prompt   = FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
+                    iflow_id=iflow_id,
+                    error_type=ctx.error_type or "UNKNOWN",
+                    error_message=(ctx.error_message or "")[:3000],
+                    message_guid=ctx.message_guid or "N/A",
+                    root_cause=ctx.root_cause or ctx.error_message,
+                    proposed_fix=ctx.proposed_fix or "",
+                    affected_component=ctx.affected_component or "unknown",
+                    targeted_component_hint=_targeted,
+                    pattern_history=ctx.pattern_history,
+                    sap_notes=ctx.sap_notes,
+                    error_type_guidance=ctx.error_type_guidance,
+                    groovy_rules=CPI_IFLOW_GROOVY_RULES if _et in {"MAPPING_ERROR","DATA_VALIDATION","UNKNOWN_ERROR"} else "",
+                    iflow_xml_patterns=CPI_IFLOW_XML_PATTERNS if _et in {"MAPPING_ERROR","DATA_VALIDATION","UNKNOWN_ERROR","AUTH_CONFIG_ERROR"} else "",
+                )
                 tracker2   = TestExecutionTracker(user_id, f"fix_retry:{iflow_id}", timestamp)
                 logger_cb2 = StepLogger(tracker2, progress_fn=progress_fn)
                 try:
-                    result2    = await asyncio.wait_for(
+                    result2 = await asyncio.wait_for(
                         agent.ainvoke(
-                            {"messages": messages},
+                            {"messages": [{"role": "user", "content": _retry_prompt}]},
                             config={"callbacks": [logger_cb2], "recursion_limit": 12},
                         ),
                         timeout=480.0,
                     )
-                    answer2    = result2["messages"][-1]
-                    answer2    = answer2.content if hasattr(answer2, "content") else str(answer2)
-                    eval2      = self.evaluate_fix_result(logger_cb2.steps, answer2)
+                    answer2   = result2["messages"][-1]
+                    answer2   = answer2.content if hasattr(answer2, "content") else str(answer2)
+                    eval2     = self._applier.evaluate_fix_result(logger_cb2.steps, answer2)
                     if eval2.get("success") or eval2.get("failed_stage") != "locked":
-                        evaluation = eval2
-                        logger_cb  = logger_cb2
-                        answer     = answer2
+                        evaluation   = eval2
+                        logger_steps = logger_cb2.steps
+                        answer       = answer2
                 except Exception as retry_exc:
                     logger.error("[FIX_DEPLOY] Retry after unlock failed: %s", retry_exc)
             else:
@@ -1017,10 +592,10 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                         f'{{"fix_applied": true, "deploy_success": true/false, '
                         f'"summary": "<what was corrected and deploy outcome>"}}'
                     )
-                    tracker_c  = TestExecutionTracker(user_id, f"fix_correction_p{_pass}:{iflow_id}", timestamp)
+                    tracker_c   = TestExecutionTracker(user_id, f"fix_correction_p{_pass}:{iflow_id}", timestamp)
                     logger_cb_c = StepLogger(tracker_c, progress_fn=progress_fn)
                     try:
-                        result_c  = await asyncio.wait_for(
+                        result_c = await asyncio.wait_for(
                             agent.ainvoke(
                                 {"messages": [{"role": "user", "content": correction_prompt}]},
                                 config={"callbacks": [logger_cb_c], "recursion_limit": 12},
@@ -1029,14 +604,14 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                         )
                         answer_c  = result_c["messages"][-1]
                         answer_c  = answer_c.content if hasattr(answer_c, "content") else str(answer_c)
-                        eval_c    = self.evaluate_fix_result(logger_cb_c.steps, answer_c)
+                        eval_c    = self._applier.evaluate_fix_result(logger_cb_c.steps, answer_c)
                         if eval_c.get("deploy_success"):
-                            evaluation = eval_c
-                            logger_cb  = logger_cb_c
-                            answer     = answer_c
+                            evaluation   = eval_c
+                            logger_steps = logger_cb_c.steps
+                            answer       = answer_c
                             break
                         else:
-                            evaluation["failed_stage"]     = "deploy_validation"
+                            evaluation["failed_stage"]      = "deploy_validation"
                             evaluation["technical_details"] = (
                                 f"Original deploy errors: {deploy_errors[:600]}\n"
                                 f"Pass {_pass}: {eval_c.get('technical_details', '')}"
@@ -1048,10 +623,6 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                         logger.error("[FIX_DEPLOY] Self-correction pass %d error: %s", _pass, corr_exc)
                         break
 
-            # ── Fixed XML preserved — signal pending deploy rather than rolling back ──
-            # Rolling back would restore the broken original XML and guarantee the same error
-            # fires again. Instead, keep the fixed design-time XML and let the orchestrator
-            # schedule a deploy-only retry via FIX_APPLIED_PENDING_VERIFICATION status.
             if (
                 iflow_id
                 and evaluation.get("fix_applied")
@@ -1074,12 +645,16 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 evaluation.get("failed_stage", "unknown"),
                 evaluation.get("summary", "")[:200],
             )
+
+        # Fire post-validation in the background — non-blocking
+        asyncio.create_task(self._validator.post_validate(ctx))
+
         self._mcp.update_memory(session_id, f"Fix {iflow_id}", evaluation["summary"])
         logger.info(
             "[FIX_DEPLOY] iflow=%s fix_applied=%s deploy_success=%s",
-            iflow_id, evaluation["fix_applied"], evaluation["deploy_success"],
+            iflow_id, evaluation.get("fix_applied"), evaluation.get("deploy_success"),
         )
-        return {**evaluation, "steps": logger_cb.steps, "raw_answer": answer}
+        return {**evaluation, "steps": logger_steps, "raw_answer": answer}
 
     # ── ask_deploy_only ───────────────────────────────────────────────────────
 
@@ -1119,7 +694,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             )
             final_msg   = result["messages"][-1]
             answer      = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
-            eval_result = self.evaluate_fix_result(logger_cb.steps, answer)
+            eval_result = self._applier.evaluate_fix_result(logger_cb.steps, answer)
             eval_result["fix_applied"] = True
             return {**eval_result, "steps": logger_cb.steps}
         except asyncio.TimeoutError:
@@ -1199,9 +774,8 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
     async def capture_snapshot(self, iflow_id: str, incident_id: str) -> None:
         """
         Download the current iFlow before any modification and:
-          1. Store the snapshot in the DB (iflow_snapshot_before).
-          2. Set the _fix_ctx ContextVar so update-iflow calls are validated
-             against this snapshot by the iFlow XML validator.
+          1. Store the snapshot in the DB.
+          2. Set the _fix_ctx ContextVar for the XML validator.
         """
         try:
             get_tool = self._mcp.get_mcp_tool("integration_suite", "get-iflow")
@@ -1218,3 +792,8 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 logger.info("[VALIDATOR] Fix context set: filepath='%s' xml_len=%d", orig_fp, len(orig_xml))
         except Exception as exc:
             logger.warning("[FIX] Could not capture iFlow snapshot for %s: %s", iflow_id, exc)
+
+    # ── evaluate_fix_result (backward compat — delegates to applier) ──────────
+
+    def evaluate_fix_result(self, steps: List[Dict], answer: str) -> Dict[str, Any]:
+        return self._applier.evaluate_fix_result(steps, answer)

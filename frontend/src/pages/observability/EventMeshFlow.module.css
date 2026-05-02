@@ -282,9 +282,10 @@
 }
 
 .logTs {
-  font-size: 0.68rem;
-  color: #94a3b8;
+  font-size: 0.72rem;
+  color: #64748b;
   font-family: 'Courier New', monospace;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -295,8 +296,9 @@
 }
 
 .logIflow {
-  font-size: 0.78rem;
-  color: #4a5568;
+  font-size: 0.82rem;
+  color: #1e293b;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -305,8 +307,9 @@
 }
 
 .logIflowUnknown {
-  font-size: 0.78rem;
-  color: #94a3b8;
+  font-size: 0.82rem;
+  color: #64748b;
+  font-weight: 500;
   font-style: italic;
   font-family: 'Courier New', monospace;
 }
