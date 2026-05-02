@@ -1405,6 +1405,7 @@ async def apply_fix(
     req: ApplyFixRequest,
     background_tasks: BackgroundTasks,
     sync: bool = False,
+    force: bool = False,
     mcp=Depends(_get_mcp),
 ):
     """
@@ -1412,6 +1413,7 @@ async def apply_fix(
 
     By default runs in the background (sync=false).
     Pass ?sync=true to block until the fix completes (useful for testing).
+    Pass ?force=true to skip the pre-flight "iFlow already started" guard and apply the fix anyway.
 
     Maps to the 'Fix Patch' / 'Apply Fix' button in the fix patch view.
     """
@@ -1454,7 +1456,7 @@ async def apply_fix(
     if sync:
         update_incident(incident_id, {"status": "FIX_IN_PROGRESS"})
         try:
-            fix_result = await mcp.execute_incident_fix(dict(incident), human_approved=True)
+            fix_result = await mcp.execute_incident_fix(dict(incident), human_approved=True, force=force)
             return {
                 "incident_id":      incident_id,
                 "message_guid":     message_guid,
@@ -1481,7 +1483,7 @@ async def apply_fix(
 
     async def _run_fix_background() -> None:
         try:
-            result = await mcp.execute_incident_fix(dict(incident), human_approved=True)
+            result = await mcp.execute_incident_fix(dict(incident), human_approved=True, force=force)
             if not result.get("success"):
                 update_incident(incident_id, {
                     "last_failed_stage": result.get("failed_stage", "unknown"),

@@ -428,7 +428,7 @@ export default function Observability() {
   // Fix-related state
   const [fixPatch, setFixPatch] = useState<IFixPatchResponse | null>(null);
   const [fixPatchLoading, setFixPatchLoading] = useState(false);
-  const [fixState, setFixState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [fixState, setFixState] = useState<"idle" | "loading" | "success" | "error" | "skipped">("idle");
   const [fixResult, setFixResult] = useState<string>("");
   const [fixProgress, setFixProgress] = useState<{
     currentStep: string; stepIndex: number; totalSteps: number; stepsDone: string[];
@@ -614,7 +614,10 @@ export default function Observability() {
 
       // Restore fix outcome state from incident status
       const incStatus = (d.incident_status || "").toUpperCase();
-      if (["AUTO_FIXED", "HUMAN_INITIATED_FIX", "FIX_VERIFIED", "RETRIED"].includes(incStatus)) {
+      if (incStatus === "HUMAN_INITIATED_FIX") {
+        setFixState("skipped");
+        setFixResult(d.ai_recommendation?.fix_summary || "iFlow was already running — no changes were applied.");
+      } else if (["AUTO_FIXED", "FIX_VERIFIED", "RETRIED"].includes(incStatus)) {
         setFixState("success");
         setFixResult(d.ai_recommendation?.fix_summary || "Fix applied and deployed successfully.");
       } else if (["FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME"].includes(incStatus)) {
@@ -700,7 +703,10 @@ export default function Observability() {
         if (TERMINAL_STATUSES.has(st)) {
           resolved = true;
           setFixProgress(null);
-          if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(st)) {
+          if (st === "HUMAN_INITIATED_FIX") {
+            setFixState("skipped");
+            setFixResult((s.fix_summary as string) || "iFlow was already running — no changes were applied.");
+          } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(st)) {
             setFixState("success");
             setFixResult((s.fix_summary as string) || "Fix applied and deployed.");
           } else {
@@ -723,23 +729,28 @@ export default function Observability() {
   /* ── Apply fix ──────────────────────────────────────────────────────── */
   const handleApplyFix = useCallback(async () => {
     if (!selectedGuid) return;
+    const isForce = fixState === "skipped";
     setFixState("loading");
     setFixResult("");
-    setFixProgress({ currentStep: "Submitting fix request…", stepIndex: 0, totalSteps: 4, stepsDone: [] });
+    setFixProgress({ currentStep: isForce ? "Force-applying fix…" : "Submitting fix request…", stepIndex: 0, totalSteps: 4, stepsDone: [] });
     pollAbortRef.current.cancelled = false;
     try {
       const proposedFix =
         fixPatch?.summary_structured?.proposed_fix ||
         detail?.ai_recommendation?.proposed_fix ||
         undefined;
-      const result = await applyMessageFix(selectedGuid, "user", proposedFix) as Record<string, unknown>;
+      const result = await applyMessageFix(selectedGuid, "user", proposedFix, isForce) as Record<string, unknown>;
       const incidentId = (result.incident_id as string) || detail?.incident_id || "";
 
       const syncStatus = (result.status as string || "").toUpperCase();
       const syncFixApplied = result.fix_applied === true;
       const syncDeploy = result.deploy_success === true;
 
-      if (syncStatus === "AUTO_FIXED" || syncStatus === "HUMAN_FIXED" || (syncFixApplied && syncDeploy)) {
+      if (syncStatus === "HUMAN_INITIATED_FIX") {
+        setFixProgress(null);
+        setFixState("skipped");
+        setFixResult((result.summary as string) || "iFlow was already running — no changes were applied.");
+      } else if (syncStatus === "AUTO_FIXED" || syncStatus === "HUMAN_FIXED" || (syncFixApplied && syncDeploy)) {
         setFixProgress(null);
         setFixState("success");
         setFixResult((result.summary as string) || "Fix applied and deployed successfully.");
@@ -1310,17 +1321,31 @@ export default function Observability() {
                     <div className={styles.fixFooterActions}>
                       {fixPatch ? (
                         <>
-                          <button
-                            className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
-                            onClick={handleApplyFix}
-                            disabled={fixState === "loading" || fixState === "success"}
-                            data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
-                          >
-                            {fixState === "idle"    && <><SvgIcon name="lightning" size={13} style={{ marginRight: "0.35rem", verticalAlign: "middle" }} />Apply Fix</>}
-                            {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
-                            {fixState === "success" && "✓ Fix Applied"}
-                            {fixState === "error"   && "↺ Retry Fix"}
-                          </button>
+                          {fixState !== "skipped" && (
+                            <button
+                              className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
+                              onClick={handleApplyFix}
+                              disabled={fixState === "loading" || fixState === "success"}
+                              data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
+                            >
+                              {fixState === "idle"    && <><SvgIcon name="lightning" size={13} style={{ marginRight: "0.35rem", verticalAlign: "middle" }} />Apply Fix</>}
+                              {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
+                              {fixState === "success" && "✓ Fix Applied"}
+                              {fixState === "error"   && "↺ Retry Fix"}
+                            </button>
+                          )}
+                          {fixState === "skipped" && (
+                            <>
+                              <span className={styles.alreadyRunningBadge}>⚠ Already Running — No Changes Applied</span>
+                              <button
+                                className={styles.forceApplyBtn}
+                                onClick={handleApplyFix}
+                                data-tip="iFlow is in Started state but may still have wrong configuration. Force-apply the fix anyway."
+                              >
+                                Force Apply Fix
+                              </button>
+                            </>
+                          )}
                           {fixState === "error" && detail?.incident_id && (
                             <button
                               className={styles.checkStatusBtn}

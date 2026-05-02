@@ -87,8 +87,8 @@ export async function generateFixPatch(guid: string, userId = "user"): Promise<u
   });
 }
 
-export async function applyMessageFix(guid: string, userId = "user", proposedFix?: string): Promise<unknown> {
-  return request(`${_BASE}/smart-monitoring/messages/${guid}/apply_fix`, {
+export async function applyMessageFix(guid: string, userId = "user", proposedFix?: string, force = false): Promise<unknown> {
+  return request(`${_BASE}/smart-monitoring/messages/${guid}/apply_fix${force ? "?force=true" : ""}`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, proposed_fix: proposedFix }),
   });

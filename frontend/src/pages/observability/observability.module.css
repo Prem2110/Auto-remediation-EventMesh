@@ -701,6 +701,21 @@
 }
 .checkStatusBtn:hover { background: #eff6ff; }
 
+.alreadyRunningBadge {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.3rem 0.7rem; border-radius: 6px; font-size: 0.75rem;
+  font-weight: 600; background: #fefce8; color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.forceApplyBtn {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.4rem 0.85rem; border-radius: 6px; font-size: 0.775rem;
+  font-weight: 600; cursor: pointer; border: 1.5px solid #d97706;
+  background: transparent; color: #d97706; transition: background 0.18s, color 0.18s;
+}
+.forceApplyBtn:hover { background: #fffbeb; }
+
 .fixResultText {
   font-size: 0.775rem;
   color: var(--orbit-gray-700, #374151);

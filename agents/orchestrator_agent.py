@@ -788,7 +788,7 @@ Rules:
     # ────────────────────────────────────────────
 
     async def execute_incident_fix(
-        self, incident: Dict, human_approved: bool = False, deploy_only: bool = False
+        self, incident: Dict, human_approved: bool = False, deploy_only: bool = False, force: bool = False
     ) -> Dict[str, Any]:
         incident_id      = incident.get("incident_id", "")
         working_incident = dict(incident)
@@ -833,7 +833,9 @@ Rules:
         # If the iFlow is already in Started/healthy state before we touch it,
         # a human has likely fixed it manually. Skip the AI fix to avoid
         # modifying a working iFlow.
-        if iflow_id and self._observer and self._observer.error_fetcher:
+        # When force=True the user explicitly wants to apply the fix anyway
+        # (e.g. iFlow is running but still has wrong config).
+        if not force and iflow_id and self._observer and self._observer.error_fetcher:
             try:
                 _rt = await self._observer.error_fetcher.fetch_runtime_artifact_detail(iflow_id)
                 _rt_status = (
@@ -868,6 +870,8 @@ Rules:
                     }
             except Exception as _rt_exc:
                 logger.warning("[FIX] Runtime health pre-check failed for %s: %s — proceeding with fix.", iflow_id, _rt_exc)
+        elif force and iflow_id:
+            logger.info("[FIX] force=True — skipping Started-state pre-flight check for %s", iflow_id)
 
         rca = {
             "root_cause":         working_incident.get("root_cause", ""),
