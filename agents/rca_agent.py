@@ -13,6 +13,7 @@ Exports:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -134,7 +135,11 @@ Available MCP tools (read-only):
 - get_message_logs  — read message processing log (use only if message GUID provided)
 
 Rules:
-- Call get_vector_store_notes FIRST for SAP Notes guidance.
+- When `knowledge_base_notes` is present in the input — READ IT CAREFULLY; it is your primary
+  grounding source. Do NOT call get_vector_store_notes again unless the notes section is empty.
+- When `pattern_history` contains a REUSE entry with success_count >= 2 — use it directly with
+  confidence = 1.0 and skip additional tool calls (only call get-iflow to confirm the step ID).
+- If no pre-fetched notes or patterns are provided, call get_vector_store_notes first.
 - Call get_cross_iflow_patterns to check for proven fixes from other iFlows.
 {_web_search_rule}- Call get-iflow ONCE to read the current iFlow configuration.
 - Call get_message_logs at MOST ONCE if a message GUID is provided.
@@ -143,15 +148,19 @@ Rules:
 - Return ONLY valid JSON after your investigation — no markdown, no preamble.
 - Maximum {_max_calls} tool calls total.
 
+`affected_component` MUST be the exact step ID from the iFlow XML
+(e.g. "CallActivity_1", "MessageMapping_1", "ReceiverHTTP_1") — not a generic label like
+"adapter" or "mapping". Read the iFlow XML and copy the id= attribute value exactly.
+
 Return exactly:
-{
+{{
   "root_cause": "<clear description referencing the specific step/adapter/mapping>",
   "proposed_fix": "<precise diagnosis grounded in the actual iFlow config>",
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact step ID or adapter name>"
-}
+  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>"
+}}
 """
         self._agent = await _mcp.build_agent(
             tools=all_tools,
@@ -207,10 +216,23 @@ Return exactly:
             )
 
         # ── SAP Notes from vector store ────────────────────────────────────────
-        vector_store     = get_vector_store()
-        sap_notes        = vector_store.retrieve_relevant_notes(error_message, error_type, iflow_id, limit=5)
-        sap_notes_context = vector_store.format_notes_for_prompt(sap_notes)
+        vector_store      = get_vector_store()
+        sap_notes         = vector_store.retrieve_relevant_notes(error_message, error_type, iflow_id, limit=3)
+        kb_notes          = vector_store.format_notes_for_prompt(sap_notes) if sap_notes else ""
         iflow_hint        = f"- iFlow ID for config lookup: {iflow_id}" if iflow_id else ""
+
+        # ── MD5-based pattern pre-fetch (matches record_fix_outcome signature) ──
+        _md5_sig      = hashlib.md5(f"{iflow_id}:{error_type}".encode()).hexdigest()[:16]
+        _md5_patterns = get_similar_patterns(_md5_sig)
+        pattern_text  = ""
+        if _md5_patterns:
+            best = _md5_patterns[0]
+            if best.get("success_count", 0) >= 2:
+                pattern_text = (
+                    f"REUSE THIS FIX (success_count={best['success_count']}, confidence=1.0):\n"
+                    f"root_cause: {best.get('root_cause', '')}\n"
+                    f"fix_applied: {best.get('fix_applied', '')}\n"
+                )
 
         # ── Prompt — two variants depending on whether we have a message GUID ─
         if message_guid:
@@ -223,7 +245,12 @@ Error detected:
 - Message:    {error_message}
 - Message ID: {message_guid}
 {history_hint}
-{sap_notes_context}
+
+=== knowledge_base_notes (pre-fetched — use as primary grounding source) ===
+{kb_notes}
+
+=== pattern_history (pre-fetched — REUSE if success_count >= 2) ===
+{pattern_text}
 
 Steps (execute in order, stop after step 3):
 1. Call get_message_logs ONCE for message ID: {message_guid}
@@ -237,7 +264,7 @@ Return ONLY valid JSON (no markdown, no preamble):
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact step ID or adapter name from the iFlow config>"
+  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>"
 }}
 
 STOP after returning JSON. Do not call any other tools.
@@ -247,7 +274,12 @@ STOP after returning JSON. Do not call any other tools.
 AUTONOMOUS RCA — do NOT ask for human input. No message GUID is available.
 {iflow_hint}
 {history_hint}
-{sap_notes_context}
+
+=== knowledge_base_notes (pre-fetched — use as primary grounding source) ===
+{kb_notes}
+
+=== pattern_history (pre-fetched — REUSE if success_count >= 2) ===
+{pattern_text}
 
 Error detected:
 - iFlow:      {iflow_id}
@@ -265,7 +297,7 @@ Return ONLY valid JSON (no markdown, no preamble):
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact step ID or adapter name from the iFlow config>"
+  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>"
 }}
 """
 

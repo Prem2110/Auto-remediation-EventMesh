@@ -85,6 +85,31 @@ class FixAgent:
                 return "VALID"
             return "ERRORS: " + " | ".join(errors)
 
+        @_tool
+        def record_fix_outcome(
+            iflow_id: str,
+            error_type: str,
+            root_cause: str,
+            fix_applied: str,
+            outcome: str,
+        ) -> str:
+            """Record a fix outcome (SUCCESS or FAILED) in fix_patterns table."""
+            from db.database import upsert_fix_pattern  # noqa: PLC0415
+            import hashlib  # noqa: PLC0415
+            sig = hashlib.md5(f"{iflow_id}:{error_type}".encode()).hexdigest()[:16]
+            try:
+                upsert_fix_pattern({
+                    "error_signature": sig,
+                    "iflow_id":        iflow_id,
+                    "error_type":      error_type,
+                    "root_cause":      root_cause,
+                    "fix_applied":     fix_applied,
+                    "outcome":         outcome,
+                })
+                return f"Fix pattern recorded for {iflow_id} ({outcome})"
+            except Exception as e:
+                return f"Error recording fix pattern: {e}"
+
         # Exactly 3 MCP tools — no testing, no docs
         get_iflow_tool    = self._mcp.get_mcp_tool("integration_suite", "get-iflow")
         update_iflow_tool = self._mcp.get_mcp_tool("integration_suite", "update-iflow")
@@ -95,21 +120,63 @@ class FixAgent:
             # Fallback: use all integration_suite tools if specific tools not yet discovered
             mcp_tools = [t for t in self._mcp.tools if t.server == "integration_suite"]
 
-        all_tools = [validate_iflow_xml] + mcp_tools
+        all_tools = [validate_iflow_xml, record_fix_outcome] + mcp_tools
 
-        system_prompt = f"""You are an SAP CPI iFlow fix and deployment agent.
+        system_prompt = """You are the FixAgent in a SAP CPI self-healing pipeline.
+Your ONLY job is to fix and deploy broken SAP CPI iFlows.
 
-CRITICAL — execute these steps IN ORDER for every fix task:
-1. Call get-iflow to read the current iFlow configuration.
-2. Analyse the error and determine the minimal required XML change.
-3. Call validate_iflow_xml with the updated XML to confirm it is structurally valid.
-4. Call update-iflow with the corrected iFlow ONLY IF validate_iflow_xml returns VALID.
-5. Call deploy-iflow — MANDATORY after every successful update. NEVER stop after update.
+=== MANDATORY TOOL CALLS — EXECUTE IN ORDER, NO SKIPPING ===
 
-Must do:
-- Report actual tool responses — never fabricate success.
-- Return structured JSON at the end:
-  {{"fix_applied": true/false, "deploy_success": true/false, "summary": "..."}}
+STEP 1: Call get-iflow with the iFlow ID provided in the user message.
+  - If get-iflow fails → STOP immediately. Return failed_stage="get".
+
+STEP 2: Determine the exact XML changes based on error_type:
+  - BACKEND_ERROR / 404: Find <Address> tag with broken URL — fix the path or trailing slash.
+  - MAPPING_ERROR: Find the renamed/missing field in Message Mapping XML. Update ALL occurrences.
+  - AUTH_ERROR / AUTH_CONFIG_ERROR: Fix the Credential Name property in the adapter config.
+  - CONNECTIVITY_ERROR: Fix <Address> or <Url> in the receiver adapter.
+  - DEPLOY_ERROR (structural):
+      A. Call list-iflow-examples to find a reference iFlow.
+      B. Call get-iflow-example to download the reference XML.
+      C. Find the disconnected step in the broken iFlow.
+      D. Insert the missing <bpmn2:SequenceFlow> to wire it up.
+      E. Do NOT change adapter config or message mappings.
+  - SCRIPT_ERROR / XSLT_ERROR: Check Groovy script file path references.
+
+STEP 3: Call validate_iflow_xml with the modified XML.
+  - If ERRORS returned → fix the XML issues and re-validate.
+  - Do NOT call update-iflow until validate_iflow_xml returns "VALID".
+
+STEP 4: Call update-iflow with id, files, autoDeploy=true.
+  - If response contains "artifact is locked": call cancel-checkout → retry ONCE.
+    If still locked → STOP, return failed_stage="locked".
+  - If any other failure → STOP, return failed_stage="update".
+
+STEP 5: Call deploy-iflow with the iFlow ID.
+  - If FAILS: call get-deploy-error to retrieve diagnostic details.
+  - Return failed_stage="deploy" with the error details.
+
+STEP 6: Call record_fix_outcome with iflow_id, error_type, root_cause, fix_applied summary,
+  and outcome="SUCCESS" or "FAILED".
+
+=== GROOVY SCRIPT RULES ===
+- Physical file path in iFlow archive: src/main/resources/script/<Name>.groovy
+- Model reference inside iFlow XML: /script/<Name>.groovy
+- Never use /src/main/resources, scripts/<Name>.groovy, or absolute paths.
+- Verify both the file path and the model reference before calling update-iflow.
+
+=== CRITICAL — DO NOT HALLUCINATE TOOL RESULTS ===
+- Every tool call MUST be a real invocation using an available tool.
+- The pipeline verifies tool_calls in the message history.
+- If no tool_calls are found in the message history → the fix is treated as FAILED.
+- Never invent tool responses or claim a step succeeded without calling the tool.
+
+=== FINAL OUTPUT (MANDATORY) ===
+After completing all steps, return EXACTLY this JSON — no markdown, no extra text:
+{"fix_applied": true/false, "deploy_success": true/false, "update_response": "<short summary>",
+ "deploy_response": "<short summary>", "summary": "<2 sentences: what changed and deploy outcome>",
+ "failed_stage": null}
+If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" | "validation"
 """
         self._agent = await self._mcp.build_agent(
             tools=all_tools,
@@ -132,7 +199,7 @@ Must do:
             )
 
         logger.info(
-            "[Fix] Agent ready — 1 local @tool + %d MCP tools (diagnosis_agent=%s).",
+            "[Fix] Agent ready — 2 local @tools + %d MCP tools (diagnosis_agent=%s).",
             len(mcp_tools), self._diagnosis_agent is not None,
         )
 
@@ -791,6 +858,25 @@ Must do:
 
         _final_msg = _result["messages"][-1]
         answer     = _final_msg.content if hasattr(_final_msg, "content") else str(_final_msg)
+
+        # Verify the LLM actually invoked tools — not just described what to do
+        invoked_tools: List[str] = []
+        for msg in _result["messages"]:
+            tool_calls = getattr(msg, "tool_calls", None) or []
+            for tc in tool_calls:
+                name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                if name and name not in invoked_tools:
+                    invoked_tools.append(name)
+        if not invoked_tools:
+            logger.warning("[FIX] NO tool calls made — LLM described fix without executing. Treating as FAILED.")
+            return {
+                "success": False, "fix_applied": False, "deploy_success": False,
+                "failed_stage": "no_tool_calls",
+                "summary": "LLM did not execute any tools.",
+                "steps": logger_cb.steps,
+            }
+        answer += f"\n\n__TOOLS_INVOKED__={','.join(invoked_tools)}"
+        logger.info("[FIX] Tools invoked: %s", invoked_tools)
         evaluation = self.evaluate_fix_result(logger_cb.steps, answer)
 
         # Validation retry: one targeted retry when the agent skipped validate_iflow_xml
