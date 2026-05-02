@@ -111,9 +111,15 @@ function StatusPill({ status }: { status: string }) {
 }
 
 const TERMINAL_STATUSES = new Set([
-  "AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED",
+  "AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "FIX_DEPLOYED",
   "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME",
   "PIPELINE_ERROR", "REJECTED", "TICKET_CREATED", "ARTIFACT_MISSING",
+  "HUMAN_INITIATED_FIX",
+]);
+
+const SUCCESS_STATUSES = new Set([
+  "AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED",
+  "FIX_DEPLOYED", "HUMAN_INITIATED_FIX",
 ]);
 
 /* ── Tab definitions ─────────────────────────────────────────────────── */
@@ -239,10 +245,14 @@ function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: 
   const allDone = stepIndex >= totalSteps || (currentStep || "").toLowerCase().includes("complete");
   const active = allDone
     ? slots  // beyond last slot — all are "done"
-    : Math.min(
-        stepIndex <= 0 ? 0 : Math.round((stepIndex / Math.max(totalSteps, 1)) * (slots - 1)),
-        slots - 1
-      );
+    : totalSteps >= slots
+      // Direct 1:1 mapping: backend emits step indices 0–4 matching the 5 visual slots
+      ? Math.min(stepIndex, slots - 1)
+      // Legacy proportional mapping for older backends
+      : Math.min(
+          stepIndex <= 0 ? 0 : Math.round((stepIndex / Math.max(totalSteps, 1)) * (slots - 1)),
+          slots - 1
+        );
   return (
     <div className={styles.stageRail}>
       {FIX_STAGES.map((label, i) => {
@@ -703,15 +713,17 @@ export default function Observability() {
           stepsDone:   (s.steps_done as string[]) || [],
         });
 
-        if (TERMINAL_STATUSES.has(st)) {
+        const stepLabel = ((s.current_step as string) || "").toLowerCase();
+        const stepImpliesDone = stepLabel.includes("complete") || stepLabel.includes("applied and") || stepLabel.includes("deployed successfully");
+        if (TERMINAL_STATUSES.has(st) || stepImpliesDone) {
           resolved = true;
           setFixProgress(null);
           if (st === "HUMAN_INITIATED_FIX") {
             setFixState("skipped");
             setFixResult((s.fix_summary as string) || "iFlow was already running — no changes were applied.");
-          } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(st)) {
+          } else if (SUCCESS_STATUSES.has(st) || stepImpliesDone) {
             setFixState("success");
-            setFixResult((s.fix_summary as string) || "Fix applied and deployed.");
+            setFixResult((s.fix_summary as string) || "Fix applied and deployed successfully.");
           } else {
             setFixState("error");
             setFixResult((s.fix_summary as string) || `Fix failed (${st}).`);
@@ -735,7 +747,7 @@ export default function Observability() {
     const isForce = fixState === "skipped";
     setFixState("loading");
     setFixResult("");
-    setFixProgress({ currentStep: isForce ? "Force-applying fix…" : "Submitting fix request…", stepIndex: 0, totalSteps: 4, stepsDone: [] });
+    setFixProgress({ currentStep: isForce ? "Force-applying fix…" : "Submitting fix request…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
     pollAbortRef.current.cancelled = false;
     try {
       const proposedFix =
@@ -753,7 +765,7 @@ export default function Observability() {
         setFixProgress(null);
         setFixState("skipped");
         setFixResult((result.summary as string) || "iFlow was already running — no changes were applied.");
-      } else if (syncStatus === "AUTO_FIXED" || syncStatus === "HUMAN_FIXED" || (syncFixApplied && syncDeploy)) {
+      } else if (SUCCESS_STATUSES.has(syncStatus) || (syncFixApplied && syncDeploy)) {
         setFixProgress(null);
         setFixState("success");
         setFixResult((result.summary as string) || "Fix applied and deployed successfully.");
@@ -780,7 +792,7 @@ export default function Observability() {
         const incidentId = detail?.incident_id || "";
         if (incidentId) {
           setFixResult("");
-          setFixProgress({ currentStep: "Fix already in progress — connecting…", stepIndex: 0, totalSteps: 4, stepsDone: [] });
+          setFixProgress({ currentStep: "Fix already in progress — connecting…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
           await startFixPolling(incidentId);
         } else {
           setFixState("error");
@@ -801,7 +813,7 @@ export default function Observability() {
     if (!incidentId) return;
     setFixState("loading");
     setFixResult("");
-    setFixProgress({ currentStep: "Reconnecting to fix pipeline…", stepIndex: 0, totalSteps: 4, stepsDone: [] });
+    setFixProgress({ currentStep: "Reconnecting to fix pipeline…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
     pollAbortRef.current.cancelled = false;
     await startFixPolling(incidentId);
   }, [detail, startFixPolling]);
@@ -821,7 +833,7 @@ export default function Observability() {
         st === "FIX_APPLIED_PENDING_VERIFICATION"  ? "Verifying fix…" :
                                                      "Fix in progress…";
       setFixState("loading");
-      setFixProgress({ currentStep: stepLabel, stepIndex: 0, totalSteps: 4, stepsDone: [] });
+      setFixProgress({ currentStep: stepLabel, stepIndex: 0, totalSteps: 5, stepsDone: [] });
       if (incidentId) {
         // Full live polling
         pollAbortRef.current.cancelled = false;

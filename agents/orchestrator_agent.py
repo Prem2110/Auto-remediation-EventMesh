@@ -1099,11 +1099,27 @@ Rules:
                     timestamp=get_hana_timestamp(),
                 )
             else:
-                _fix_step = step_base + 2
-                self._set_progress(incident_id, "Applying fix and deploying iFlow…", _fix_step, total)
+                # Use 5 steps to match the 5 visual stages:
+                # 0=Submit 1=Get iFlow 2=Validate 3=Patch 4=Deploy
+                _PROGRESS_TOTAL = 5
+                self._set_progress(incident_id, "Applying fix and deploying iFlow…", 1, _PROGRESS_TOTAL)
+
+                _LABEL_TO_SLOT: dict = {
+                    "reading current iflow":     1,  # get-iflow
+                    "get_iflow":                 1,
+                    "validate":                  2,  # validate_iflow_xml
+                    "uploading fixed iflow":     3,  # update-iflow
+                    "update_iflow":              3,
+                    "deploying iflow":           4,  # deploy-iflow
+                    "deploy_iflow":              4,
+                    "checking deployment":       4,
+                }
 
                 def _fix_progress(label: str) -> None:
-                    self._set_progress(incident_id, label, _fix_step, total)
+                    lower = label.lower()
+                    slot = next((v for k, v in _LABEL_TO_SLOT.items() if k in lower), None)
+                    if slot is not None:
+                        self._set_progress(incident_id, label, slot, _PROGRESS_TOTAL)
 
                 fix_result = await self._fix.apply_fix(working_incident, rca, progress_fn=_fix_progress)
 
