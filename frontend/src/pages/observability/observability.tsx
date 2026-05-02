@@ -234,17 +234,20 @@ function FixPlanSteps({ steps }: { steps: IFixPlanStep[] }) {
 /* ── Pipeline stage rail (shown during fix execution) ───────────────── */
 const FIX_STAGES = ["Submit", "Get iFlow", "Validate", "Patch", "Deploy"] as const;
 
-function PipelineStageRail({ stepIndex, totalSteps }: { stepIndex: number; totalSteps: number }) {
+function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: number; totalSteps: number; currentStep?: string }) {
   const slots = FIX_STAGES.length;
-  const active = Math.min(
-    stepIndex <= 0 ? 0 : Math.round((stepIndex / Math.max(totalSteps, 1)) * (slots - 1)),
-    slots - 1
-  );
+  const allDone = stepIndex >= totalSteps || (currentStep || "").toLowerCase().includes("complete");
+  const active = allDone
+    ? slots  // beyond last slot — all are "done"
+    : Math.min(
+        stepIndex <= 0 ? 0 : Math.round((stepIndex / Math.max(totalSteps, 1)) * (slots - 1)),
+        slots - 1
+      );
   return (
     <div className={styles.stageRail}>
       {FIX_STAGES.map((label, i) => {
         const done     = i < active;
-        const isActive = i === active;
+        const isActive = !allDone && i === active;
         return (
           <div key={label} style={{ display: "contents" }}>
             <div className={styles.stageStep}>
@@ -685,7 +688,7 @@ export default function Observability() {
 
   const startFixPolling = useCallback(async (incidentId: string) => {
     let resolved = false;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 120; i++) {
       if (pollAbortRef.current.cancelled) break;
       await new Promise((r) => setTimeout(r, 5000));
       try {
@@ -1306,6 +1309,7 @@ export default function Observability() {
                         <PipelineStageRail
                           stepIndex={fixProgress.stepIndex}
                           totalSteps={fixProgress.totalSteps}
+                          currentStep={fixProgress.currentStep}
                         />
                         <div className={styles.fixProgressCurrentStep}>
                           <span className={styles.fixProgressSpinner} />
