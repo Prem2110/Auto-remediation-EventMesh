@@ -146,6 +146,7 @@ export interface IMessageDetail {
     can_generate_fix: boolean;
     fix_status: string;
     fix_summary: string;
+    fix_patch: IFixPatchResponse | null;
   };
   properties: {
     message: Record<string, string | null>;

@@ -506,22 +506,55 @@ def _tab_ai_recommendation(incident: Dict) -> Dict:
     root_cause     = incident.get("root_cause", "") or ""
     confidence     = float(incident.get("rca_confidence") or 0.0)
     error_type     = incident.get("error_type", "")
+    status         = incident.get("status", "")
 
     field_changes  = _extract_field_changes(error_message, proposed_fix)
     conf_label     = "High" if confidence >= 0.90 else ("Medium" if confidence >= 0.70 else "Low")
 
-    # Show "Generate Fix" whenever RCA data exists and the fix isn't already
-    # running, successfully completed, or escalated to a ticket/approval queue.
+    # Show "Generate Fix" whenever RCA data exists and fix plan not yet stored
     _NO_FIX_STATUSES = {
         "AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS",
         "FIX_IN_PROGRESS", "RCA_IN_PROGRESS", "FIX_APPLIED_PENDING_VERIFICATION",
         "TICKET_CREATED", "PENDING_APPROVAL", "AWAITING_APPROVAL",
     }
-    status = incident.get("status", "")
+    has_stored_plan = bool(incident.get("fix_steps"))
     can_fix = bool(
         (root_cause or proposed_fix)
         and status not in _NO_FIX_STATUSES
+        and not has_stored_plan
     )
+
+    # Re-hydrate stored fix plan so the frontend can restore its state on reload
+    fix_patch = None
+    if has_stored_plan:
+        try:
+            raw_steps = incident.get("fix_steps")
+            steps = json.loads(raw_steps) if isinstance(raw_steps, str) else (raw_steps or [])
+            raw_fc = incident.get("field_changes")
+            stored_fc = json.loads(raw_fc) if isinstance(raw_fc, str) else (raw_fc or field_changes)
+            _TERMINAL = {"AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED",
+                         "FIX_IN_PROGRESS", "TICKET_CREATED"}
+            fix_patch = {
+                "incident_id":       incident.get("incident_id", ""),
+                "message_guid":      incident.get("message_guid", ""),
+                "iflow_id":          incident.get("iflow_id", ""),
+                "error_type":        error_type,
+                "summary":           root_cause or proposed_fix,
+                "summary_structured": {
+                    "diagnosis":     root_cause,
+                    "field_changes": stored_fc,
+                    "proposed_fix":  proposed_fix,
+                },
+                "steps":             steps,
+                "confidence":        confidence,
+                "confidence_label":  conf_label,
+                "confidence_display": f"{confidence:.2f} ({conf_label})",
+                "affected_component": incident.get("affected_component", ""),
+                "ready_to_apply":    True,
+                "can_apply":         status not in _TERMINAL,
+            }
+        except Exception:
+            pass
 
     return {
         "diagnosis":           root_cause,
@@ -533,8 +566,9 @@ def _tab_ai_recommendation(incident: Dict) -> Dict:
         "error_type":          error_type,
         "affected_component":  incident.get("affected_component", ""),
         "can_generate_fix":    can_fix,
-        "fix_status":          incident.get("status", ""),
+        "fix_status":          status,
         "fix_summary":         incident.get("fix_summary", "") or "",
+        "fix_patch":           fix_patch,
     }
 
 

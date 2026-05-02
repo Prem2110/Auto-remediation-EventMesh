@@ -589,6 +589,8 @@ export default function Observability() {
   const handleSelect = useCallback(async (msg: IMonitorMessage) => {
     const guid = msg.message_guid;
     if (!guid) return;
+    // Cancel any running fix poll for the previous message
+    pollAbortRef.current.cancelled = true;
     setSelectedGuid(guid);
     setSelectedMsg(msg);
     setDetail(null);
@@ -604,6 +606,22 @@ export default function Observability() {
     try {
       const d = await fetchMonitorMessageDetail(guid) as IMessageDetail;
       setDetail(d);
+
+      // Restore previously generated fix plan from DB
+      if (d.ai_recommendation?.fix_patch) {
+        setFixPatch(d.ai_recommendation.fix_patch);
+      }
+
+      // Restore fix outcome state from incident status
+      const incStatus = (d.incident_status || "").toUpperCase();
+      if (["AUTO_FIXED", "HUMAN_INITIATED_FIX", "FIX_VERIFIED", "RETRIED"].includes(incStatus)) {
+        setFixState("success");
+        setFixResult(d.ai_recommendation?.fix_summary || "Fix applied and deployed successfully.");
+      } else if (["FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME"].includes(incStatus)) {
+        setFixState("error");
+        setFixResult(d.ai_recommendation?.fix_summary || "Fix failed — see history for details.");
+      }
+
       if (d.ai_recommendation?.diagnosis) {
         setActiveTab("ai");
       }
