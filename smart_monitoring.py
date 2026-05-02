@@ -38,6 +38,7 @@ from db.database import (
     get_escalation_tickets,
     get_escalation_ticket_by_id,
     update_escalation_ticket,
+    clear_all_em_tables,
 )
 from utils.utils import get_hana_timestamp
 
@@ -1993,3 +1994,31 @@ async def patch_escalation_ticket(ticket_id: str, body: EscalationTicketUpdate):
 
     update_escalation_ticket(ticket_id, updates)
     return {"ticket_id": ticket_id, "updated": list(updates.keys())}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADMIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.delete("/admin/clear-all-data")
+async def admin_clear_all_data():
+    """
+    DELETE all rows from EM_AUTONOMOUS_INCIDENTS, EM_FIX_PATTERNS,
+    and EM_ESCALATION_TICKETS.  Returns row counts per table.
+    """
+    try:
+        deleted = clear_all_em_tables()
+        logger.warning(
+            "[Admin] All EM tables cleared — incidents=%d fix_patterns=%d tickets=%d",
+            deleted.get("incidents", 0),
+            deleted.get("fix_patterns", 0),
+            deleted.get("tickets", 0),
+        )
+        return {
+            "status": "cleared",
+            "deleted": deleted,
+            "total": sum(deleted.values()),
+        }
+    except Exception as exc:
+        logger.error("[Admin] clear_all_em_tables failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))

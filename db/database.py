@@ -1027,3 +1027,35 @@ def update_escalation_ticket(ticket_id: str, updates: Dict):
         conn.close()
     except Exception as e:
         logger.error(f"update_escalation_ticket: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADMIN — CLEAR ALL EM DATA
+# ─────────────────────────────────────────────────────────────────────────────
+
+def clear_all_em_tables() -> Dict[str, int]:
+    """
+    DELETE all rows from the three EM tables.
+    Returns a dict of {table_name: rows_deleted}.
+    Raises on connection failure so the caller can return an error response.
+    """
+    tables = [
+        ("incidents",  _INCIDENTS_TABLE),
+        ("fix_patterns", _FIX_TABLE),
+        ("tickets",    _TICKETS_TABLE),
+    ]
+    deleted: Dict[str, int] = {}
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        for key, tbl in tables:
+            cur.execute(f'SELECT COUNT(*) FROM "{tbl}"')
+            row = cur.fetchone()
+            count = int(row[0]) if row else 0
+            cur.execute(f'DELETE FROM "{tbl}"')
+            deleted[key] = count
+            logger.info("[DB] Cleared %d rows from %s", count, tbl)
+        conn.commit()
+    finally:
+        conn.close()
+    return deleted
