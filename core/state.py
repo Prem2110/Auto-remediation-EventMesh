@@ -15,7 +15,14 @@ Exports:
 import time
 from typing import Any, Dict, Optional
 
-from core.constants import FIX_PROGRESS_TTL_SECONDS, MAX_FIX_PROGRESS_ENTRIES
+from core.constants import AUTO_FIX_ALL_CPI_ERRORS, FIX_PROGRESS_TTL_SECONDS, MAX_FIX_PROGRESS_ENTRIES
+
+# ─────────────────────────────────────────────
+# RUNTIME FLAGS  (toggled live via API, no restart needed)
+# ─────────────────────────────────────────────
+RUNTIME_FLAGS: Dict[str, Any] = {
+    "auto_fix_enabled": AUTO_FIX_ALL_CPI_ERRORS,
+}
 
 # ─────────────────────────────────────────────
 # LIVE FIX PROGRESS

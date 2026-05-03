@@ -64,7 +64,7 @@ from core.constants import (
     SUGGEST_FIX_CONFIDENCE,
 )
 from core.mcp_manager import MultiMCP
-from core.state import FIX_PROGRESS, get_fix_progress
+from core.state import FIX_PROGRESS, RUNTIME_FLAGS, get_fix_progress
 
 # ─────────────────────────────────────────────
 # AGENT IMPORTS
@@ -649,6 +649,19 @@ async def autonomous_start():
 async def autonomous_stop():
     """No-op in event-driven mode."""
     return {"running": False, "message": "Event-driven mode: stop is not applicable"}
+
+
+@app.get("/autonomous/auto-fix")
+async def get_auto_fix():
+    return {"auto_fix_enabled": RUNTIME_FLAGS["auto_fix_enabled"]}
+
+
+@app.post("/autonomous/auto-fix/toggle")
+async def toggle_auto_fix():
+    RUNTIME_FLAGS["auto_fix_enabled"] = not RUNTIME_FLAGS["auto_fix_enabled"]
+    state = RUNTIME_FLAGS["auto_fix_enabled"]
+    logger.info("[Pipeline] auto_fix_enabled toggled → %s", state)
+    return {"auto_fix_enabled": state}
 
 
 # ─────────────────────────────────────────────

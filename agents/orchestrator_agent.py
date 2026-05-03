@@ -57,7 +57,7 @@ from core.constants import (
     TRANSIENT_ERROR_MARKERS,
     _STATUS_ACTION_HINTS,
 )
-from core.state import FIX_PROGRESS, cleanup_fix_progress
+from core.state import FIX_PROGRESS, RUNTIME_FLAGS, cleanup_fix_progress
 from db.database import (
     create_escalation_ticket,
     create_incident,
@@ -279,8 +279,10 @@ Rules:
     ) -> bool:
         if not self.has_actionable_fix(rca):
             return False
+        if not RUNTIME_FLAGS["auto_fix_enabled"]:
+            return False
         if policy["action"] in {"AUTO_FIX", "RETRY"}:
-            threshold = SUGGEST_FIX_CONFIDENCE if AUTO_FIX_ALL_CPI_ERRORS else AUTO_FIX_CONFIDENCE
+            threshold = SUGGEST_FIX_CONFIDENCE if RUNTIME_FLAGS["auto_fix_enabled"] else AUTO_FIX_CONFIDENCE
             return confidence >= threshold
         return False
 
@@ -420,9 +422,9 @@ Rules:
                 return "RETRIED"
             logger.info("[Gate] Retry unavailable/failed — escalating to iFlow fix: %s", incident["iflow_id"])
 
-        # Auto-fix path: either policy says AUTO_FIX, or AUTO_FIX_ALL_CPI_ERRORS is set
+        # Auto-fix path: either policy says AUTO_FIX, or auto_fix_enabled runtime flag is set
         effective_auto_fix = (
-            AUTO_FIX_ALL_CPI_ERRORS
+            RUNTIME_FLAGS["auto_fix_enabled"]
             and self.has_actionable_fix(rca)
             and rca.get("error_type", "UNKNOWN_ERROR") != "UNKNOWN_ERROR"
         )

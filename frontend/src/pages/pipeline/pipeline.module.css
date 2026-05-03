@@ -445,3 +445,64 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ── Auto-Fix toggle ─────────────────────────────────────────────────── */
+.autoFixToggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.7rem 0.3rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.autoFixToggleOn {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #059669;
+}
+
+.autoFixToggleOff {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #d97706;
+}
+
+.autoFixToggle:hover { opacity: 0.8; }
+
+.autoFixTrack {
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.25;
+  position: relative;
+  flex-shrink: 0;
+  transition: opacity 0.2s;
+}
+
+.autoFixToggleOn .autoFixTrack  { opacity: 0.3; }
+.autoFixToggleOff .autoFixTrack { opacity: 0.2; }
+
+.autoFixThumb {
+  position: absolute;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 1;
+  transition: left 0.2s;
+}
+
+.autoFixToggleOn  .autoFixThumb { left: 14px; }
+.autoFixToggleOff .autoFixThumb { left: 2px; }
+
+.autoFixLabel {
+  letter-spacing: 0.02em;
+}

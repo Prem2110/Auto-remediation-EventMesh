@@ -6,6 +6,8 @@ import {
   startPipeline,
   stopPipeline,
   fetchPipelineTrace,
+  fetchAutoFixStatus,
+  toggleAutoFix,
 } from "../../services/api.ts";
 import SvgIcon, { type IconName } from "../../components/icons/SvgIcon.tsx";
 import _styles from "./pipeline.module.css";
@@ -40,12 +42,19 @@ interface TraceIncident {
 export default function Pipeline() {
   const qc = useQueryClient();
   const [toggling, setToggling] = useState(false);
+  const [togglingAutoFix, setTogglingAutoFix] = useState(false);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: pipelineData } = useQuery({
     queryKey: ["pipeline-status"],
     queryFn: fetchPipelineStatus,
     refetchInterval: 15_000,
+  });
+
+  const { data: autoFixData, refetch: refetchAutoFix } = useQuery({
+    queryKey: ["auto-fix-status"],
+    queryFn: fetchAutoFixStatus,
+    staleTime: 0,
   });
 
   // Tools never change after startup — fetch once, cache for 10 minutes
@@ -76,6 +85,18 @@ export default function Pipeline() {
       setToggling(false);
     }
   }
+
+  async function handleToggleAutoFix() {
+    setTogglingAutoFix(true);
+    try {
+      await toggleAutoFix();
+      await refetchAutoFix();
+    } finally {
+      setTogglingAutoFix(false);
+    }
+  }
+
+  const autoFixOn = autoFixData?.auto_fix_enabled ?? true;
 
 
   const running = pipelineData?.pipeline_running ?? false;
@@ -108,6 +129,20 @@ export default function Pipeline() {
           {running && (
             <span className={styles.aemBadge} data-tip="5-agent specialist mode — each agent has a curated, minimal tool set for safety and efficiency">Specialist</span>
           )}
+          <div
+            className={`${styles.autoFixToggle} ${autoFixOn ? styles.autoFixToggleOn : styles.autoFixToggleOff}`}
+            onClick={togglingAutoFix ? undefined : handleToggleAutoFix}
+            data-tip={autoFixOn
+              ? "Auto-Fix ON — AI applies fixes automatically when confidence is high. Click to require manual approval for all fixes."
+              : "Auto-Fix OFF — All fixes require manual approval via Apply Fix. Click to re-enable autonomous fixing."}
+          >
+            <span className={styles.autoFixTrack}>
+              <span className={styles.autoFixThumb} />
+            </span>
+            <span className={styles.autoFixLabel}>
+              {togglingAutoFix ? "…" : autoFixOn ? "Auto-Fix" : "Manual"}
+            </span>
+          </div>
           <button
             className={`${styles.toggleBtn} ${running ? styles.toggleBtnStop : styles.toggleBtnStart}`}
             onClick={handleToggle}

@@ -218,6 +218,14 @@ export async function fetchPipelineStatus(): Promise<AgentStatus> {
   };
 }
 
+export async function fetchAutoFixStatus(): Promise<{ auto_fix_enabled: boolean }> {
+  return request(`${_BASE}/autonomous/auto-fix`);
+}
+
+export async function toggleAutoFix(): Promise<{ auto_fix_enabled: boolean }> {
+  return request(`${_BASE}/autonomous/auto-fix/toggle`, { method: "POST" });
+}
+
 export async function startPipeline(): Promise<{ message: string; status: AgentStatus }> {
   await request(`${_BASE}/autonomous/start`, { method: "POST" });
   const status = await fetchPipelineStatus();

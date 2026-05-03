@@ -758,10 +758,12 @@ export default function Observability() {
   /* ── Apply fix ──────────────────────────────────────────────────────── */
   const handleApplyFix = useCallback(async () => {
     if (!selectedGuid) return;
-    const isForce = fixState === "skipped";
+    // Human explicitly clicking Apply Fix always bypasses the "Started" pre-flight guard.
+    // That guard only makes sense for autonomous AI runs — not deliberate human actions.
+    const isForce = true;
     setFixState("loading");
     setFixResult("");
-    setFixProgress({ currentStep: isForce ? "Force-applying fix…" : "Submitting fix request…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
+    setFixProgress({ currentStep: "Submitting fix request…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
     pollAbortRef.current.cancelled = false;
     try {
       const proposedFix =
@@ -1041,8 +1043,10 @@ export default function Observability() {
                   <span>Loading messages...</span>
                 </div>
               ) : messages.length === 0 ? (
-                <div className={styles.centered}>
-                  <span>No messages found</span>
+                <div className={styles.msgEmptyState}>
+                  <img src="/empty-messages.svg" alt="" className={styles.msgEmptyImg} draggable={false} />
+                  <p className={styles.msgEmptyTitle}>No messages found</p>
+                  <p className={styles.msgEmptyHint}>Errors detected by the autonomous monitor will appear here.</p>
                 </div>
               ) : (
                 <div className={styles.messageList}>
