@@ -1114,11 +1114,21 @@ Rules:
                     "deploy_iflow":              4,
                     "checking deployment":       4,
                 }
+                # Tracks the highest slot reached so correction/retry passes never
+                # visually regress the stage rail (e.g. get-iflow in pass 2 stays at 3+)
+                _max_slot: list[int] = [0]
 
                 def _fix_progress(label: str) -> None:
                     lower = label.lower()
                     slot = next((v for k, v in _LABEL_TO_SLOT.items() if k in lower), None)
                     if slot is not None:
+                        if slot < _max_slot[0]:
+                            # We're in a correction/retry pass — never go backwards.
+                            # Clamp to max-1 (re-patch slot) for non-deploy, or max for deploy.
+                            slot = _max_slot[0] if "deploy" in lower else max(3, _max_slot[0] - 1)
+                            label = f"Retrying: {label}"
+                        else:
+                            _max_slot[0] = slot
                         self._set_progress(incident_id, label, slot, _PROGRESS_TOTAL)
 
                 fix_result = await self._fix.apply_fix(working_incident, rca, progress_fn=_fix_progress)
