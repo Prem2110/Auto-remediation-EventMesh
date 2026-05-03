@@ -1844,6 +1844,47 @@
   line-height: 1.5;
 }
 
+/* ── Tickets / Approvals empty state ────────────────────────────────── */
+.ticketEmptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 2rem;
+  user-select: none;
+}
+
+.ticketEmptyImg {
+  width: 320px;
+  max-width: 90%;
+  height: auto;
+  margin-bottom: 1rem;
+  opacity: 0.92;
+  filter: drop-shadow(0 6px 18px rgba(59, 130, 246, 0.10));
+  animation: ticketEmptyFloat 4s ease-in-out infinite;
+}
+
+@keyframes ticketEmptyFloat {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
+
+.ticketEmptyTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--orbit-gray-700, #374151);
+  margin: 0 0 0.3rem;
+}
+
+.ticketEmptyHint {
+  font-size: 0.8rem;
+  color: var(--orbit-gray-400, #9ca3af);
+  margin: 0;
+  text-align: center;
+  max-width: 280px;
+  line-height: 1.5;
+}
+
 /* ── Deployed-but-unverified badge ──────────────────────────────────── */
 .deployedUnverifiedBadge {
   display: inline-flex;

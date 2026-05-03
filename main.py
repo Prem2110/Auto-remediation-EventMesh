@@ -109,6 +109,7 @@ from db.database import (
     update_incident,
     increment_incident_occurrence,
     ensure_em_schema,
+    ensure_fix_patterns_schema,
     set_db_source,
 )
 from storage.storage import upload_multiple_files
@@ -201,6 +202,7 @@ async def lifespan(app: FastAPI):
 
     # Create Event Mesh tables on startup (no-op if they already exist)
     ensure_em_schema()
+    ensure_fix_patterns_schema()
 
     # Create the MCP infrastructure only if servers are configured
     from core.constants import MCP_SERVERS

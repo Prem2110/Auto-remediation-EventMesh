@@ -159,20 +159,28 @@ def ensure_fix_patterns_schema():
     required = {
         "success_count":        "INTEGER",
         "replay_success_count": "INTEGER",
-        "key_steps":            "NVARCHAR(2000)",  # JSON array of step descriptions from successful fix
+        "key_steps":            "NVARCHAR(2000)",
     }
     try:
-        conn = get_connection()
-        cur  = conn.cursor()
-        cur.execute(
-            "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?",
-            (_FIX_TABLE.upper(),),
-        )
+        conn   = get_connection()
+        cur    = conn.cursor()
+        schema = os.getenv("HANA_SCHEMA", "")
+        tbl    = _FIX_TABLE.upper()
+        if schema:
+            cur.execute(
+                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
+                (tbl, schema),
+            )
+        else:
+            cur.execute("SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?", (tbl,))
         existing = {str(r[0]).lower() for r in cur.fetchall()}
         for col, typ in required.items():
             if col.lower() not in existing:
                 default = " DEFAULT 0" if "INTEGER" in typ else ""
-                cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("{col}" {typ}{default})')
+                try:
+                    cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("{col}" {typ}{default})')
+                except Exception as col_err:
+                    logger.warning(f"ensure_fix_patterns_schema: ADD {col} skipped: {col_err}")
         conn.commit()
         conn.close()
     except Exception as e:

@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 320" fill="none">
+  <!-- Ground shadows -->
+  <ellipse cx="165" cy="314" rx="100" ry="9" fill="#c7d9ee" opacity="0.45"/>
+  <ellipse cx="370" cy="314" rx="64" ry="8" fill="#c7d9ee" opacity="0.35"/>
+
+  <!-- ── Armchair ── -->
+  <!-- Back cushion -->
+  <rect x="68" y="192" width="148" height="88" rx="28" fill="#c8d8e8"/>
+  <!-- Seat cushion -->
+  <rect x="72" y="246" width="140" height="52" rx="18" fill="#b8ccde"/>
+  <!-- Left armrest -->
+  <rect x="58" y="216" width="28" height="68" rx="14" fill="#b8ccde"/>
+  <!-- Right armrest -->
+  <rect x="198" y="216" width="28" height="68" rx="14" fill="#b8ccde"/>
+  <!-- Chair legs -->
+  <rect x="82"  y="290" width="16" height="26" rx="8" fill="#8faabf"/>
+  <rect x="186" y="290" width="16" height="26" rx="8" fill="#8faabf"/>
+
+  <!-- ── Plant ── -->
+  <rect x="34" y="272" width="26" height="24" rx="6" fill="#b8ccde"/>
+  <!-- Stem -->
+  <line x1="47" y1="272" x2="47" y2="242" stroke="#8faabf" stroke-width="3" stroke-linecap="round"/>
+  <!-- Leaves -->
+  <path d="M47 255 Q32 248 30 236 Q42 238 47 250" fill="#b8ccde"/>
+  <path d="M47 262 Q62 254 65 242 Q52 245 47 257" fill="#b8ccde"/>
+
+  <!-- ── Person (seated, relaxed) ── -->
+  <!-- Lower legs / feet -->
+  <rect x="190" y="270" width="22" height="34" rx="11" fill="#1e3a5f" transform="rotate(-20 201 270)"/>
+  <rect x="146" y="276" width="22" height="32" rx="11" fill="#1e3a5f"/>
+  <!-- Shoes -->
+  <ellipse cx="216" cy="295" rx="18" ry="9" fill="#152d4a" transform="rotate(-20 216 295)"/>
+  <ellipse cx="157" cy="305" rx="16" ry="8" fill="#152d4a"/>
+  <!-- Torso -->
+  <rect x="100" y="188" width="84" height="86" rx="22" fill="#e8f0f8"/>
+  <!-- Left arm — relaxed on armrest -->
+  <rect x="66" y="228" width="38" height="16" rx="8" fill="#e8f0f8"/>
+  <!-- Right arm — holding mug -->
+  <rect x="180" y="210" width="30" height="16" rx="8" fill="#e8f0f8"/>
+  <!-- Mug -->
+  <rect x="196" y="198" width="26" height="22" rx="6" fill="#7eb3d8"/>
+  <path d="M222 205 Q232 205 232 214 Q232 222 222 222" stroke="#7eb3d8" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- Steam wisps -->
+  <path d="M204 196 Q206 190 204 184" stroke="#b8d4e8" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <path d="M212 194 Q214 188 212 182" stroke="#b8d4e8" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <!-- Head -->
+  <ellipse cx="142" cy="168" rx="36" ry="38" fill="#f5cba0"/>
+  <!-- Hair -->
+  <ellipse cx="142" cy="138" rx="36" ry="20" fill="#1e3a5f"/>
+  <rect x="106" y="138" width="72" height="18" fill="#1e3a5f"/>
+  <!-- Eyes (relaxed, looking at clipboard) -->
+  <ellipse cx="130" cy="170" rx="4" ry="4" fill="#1e3a5f"/>
+  <ellipse cx="154" cy="170" rx="4" ry="4" fill="#1e3a5f"/>
+  <!-- Relaxed smile -->
+  <path d="M130 184 Q142 192 154 184" stroke="#c8966a" stroke-width="2" stroke-linecap="round" fill="none"/>
+
+  <!-- ── Clipboard ── -->
+  <rect x="284" y="46" width="200" height="222" rx="22" fill="white" stroke="#c7d9ee" stroke-width="2"/>
+  <!-- Clip top -->
+  <rect x="356" y="33" width="56" height="28" rx="12" fill="#8faabf"/>
+  <circle cx="384" cy="41" r="10" fill="white" stroke="#8faabf" stroke-width="2.5"/>
+
+  <!-- Open envelope with document -->
+  <!-- Envelope body -->
+  <rect x="336" y="118" width="96" height="68" rx="12" fill="#b8d4e8"/>
+  <!-- Document sticking out of envelope -->
+  <rect x="356" y="100" width="56" height="62" rx="6" fill="#f0f6ff" stroke="#c7d9ee" stroke-width="1.5"/>
+  <line x1="366" y1="114" x2="402" y2="114" stroke="#b8d4e8" stroke-width="2" stroke-linecap="round"/>
+  <line x1="366" y1="122" x2="402" y2="122" stroke="#b8d4e8" stroke-width="2" stroke-linecap="round"/>
+  <line x1="366" y1="130" x2="390" y2="130" stroke="#b8d4e8" stroke-width="2" stroke-linecap="round"/>
+  <!-- Exclamation above envelope -->
+  <line x1="384" y1="106" x2="384" y2="97" stroke="#7eb3d8" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="384" cy="93" r="2.5" fill="#7eb3d8"/>
+
+  <!-- Paper plane -->
+  <path d="M432 82 L456 64 L442 90 Z" fill="#8faabf" opacity="0.75"/>
+  <path d="M442 90 L436 78" stroke="#8faabf" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M456 64 Q472 54 480 63" stroke="#c7d9ee" stroke-width="1.5" stroke-dasharray="4 3" stroke-linecap="round" fill="none"/>
+  <circle cx="482" cy="65" r="4" fill="#c7d9ee" opacity="0.7"/>
+
+  <!-- Text -->
+  <text x="384" y="210" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="14.5" font-weight="700" fill="#1e3a5f">No Pending Approvals</text>
+  <text x="384" y="232" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" fill="#7eb3d8">You&#x2019;re all caught up! There are no</text>
+  <text x="384" y="248" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" fill="#7eb3d8">pending approvals at the moment.</text>
+</svg>

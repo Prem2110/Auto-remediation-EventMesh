@@ -1503,9 +1503,10 @@ export default function Observability() {
               <span>Loading tickets...</span>
             </div>
           ) : tickets.length === 0 ? (
-            <div className={styles.emptyState}>
-              <span><SvgIcon name="tickets" size={32} /></span>
-              <p>No tickets found</p>
+            <div className={styles.ticketEmptyState}>
+              <img src="/empty-tickets.svg" alt="" className={styles.ticketEmptyImg} draggable={false} />
+              <p className={styles.ticketEmptyTitle}>No Tickets Created</p>
+              <p className={styles.ticketEmptyHint}>Incidents that could not be auto-remediated will appear here.</p>
             </div>
           ) : (
             <div className={styles.ticketsList}>
@@ -1685,9 +1686,10 @@ export default function Observability() {
               <span>Loading approvals...</span>
             </div>
           ) : approvals.length === 0 ? (
-            <div className={styles.emptyState}>
-              <span><SvgIcon name="check-circle" size={32} /></span>
-              <p>No pending approvals</p>
+            <div className={styles.ticketEmptyState}>
+              <img src="/empty-approvals.svg" alt="" className={styles.ticketEmptyImg} draggable={false} />
+              <p className={styles.ticketEmptyTitle}>No Pending Approvals</p>
+              <p className={styles.ticketEmptyHint}>You're all caught up! There are no pending approvals at the moment.</p>
             </div>
           ) : (
             <div className={styles.approvalsList}>

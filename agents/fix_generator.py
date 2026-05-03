@@ -137,6 +137,16 @@ STEP 3: Call validate_iflow_xml with the modified XML.
   - If ERRORS returned → fix the XML issues and re-validate.
   - Do NOT call update-iflow until validate_iflow_xml returns "VALID".
 
+CRITICAL: If validate_iflow_xml returns ERRORS:
+  - You MUST fix ALL reported errors before calling update-iflow.
+  - Do NOT call update-iflow with XML that has validation errors.
+  - Re-read the ERRORS list carefully — fix each one specifically.
+  - Call validate_iflow_xml again after fixing.
+  - Only proceed to update-iflow when validate_iflow_xml returns VALID.
+  - If you cannot fix the validation errors after 2 attempts → STOP,
+    return failed_stage="validation" immediately.
+  - NEVER deploy XML that has not passed validation.
+
 STEP 4: Call update-iflow with id, files, autoDeploy=true.
   - If response contains "artifact is locked": call cancel-checkout → retry ONCE.
     If still locked → STOP, return failed_stage="locked".

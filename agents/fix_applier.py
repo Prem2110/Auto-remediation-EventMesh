@@ -280,8 +280,9 @@ class FixApplier:
                         "[FixApplier] update-iflow succeeded without prior validate_iflow_xml call"
                     )
                 elif update_ok and validation_failed:
-                    logger.warning(
-                        "[FixApplier] update-iflow called despite validate_iflow_xml reporting ERRORS"
+                    logger.error(
+                        "[FixApplier] Fix rejected — XML validation errors "
+                        "must be resolved before deploying"
                     )
             elif "deploy_iflow" in tool_name or "deploy-iflow" in tool_name:
                 deploy_output = output
@@ -310,15 +311,20 @@ class FixApplier:
                 "failed_steps": ["deploy-iflow"],
             }
 
+        if validation_failed:
+            return {
+                "success": False, "fix_applied": False, "deploy_success": False,
+                "failed_stage": "validation_error",
+                "technical_details": "XML validation returned errors; fix was not accepted.",
+                "summary": "Fix rejected — iFlow XML failed validation checks. The agent deployed despite errors.",
+                "failed_steps": ["validate_iflow_xml"],
+            }
+
         _validation_note = ""
         if not validation_called:
             _validation_note = " [warn: XML validation step was skipped by agent]"
-        elif validation_failed:
-            _validation_note = " [warn: agent proceeded despite XML validation errors]"
 
-        # Treat a deploy that bypassed validation errors as "deployed but unverified" —
-        # the fix may be structurally incorrect even though SAP CPI accepted the upload.
-        _failed_stage = "validation_warning" if (not validation_called or validation_failed) else None
+        _failed_stage = "validation_warning" if not validation_called else None
 
         return {
             "success": True, "fix_applied": True, "deploy_success": True,
