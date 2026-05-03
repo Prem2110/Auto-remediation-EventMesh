@@ -1802,3 +1802,100 @@
   line-height: 1.45;
   margin: 0.1rem 0 0;
 }
+
+/* ── AI Thinking / Analyzing loader ─────────────────────────────────── */
+.aiThinkingLoader {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem 1.125rem;
+  background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
+  border: 1px solid #c7d2fe;
+  border-radius: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.aiThinkingHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.aiThinkingAvatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(79, 70, 229, 0.35);
+}
+
+.aiThinkingTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #4f46e5;
+  flex: 1;
+}
+
+.aiThinkingDots {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.aiThinkingDots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #6366f1;
+  animation: aiDotBounce 1.4s ease-in-out infinite;
+}
+
+.aiThinkingDots span:nth-child(2) { animation-delay: 0.2s; }
+.aiThinkingDots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes aiDotBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30%           { transform: translateY(-5px); opacity: 1; }
+}
+
+.aiThinkingStep {
+  font-size: 0.8rem;
+  color: #374151;
+  line-height: 1.5;
+  min-height: 1.25em;
+  animation: aiStepFade 0.45s ease-out both;
+}
+
+@keyframes aiStepFade {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.aiThinkingBar {
+  height: 3px;
+  background: #e0e7ff;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.aiThinkingBarFill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 40%, #a78bfa 60%, #4f46e5 100%);
+  background-size: 250% 100%;
+  border-radius: 2px;
+  animation: aiBarShimmer 2s linear infinite;
+}
+
+@keyframes aiBarShimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -150% 0; }
+}

@@ -765,9 +765,9 @@ class FixAgent:
             return "FIX_FAILED"
         if policy.get("action") == "RETRY":
             if retry_result and (retry_result.get("success") or retry_result.get("skipped")):
-                return "HUMAN_INITIATED_FIX" if human_approved else "FIX_VERIFIED"
+                return "FIX_VERIFIED"
             return "FIX_DEPLOYED"
-        return "HUMAN_INITIATED_FIX" if human_approved else "FIX_VERIFIED"
+        return "FIX_VERIFIED"
 
     # ── capture pre-fix iFlow snapshot ───────────────────────────────────────
 

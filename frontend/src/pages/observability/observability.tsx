@@ -149,6 +149,13 @@ const CARD_TIPS: Record<string, string> = {
 // Explicit ordered keys for the 4 summary cards — never rely on STATUS_CONFIG insertion order
 const SUMMARY_CARD_KEYS = ["FAILED", "SUCCESS", "PROCESSING", "RETRY"] as const;
 
+const ANALYZE_STEPS = [
+  "Analyzing error pattern and stack trace...",
+  "Identifying root cause from iFlow configuration...",
+  "Searching SAP knowledge base for known fixes...",
+  "Generating fix recommendation...",
+];
+
 /* ── Error type reference data ────────────────────────────────────────── */
 type ErrorTypeMeta = { label: string; description: string; action: "AUTO_FIX" | "TICKET_CREATED" | "APPROVAL" | "RETRY"; dot: string };
 
@@ -447,6 +454,7 @@ export default function Observability() {
     currentStep: string; stepIndex: number; totalSteps: number; stepsDone: string[];
   } | null>(null);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [analyzeStep, setAnalyzeStep] = useState(0);
 
   // Approval action feedback
   const [approvalActionError, setApprovalActionError] = useState<string | null>(null);
@@ -481,7 +489,7 @@ export default function Observability() {
 
   const STATUS_GROUP: Record<string, string[]> = {
     FAILED:     ["FAILED", "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED", "ARTIFACT_MISSING"],
-    SUCCESS:    ["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS"],
+    SUCCESS:    ["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS", "HUMAN_INITIATED_FIX", "FIX_DEPLOYED"],
     PROCESSING: ["RCA_IN_PROGRESS", "FIX_IN_PROGRESS", "CLASSIFIED", "RCA_COMPLETE", "FIX_APPLIED_PENDING_VERIFICATION", "PROCESSING"],
     RETRY:      ["RETRY", "PENDING_APPROVAL", "TICKET_CREATED", "AWAITING_APPROVAL"],
   };
@@ -512,7 +520,7 @@ export default function Observability() {
     all.forEach((m) => {
       const s = (m.status || "").toUpperCase();
       if (["FAILED", "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED", "ARTIFACT_MISSING"].includes(s)) result.FAILED++;
-      else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS"].includes(s)) result.SUCCESS++;
+      else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS", "HUMAN_INITIATED_FIX", "FIX_DEPLOYED"].includes(s)) result.SUCCESS++;
       else if (["RCA_IN_PROGRESS", "FIX_IN_PROGRESS", "CLASSIFIED", "RCA_COMPLETE", "FIX_APPLIED_PENDING_VERIFICATION"].includes(s)) result.PROCESSING++;
       else if (["RETRY", "PENDING_APPROVAL", "TICKET_CREATED", "AWAITING_APPROVAL"].includes(s)) result.RETRY++;
     });
@@ -630,7 +638,7 @@ export default function Observability() {
       if (incStatus === "HUMAN_INITIATED_FIX") {
         setFixState("skipped");
         setFixResult(d.ai_recommendation?.fix_summary || "iFlow was already running — no changes were applied.");
-      } else if (["AUTO_FIXED", "FIX_VERIFIED", "RETRIED"].includes(incStatus)) {
+      } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "FIX_DEPLOYED", "RETRIED"].includes(incStatus)) {
         setFixState("success");
         setFixResult(d.ai_recommendation?.fix_summary || "Fix applied and deployed successfully.");
       } else if (["FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME"].includes(incStatus)) {
@@ -853,6 +861,12 @@ export default function Observability() {
   useEffect(() => {
     return () => { pollAbortRef.current.cancelled = true; };
   }, [selectedGuid]);
+
+  useEffect(() => {
+    if (!analyzeLoading) { setAnalyzeStep(0); return; }
+    const t = setInterval(() => setAnalyzeStep(s => (s + 1) % ANALYZE_STEPS.length), 1800);
+    return () => clearInterval(t);
+  }, [analyzeLoading]);
 
   /* ════════════════════════════════════════════════════════════════════
      RENDER
@@ -1154,11 +1168,27 @@ export default function Observability() {
                     {/* ─── AI Recommendations & Suggested Fix tab ─── */}
                     {activeTab === "ai" && (
                       <div className={styles.tabContent}>
-                        {!detail.ai_recommendation?.diagnosis && !analyzeLoading ? (
+                        {analyzeLoading ? (
+                          <div className={styles.aiThinkingLoader}>
+                            <div className={styles.aiThinkingHeader}>
+                              <div className={styles.aiThinkingAvatar}>AI</div>
+                              <span className={styles.aiThinkingTitle}>SAP AI Core</span>
+                              <div className={styles.aiThinkingDots}>
+                                <span /><span /><span />
+                              </div>
+                            </div>
+                            <div key={analyzeStep} className={styles.aiThinkingStep}>
+                              {ANALYZE_STEPS[analyzeStep]}
+                            </div>
+                            <div className={styles.aiThinkingBar}>
+                              <div className={styles.aiThinkingBarFill} />
+                            </div>
+                          </div>
+                        ) : !detail.ai_recommendation?.diagnosis ? (
                           <div className={styles.noRcaBox}>
                             <p>No AI analysis available yet for this message.</p>
                             <button className={styles.analyzeBtn} onClick={handleAnalyze} disabled={analyzeLoading} data-tip="Trigger SAP AI Core to analyze this message and generate a root cause and fix recommendation">
-                              {analyzeLoading ? "Running Analysis..." : "Run AI Analysis"}
+                              Run AI Analysis
                             </button>
                           </div>
                         ) : (
