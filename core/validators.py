@@ -14,10 +14,13 @@ the pre-fix iFlow snapshot, so all async tasks inherit their own copy.
 """
 
 import json
+import logging
 import re
 import xml.etree.ElementTree as ET
 from contextvars import ContextVar
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 _BPMN2 = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 _IFL   = "http:///com.sap.ifl.model/Ifl.xsd"
@@ -75,60 +78,79 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
     except ET.ParseError as e:
         return [f"Modified iFlow XML is not valid XML: {e}. Fix the XML before calling update-iflow."]
 
+    # Parse original XML once — reused by all pre-existing issue checks below.
+    orig_root: Optional[ET.Element] = None
+    if original_xml:
+        try:
+            orig_root = ET.fromstring(original_xml)
+        except ET.ParseError:
+            pass
+
     # ── Check 1 — no ifl:property inside bpmn2:collaboration extensionElements ──
+    # Pre-existing: if the same property keys were already at collaboration level
+    # in the original iFlow, do not block — it is a design issue that pre-dates this fix.
+    orig_collab_prop_keys: set = set()
+    if orig_root is not None:
+        orig_collab = orig_root.find(f"{{{_BPMN2}}}collaboration")
+        if orig_collab is not None:
+            orig_ext = orig_collab.find(f"{{{_BPMN2}}}extensionElements")
+            if orig_ext is not None:
+                for p in orig_ext.findall(f"{{{_IFL}}}property"):
+                    orig_collab_prop_keys.add(
+                        p.findtext(f"{{{_IFL}}}key") or p.findtext("key") or "?"
+                    )
+
     collab = mod_root.find(f"{{{_BPMN2}}}collaboration")
     if collab is not None:
         ext = collab.find(f"{{{_BPMN2}}}extensionElements")
         if ext is not None:
             bad_props = ext.findall(f"{{{_IFL}}}property")
             if bad_props:
-                keys = [
-                    (p.findtext(f"{{{_IFL}}}key") or p.findtext("key") or "?")
+                all_keys = [
+                    p.findtext(f"{{{_IFL}}}key") or p.findtext("key") or "?"
                     for p in bad_props
                 ]
-                errors.append(
-                    f"ifl:property elements found inside <bpmn2:collaboration> extensionElements "
-                    f"(keys: {keys}). These MUST be placed inside the specific step that uses them "
-                    f"(e.g. inside the <bpmn2:serviceTask> for the XPath or mapping step), "
-                    f"NOT at collaboration level. Move them to the correct step."
-                )
+                new_keys = [k for k in all_keys if k not in orig_collab_prop_keys]
+                if new_keys:
+                    errors.append(
+                        f"ifl:property elements found inside <bpmn2:collaboration> extensionElements "
+                        f"(keys: {all_keys}). These MUST be placed inside the specific step that uses them "
+                        f"(e.g. inside the <bpmn2:serviceTask> for the XPath or mapping step), "
+                        f"NOT at collaboration level. Move them to the correct step."
+                    )
+                else:
+                    logger.info(
+                        "[Validator] Pre-existing issue ignored (existed in original): "
+                        "ifl:property inside collaboration extensionElements (keys: %s)", all_keys
+                    )
 
     # ── Check 2 — version attributes must not change from original ──
-    if original_xml:
-        try:
-            orig_root = ET.fromstring(original_xml)
-            orig_versions = {
-                el.get("id"): el.get("version")
-                for el in orig_root.iter()
-                if el.get("id") and el.get("version")
-            }
-            for el in mod_root.iter():
-                el_id  = el.get("id")
-                el_ver = el.get("version")
-                if el_id and el_ver and el_id in orig_versions:
-                    if orig_versions[el_id] != el_ver:
-                        errors.append(
-                            f"Version changed for element '{el_id}': "
-                            f"original='{orig_versions[el_id]}', submitted='{el_ver}'. "
-                            f"Do not modify version attributes."
-                        )
-        except ET.ParseError:
-            pass
+    # By definition a diff-based check: only fires when new_xml changed a version.
+    if orig_root is not None:
+        orig_versions = {
+            el.get("id"): el.get("version")
+            for el in orig_root.iter()
+            if el.get("id") and el.get("version")
+        }
+        for el in mod_root.iter():
+            el_id  = el.get("id")
+            el_ver = el.get("version")
+            if el_id and el_ver and el_id in orig_versions:
+                if orig_versions[el_id] != el_ver:
+                    errors.append(
+                        f"Version changed for element '{el_id}': "
+                        f"original='{orig_versions[el_id]}', submitted='{el_ver}'. "
+                        f"Do not modify version attributes."
+                    )
 
-    # ── Check 3 — platform version caps on NEW elements ──
+    # ── Check 3 — platform version caps on NEW elements (already diff-based) ──
+    orig_ids: set = {el.get("id") for el in orig_root.iter() if el.get("id")} if orig_root is not None else set()
     _VERSION_CAPS: Dict[str, tuple[str, float]] = {
-        "EndEvent":            ("EndEvent", 1.0),
-        "ExceptionSubProcess": ("ExceptionSubProcess", 1.1),
+        "EndEvent":             ("EndEvent", 1.0),
+        "ExceptionSubProcess":  ("ExceptionSubProcess", 1.1),
         "com.sap.soa.proxy.ws": ("SOAP adapter", 1.11),
-        "SOAP":                ("SOAP adapter", 1.11),
+        "SOAP":                 ("SOAP adapter", 1.11),
     }
-    orig_ids: set = set()
-    if original_xml:
-        try:
-            orig_root2 = ET.fromstring(original_xml)
-            orig_ids = {el.get("id") for el in orig_root2.iter() if el.get("id")}
-        except ET.ParseError:
-            pass
     for el in mod_root.iter():
         el_id  = el.get("id", "")
         el_ver = el.get("version", "")
@@ -147,6 +169,26 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                         pass
 
     # ── Check 4 — XPath expressions with namespace prefixes need 'declare namespace' ──
+    # Pre-existing: skip if the same (key, value) pair already had this issue in original.
+    orig_xpath_issues: set = set()
+    if orig_root is not None:
+        for el in orig_root.iter():
+            k_el = el.find(f"{{{_IFL}}}key") or el.find("key")
+            v_el = el.find(f"{{{_IFL}}}value") or el.find("value")
+            if k_el is None or v_el is None:
+                continue
+            k = (k_el.text or "").lower()
+            v = (v_el.text or "")
+            if "xpath" in k or v.strip().startswith("//") or "//" in v:
+                ns_uses = [
+                    p for p in re.findall(r'\b([a-zA-Z][a-zA-Z0-9_]*):[a-zA-Z]', v)
+                    if p.lower() not in ("http", "https", "urn", "xmlns")
+                ]
+                if ns_uses:
+                    declared = re.findall(r'declare\s+namespace\s+([a-zA-Z][a-zA-Z0-9_]*)\s*=', v)
+                    if [p for p in ns_uses if p not in declared]:
+                        orig_xpath_issues.add((k_el.text or "", v))
+
     for el in mod_root.iter():
         key_el = el.find(f"{{{_IFL}}}key") or el.find("key")
         val_el = el.find(f"{{{_IFL}}}value") or el.find("value")
@@ -161,6 +203,13 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                 declared = re.findall(r'declare\s+namespace\s+([a-zA-Z][a-zA-Z0-9_]*)\s*=', val)
                 missing  = [p for p in ns_uses if p not in declared]
                 if missing:
+                    fingerprint = (key_el.text or "", val)
+                    if fingerprint in orig_xpath_issues:
+                        logger.info(
+                            "[Validator] Pre-existing issue ignored (existed in original): "
+                            "XPath missing namespace declaration for property '%s'", key_el.text
+                        )
+                        continue
                     errors.append(
                         f"XPath expression in property '{key_el.text}' uses namespace prefix(es) "
                         f"{missing} but no 'declare namespace' directive found. "
@@ -169,15 +218,29 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                     )
 
     # ── Check 5 — Content Modifier: dynamic-looking values must NOT use srcType="Constant" ──
-    # Note: srcType="Constant" is valid in SAP CPI for literal strings (e.g. "application/json").
-    # Only flag when the value contains expression syntax (${...}, XPath //) but is marked Constant.
+    # Pre-existing: skip if the same serviceTask had this issue in original.
+    orig_dynamic_constant_tasks: set = set()
+    if orig_root is not None:
+        for task in orig_root.iter(f"{{{_BPMN2}}}serviceTask"):
+            ext = task.find(f"{{{_BPMN2}}}extensionElements")
+            if ext is None:
+                continue
+            kv: Dict[str, str] = {}
+            for p in ext.findall(f"{{{_IFL}}}property"):
+                k = p.findtext(f"{{{_IFL}}}key") or p.findtext("key") or ""
+                v = p.findtext(f"{{{_IFL}}}value") or p.findtext("value") or ""
+                kv[k] = v
+            if "headerName" in kv and kv.get("srcType", "") == "Constant":
+                src_val = kv.get("srcValue", kv.get("expression", kv.get("value", "")))
+                if "${" in src_val or src_val.startswith("//") or src_val.startswith("$.") or re.search(r'\$\{[^}]+\}', src_val):
+                    orig_dynamic_constant_tasks.add(task.get("id", ""))
+
     for task in mod_root.iter(f"{{{_BPMN2}}}serviceTask"):
         ext = task.find(f"{{{_BPMN2}}}extensionElements")
         if ext is None:
             continue
-        props = ext.findall(f"{{{_IFL}}}property")
-        kv: Dict[str, str] = {}
-        for p in props:
+        kv = {}
+        for p in ext.findall(f"{{{_IFL}}}property"):
             k = p.findtext(f"{{{_IFL}}}key") or p.findtext("key") or ""
             v = p.findtext(f"{{{_IFL}}}value") or p.findtext("value") or ""
             kv[k] = v
@@ -190,24 +253,49 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                 or re.search(r'\$\{[^}]+\}', src_val)
             )
             if is_dynamic:
+                task_id = task.get("id", "?")
+                if task_id in orig_dynamic_constant_tasks:
+                    logger.info(
+                        "[Validator] Pre-existing issue ignored (existed in original): "
+                        "Content Modifier step '%s' uses srcType=Constant with dynamic value", task_id
+                    )
+                    continue
                 errors.append(
-                    f"Content Modifier step '{task.get('id', '?')}' has a header row with "
+                    f"Content Modifier step '{task_id}' has a header row with "
                     f"srcType='Constant' but the value '{src_val[:80]}' looks like a dynamic expression. "
                     f"Change srcType to 'Expression' for dynamic values."
                 )
 
     # ── Check 6 — every exclusiveGateway (CBR) must have a default route ──
+    # Pre-existing: gateways that already had no default route in original are skipped.
+    preexisting_no_default: set = set()
+    if orig_root is not None:
+        orig_gw_defaults: set = set()
+        for sf in orig_root.iter(f"{{{_BPMN2}}}sequenceFlow"):
+            if sf.get("isDefault", "").lower() == "true":
+                orig_gw_defaults.add(sf.get("sourceRef", ""))
+        for gw in orig_root.iter(f"{{{_BPMN2}}}exclusiveGateway"):
+            gw_id = gw.get("id", "")
+            outgoing_ids = {sf.text.strip() for sf in gw.findall(f"{{{_BPMN2}}}outgoing") if sf.text}
+            if outgoing_ids and len(outgoing_ids) > 1 and gw_id not in orig_gw_defaults:
+                preexisting_no_default.add(gw_id)
+
     for gw in mod_root.iter(f"{{{_BPMN2}}}exclusiveGateway"):
         gw_id = gw.get("id", "")
         outgoing_ids = {sf.text.strip() for sf in gw.findall(f"{{{_BPMN2}}}outgoing") if sf.text}
         if not outgoing_ids:
             continue
-        has_default = False
-        for sf in mod_root.iter(f"{{{_BPMN2}}}sequenceFlow"):
-            if sf.get("sourceRef") == gw_id and sf.get("isDefault", "").lower() == "true":
-                has_default = True
-                break
+        has_default = any(
+            sf.get("sourceRef") == gw_id and sf.get("isDefault", "").lower() == "true"
+            for sf in mod_root.iter(f"{{{_BPMN2}}}sequenceFlow")
+        )
         if not has_default and len(outgoing_ids) > 1:
+            if gw_id in preexisting_no_default:
+                logger.info(
+                    "[Validator] Pre-existing issue ignored (existed in original): "
+                    "exclusiveGateway '%s' has no default route", gw_id
+                )
+                continue
             errors.append(
                 f"Content-Based Router (exclusiveGateway) '{gw_id}' has no default route. "
                 f"Every router MUST have a default outgoing sequenceFlow with isDefault='true'. "
@@ -215,6 +303,17 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
             )
 
     # ── Check 7 — Groovy script references must use /script/<Name>.groovy ──
+    # Pre-existing: skip if the same (key, value) pair was already wrong in original.
+    orig_groovy_issues: set = set()
+    if orig_root is not None:
+        for el in orig_root.iter():
+            k_el = el.find(f"{{{_IFL}}}key") or el.find("key")
+            v_el = el.find(f"{{{_IFL}}}value") or el.find("value")
+            if k_el is None or v_el is None:
+                continue
+            if "script" in (k_el.text or "").lower() and "src/main/resources" in (v_el.text or ""):
+                orig_groovy_issues.add((k_el.text or "", v_el.text or ""))
+
     for el in mod_root.iter():
         key_el = el.find(f"{{{_IFL}}}key") or el.find("key")
         val_el = el.find(f"{{{_IFL}}}value") or el.find("value")
@@ -223,6 +322,13 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
         key = (key_el.text or "").lower()
         val = (val_el.text or "")
         if "script" in key and "src/main/resources" in val:
+            fingerprint = (key_el.text or "", val)
+            if fingerprint in orig_groovy_issues:
+                logger.info(
+                    "[Validator] Pre-existing issue ignored (existed in original): "
+                    "Groovy script reference '%s' uses full archive path", val
+                )
+                continue
             errors.append(
                 f"Groovy script reference '{val}' uses the full archive path. "
                 f"The model reference must be '/script/<FileName>.groovy' "

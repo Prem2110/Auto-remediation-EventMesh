@@ -263,6 +263,13 @@ def ensure_em_schema():
                 key_steps             NVARCHAR(2000)
             )""")
             logger.info("[DB] Created table %s", _FIX_TABLE)
+        # Defensive migration: add success_count if the table predates this column
+        try:
+            cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("success_count" INTEGER DEFAULT 0)')
+            conn.commit()
+            logger.info("[DB] Added success_count column to %s", _FIX_TABLE)
+        except Exception:
+            pass  # Column already exists
 
         # ── EM_ESCALATION_TICKETS ────────────────────────────────────────────
         cur.execute(check, (_TICKETS_TABLE.upper(), schema_q) if schema_q else (_TICKETS_TABLE.upper(),))
@@ -803,42 +810,70 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
             [str(s)[:200] for s in raw_steps if s][:8]  # at most 8 steps, 200 chars each
         ) if raw_steps else None
 
-        cur.execute(
-            f'SELECT pattern_id, applied_count, fix_applied, "success_count", "replay_success_count", "key_steps" FROM "{_FIX_TABLE}" WHERE error_signature=?',
-            (sig,),
-        )
+        # Try full SELECT with success_count; fall back if column doesn't exist yet
+        _has_success_count = True
+        try:
+            cur.execute(
+                f'SELECT pattern_id, applied_count, fix_applied, "success_count", "replay_success_count", "key_steps" FROM "{_FIX_TABLE}" WHERE error_signature=?',
+                (sig,),
+            )
+        except Exception:
+            _has_success_count = False
+            cur.execute(
+                f'SELECT pattern_id, applied_count, fix_applied FROM "{_FIX_TABLE}" WHERE error_signature=?',
+                (sig,),
+            )
+
         rows = _rows_to_dicts(cur)
         existing = next((r for r in rows if str(r.get("fix_applied", "") or "") == fix), None)
 
         outcome = data.get("outcome", "")
         if existing:
-            new_success = (existing.get("success_count") or 0) + (1 if outcome == "SUCCESS" else 0)
-            new_replay  = (existing.get("replay_success_count") or 0) + (1 if replay_success else 0)
-            # Only overwrite key_steps when this fix succeeded (preserve last successful steps)
-            new_steps   = key_steps_json if (outcome == "SUCCESS" and key_steps_json) else existing.get("key_steps")
-            cur.execute(
-                f"""UPDATE "{_FIX_TABLE}"
-                   SET applied_count=?, outcome=?, last_seen=?,
-                       "success_count"=?, "replay_success_count"=?, "key_steps"=?
-                   WHERE pattern_id=?""",
-                (existing["applied_count"] + 1, outcome, now, new_success, new_replay, new_steps, existing["pattern_id"]),
-            )
+            if _has_success_count:
+                new_success = (existing.get("success_count") or 0) + (1 if outcome == "SUCCESS" else 0)
+                new_replay  = (existing.get("replay_success_count") or 0) + (1 if replay_success else 0)
+                new_steps   = key_steps_json if (outcome == "SUCCESS" and key_steps_json) else existing.get("key_steps")
+                cur.execute(
+                    f"""UPDATE "{_FIX_TABLE}"
+                       SET applied_count=?, outcome=?, last_seen=?,
+                           "success_count"=?, "replay_success_count"=?, "key_steps"=?
+                       WHERE pattern_id=?""",
+                    (existing["applied_count"] + 1, outcome, now, new_success, new_replay, new_steps, existing["pattern_id"]),
+                )
+            else:
+                cur.execute(
+                    f'UPDATE "{_FIX_TABLE}" SET applied_count=?, outcome=?, last_seen=? WHERE pattern_id=?',
+                    (existing["applied_count"] + 1, outcome, now, existing["pattern_id"]),
+                )
         else:
-            cur.execute(
-                f"""INSERT INTO "{_FIX_TABLE}"
-                   (pattern_id, error_signature, iflow_id, error_type,
-                    root_cause, fix_applied, outcome, applied_count, last_seen,
-                    "success_count", "replay_success_count", "key_steps")
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    str(uuid.uuid4()), sig,
-                    data.get("iflow_id", ""), data.get("error_type", ""),
-                    data.get("root_cause", ""), fix, outcome, 1, now,
-                    1 if outcome == "SUCCESS" else 0,
-                    1 if replay_success else 0,
-                    key_steps_json if outcome == "SUCCESS" else None,
-                ),
-            )
+            if _has_success_count:
+                cur.execute(
+                    f"""INSERT INTO "{_FIX_TABLE}"
+                       (pattern_id, error_signature, iflow_id, error_type,
+                        root_cause, fix_applied, outcome, applied_count, last_seen,
+                        "success_count", "replay_success_count", "key_steps")
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        str(uuid.uuid4()), sig,
+                        data.get("iflow_id", ""), data.get("error_type", ""),
+                        data.get("root_cause", ""), fix, outcome, 1, now,
+                        1 if outcome == "SUCCESS" else 0,
+                        1 if replay_success else 0,
+                        key_steps_json if outcome == "SUCCESS" else None,
+                    ),
+                )
+            else:
+                cur.execute(
+                    f"""INSERT INTO "{_FIX_TABLE}"
+                       (pattern_id, error_signature, iflow_id, error_type,
+                        root_cause, fix_applied, outcome, applied_count, last_seen)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        str(uuid.uuid4()), sig,
+                        data.get("iflow_id", ""), data.get("error_type", ""),
+                        data.get("root_cause", ""), fix, outcome, 1, now,
+                    ),
+                )
         conn.commit()
         conn.close()
     except Exception as e:
