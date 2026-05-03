@@ -173,6 +173,7 @@ _FIX_TOOL_PROGRESS_LABELS: Dict[str, str] = {
     "unlock_iflow":          "Agent: unlocking iFlow for editing…",
     "cancel_checkout":       "Agent: cancelling existing checkout…",
     "force_unlock":          "Agent: force-unlocking iFlow…",
+    "get_message_logs":      "Agent: reading message processing logs…",
 }
 
 

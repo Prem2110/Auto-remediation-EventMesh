@@ -26,9 +26,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FixStrategy:
-    strategy: Literal["structured", "free_xml", "deploy_only"]
+    strategy: Literal["structured", "free_xml", "deploy_only", "component_replace"]
     operations: List[Dict]
     reason: str
+    reference_name: str = ""
 
 
 class FixPlanner:
@@ -38,8 +39,10 @@ class FixPlanner:
     """
 
     def __init__(self, mcp) -> None:
+        from agents.fix_component_replacer import ComponentReplacer  # noqa: PLC0415
         self._mcp              = mcp
         self._diagnosis_agent  = None
+        self._replacer         = ComponentReplacer(mcp)
 
     async def build_agent(self) -> None:
         """Build a read-only diagnosis agent (get-iflow only)."""
@@ -79,6 +82,40 @@ class FixPlanner:
                 operations=[],
                 reason="No pre-fetched iFlow XML — structured path unavailable.",
             ), sliced_xml
+
+        # ── Component replacement (first strategy attempt) ────────────────────
+        from agents.fix_component_replacer import REPLACEMENT_ELIGIBLE_ERROR_TYPES  # noqa: PLC0415
+        if (
+            ctx.error_type in REPLACEMENT_ELIGIBLE_ERROR_TYPES
+            and self._replacer.is_eligible(ctx.error_type, ctx.affected_component)
+        ):
+            ref_name, ref_xml = await self._replacer.find_and_fetch_reference(
+                ctx.error_type, ctx.affected_component
+            )
+            if ref_name and ref_xml:
+                merged_xml = self._replacer.merge_component(
+                    original_full_xml=ctx.original_xml,
+                    reference_xml=ref_xml,
+                    affected_component=ctx.affected_component,
+                    proposed_fix=ctx.proposed_fix,
+                    error_type=ctx.error_type,
+                )
+                if merged_xml:
+                    logger.info(
+                        "[FixPlanner] Component replacement succeeded: "
+                        "iflow=%s component=%s reference=%s",
+                        ctx.iflow_id, ctx.affected_component, ref_name,
+                    )
+                    return FixStrategy(
+                        strategy="component_replace",
+                        operations=[{"merged_xml": merged_xml}],
+                        reason=f"Component replaced with reference '{ref_name}'",
+                        reference_name=ref_name,
+                    ), sliced_xml
+                else:
+                    logger.info(
+                        "[FixPlanner] Component merge failed — falling through to structured path"
+                    )
 
         ops = await self._get_fix_operation(ctx)
 

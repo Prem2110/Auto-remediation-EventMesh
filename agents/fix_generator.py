@@ -94,11 +94,19 @@ class FixGenerator:
             except Exception as e:
                 return f"Error recording fix pattern: {e}"
 
-        get_iflow_tool    = self._mcp.get_mcp_tool("integration_suite", "get-iflow")
-        update_iflow_tool = self._mcp.get_mcp_tool("integration_suite", "update-iflow")
-        deploy_iflow_tool = self._mcp.get_mcp_tool("integration_suite", "deploy-iflow")
+        get_iflow_tool       = self._mcp.get_mcp_tool("integration_suite", "get-iflow")
+        update_iflow_tool    = self._mcp.get_mcp_tool("integration_suite", "update-iflow")
+        deploy_iflow_tool    = self._mcp.get_mcp_tool("integration_suite", "deploy-iflow")
+        list_examples_tool   = self._mcp.get_mcp_tool("integration_suite", "list-iflow-examples")
+        get_example_tool     = self._mcp.get_mcp_tool("integration_suite", "get-iflow-example")
+        get_msg_logs_tool    = self._mcp.get_mcp_tool("integration_suite", "get_message_logs")
 
-        mcp_tools = [t for t in [get_iflow_tool, update_iflow_tool, deploy_iflow_tool] if t]
+        mcp_tools = [
+            t for t in [
+                get_iflow_tool, update_iflow_tool, deploy_iflow_tool,
+                list_examples_tool, get_example_tool, get_msg_logs_tool,
+            ] if t
+        ]
         if not mcp_tools:
             mcp_tools = [t for t in self._mcp.tools if t.server == "integration_suite"]
 
@@ -182,6 +190,25 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         For 'free_xml':   run the LLM agent pipeline and return the full PatchSpec
                           containing the tool-call steps.
         """
+        if strategy.strategy == "component_replace":
+            merged_xml = strategy.operations[0].get("merged_xml", "") if strategy.operations else ""
+            if merged_xml:
+                logger.info(
+                    "[FixGenerator] Using component_replace strategy for iflow=%s",
+                    ctx.iflow_id,
+                )
+                return PatchSpec(
+                    mode="structured",
+                    operations=[{
+                        "change_type": "component_replace",
+                        "merged_xml": merged_xml,
+                        "reference_name": strategy.reference_name,
+                    }],
+                    raw_xml=merged_xml,
+                    raw_answer=f"Component replaced with reference '{strategy.reference_name}'",
+                    steps=[],
+                )
+
         if strategy.strategy == "structured":
             return PatchSpec(
                 mode="structured",

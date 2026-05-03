@@ -28,3 +28,5 @@ class FixContext:
     user_id: str = ""
     session_id: str = ""
     timestamp: str = ""
+    reference_component_name: str = ""
+    reference_component_xml: str = ""

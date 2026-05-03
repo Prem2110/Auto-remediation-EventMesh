@@ -89,6 +89,62 @@ class FixApplier:
         Call update-iflow and deploy-iflow directly — no LLM involved.
         The patched_xml has already been validated by FixValidator.
         """
+        # ── Component replacement shortcut ────────────────────────────────────
+        for op in patch.operations:
+            if op.get("change_type") == "component_replace":
+                merged_xml = op.get("merged_xml", "")
+                if not merged_xml:
+                    continue
+                from core.validators import _check_iflow_xml  # noqa: PLC0415
+                errors = _check_iflow_xml(ctx.original_xml, merged_xml)
+                if errors:
+                    logger.warning(
+                        "[FixApplier] Component replace validation failed: %s", errors
+                    )
+                    break
+                logger.info(
+                    "[FixApplier] Applying component replacement for iflow=%s", ctx.iflow_id
+                )
+                update_result = await self._mcp.execute_integration_tool(
+                    "update-iflow",
+                    {
+                        "id": ctx.iflow_id,
+                        "files": [{"filepath": ctx.original_filepath, "content": merged_xml}],
+                        "autoDeploy": True,
+                    },
+                )
+                update_ok = self._update_succeeded(str(update_result.get("output", "")))
+                if not update_ok:
+                    logger.warning(
+                        "[FixApplier] Component replace update failed for iflow=%s", ctx.iflow_id
+                    )
+                    return ApplyResult(
+                        success=False,
+                        fix_applied=False,
+                        deploy_success=False,
+                        failed_stage="update",
+                        summary=f"Component replacement update failed for {ctx.iflow_id}",
+                        technical_details=str(update_result.get("output", ""))[:300],
+                        steps=[],
+                    )
+                deploy_result = await self._mcp.execute_integration_tool(
+                    "deploy-iflow", {"id": ctx.iflow_id}
+                )
+                deploy_ok = self._deploy_succeeded(str(deploy_result.get("output", "")))
+                return ApplyResult(
+                    success=deploy_ok,
+                    fix_applied=True,
+                    deploy_success=deploy_ok,
+                    failed_stage=None if deploy_ok else "deploy",
+                    summary=(
+                        f"Component '{ctx.affected_component}' replaced with reference "
+                        f"'{op.get('reference_name', '')}' and "
+                        f"{'deployed successfully' if deploy_ok else 'deploy failed'}."
+                    ),
+                    technical_details="",
+                    steps=[],
+                )
+
         # Call update-iflow
         update_result = await self._mcp.execute_integration_tool(
             "update-iflow",
