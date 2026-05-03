@@ -260,9 +260,13 @@ class FixApplier:
         elif validation_failed:
             _validation_note = " [warn: agent proceeded despite XML validation errors]"
 
+        # Treat a deploy that bypassed validation errors as "deployed but unverified" —
+        # the fix may be structurally incorrect even though SAP CPI accepted the upload.
+        _failed_stage = "validation_warning" if (not validation_called or validation_failed) else None
+
         return {
             "success": True, "fix_applied": True, "deploy_success": True,
-            "failed_stage": None,
+            "failed_stage": _failed_stage,
             "technical_details": _validation_note.strip(),
             "summary": f"iFlow updated and deployed successfully. {compact(answer)}{_validation_note}",
             "failed_steps": [],

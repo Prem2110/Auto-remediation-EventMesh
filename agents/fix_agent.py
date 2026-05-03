@@ -763,6 +763,10 @@ class FixAgent:
             if failed_stage in ("agent", "tool_validation"):
                 return "FIX_FAILED"
             return "FIX_FAILED"
+        # Deployed but XML validation was skipped or had errors — lower confidence,
+        # don't mark as VERIFIED until a clean validation run confirms the fix.
+        if failed_stage == "validation_warning":
+            return "FIX_DEPLOYED"
         if policy.get("action") == "RETRY":
             if retry_result and (retry_result.get("success") or retry_result.get("skipped")):
                 return "FIX_VERIFIED"

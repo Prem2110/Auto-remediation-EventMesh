@@ -448,7 +448,7 @@ export default function Observability() {
   // Fix-related state
   const [fixPatch, setFixPatch] = useState<IFixPatchResponse | null>(null);
   const [fixPatchLoading, setFixPatchLoading] = useState(false);
-  const [fixState, setFixState] = useState<"idle" | "loading" | "success" | "error" | "skipped">("idle");
+  const [fixState, setFixState] = useState<"idle" | "loading" | "success" | "error" | "skipped" | "deployed_unverified">("idle");
   const [fixResult, setFixResult] = useState<string>("");
   const [fixProgress, setFixProgress] = useState<{
     currentStep: string; stepIndex: number; totalSteps: number; stepsDone: string[];
@@ -638,7 +638,10 @@ export default function Observability() {
       if (incStatus === "HUMAN_INITIATED_FIX") {
         setFixState("skipped");
         setFixResult(d.ai_recommendation?.fix_summary || "iFlow was already running — no changes were applied.");
-      } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "FIX_DEPLOYED", "RETRIED"].includes(incStatus)) {
+      } else if (incStatus === "FIX_DEPLOYED") {
+        setFixState("deployed_unverified");
+        setFixResult(d.ai_recommendation?.fix_summary || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
+      } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(incStatus)) {
         setFixState("success");
         setFixResult(d.ai_recommendation?.fix_summary || "Fix applied and deployed successfully.");
       } else if (["FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME"].includes(incStatus)) {
@@ -729,6 +732,9 @@ export default function Observability() {
           if (st === "HUMAN_INITIATED_FIX") {
             setFixState("skipped");
             setFixResult((s.fix_summary as string) || "iFlow was already running — no changes were applied.");
+          } else if (st === "FIX_DEPLOYED") {
+            setFixState("deployed_unverified");
+            setFixResult((s.fix_summary as string) || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
           } else if (SUCCESS_STATUSES.has(st) || stepImpliesDone) {
             setFixState("success");
             setFixResult((s.fix_summary as string) || "Fix applied and deployed successfully.");
@@ -773,6 +779,10 @@ export default function Observability() {
         setFixProgress(null);
         setFixState("skipped");
         setFixResult((result.summary as string) || "iFlow was already running — no changes were applied.");
+      } else if (syncStatus === "FIX_DEPLOYED") {
+        setFixProgress(null);
+        setFixState("deployed_unverified");
+        setFixResult((result.summary as string) || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
       } else if (SUCCESS_STATUSES.has(syncStatus) || (syncFixApplied && syncDeploy)) {
         setFixProgress(null);
         setFixState("success");
@@ -1367,7 +1377,7 @@ export default function Observability() {
                     <div className={styles.fixFooterActions}>
                       {fixPatch ? (
                         <>
-                          {fixState !== "skipped" && (
+                          {fixState !== "skipped" && fixState !== "deployed_unverified" && (
                             <button
                               className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
                               onClick={handleApplyFix}
@@ -1391,6 +1401,9 @@ export default function Observability() {
                                 Force Apply Fix
                               </button>
                             </>
+                          )}
+                          {fixState === "deployed_unverified" && (
+                            <span className={styles.deployedUnverifiedBadge}>⚠ Deployed — Verify iFlow Manually</span>
                           )}
                           {fixState === "error" && detail?.incident_id && (
                             <button

@@ -1803,6 +1803,20 @@
   margin: 0.1rem 0 0;
 }
 
+/* ── Deployed-but-unverified badge ──────────────────────────────────── */
+.deployedUnverifiedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 0.375rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #c2410c;
+}
+
 /* ── AI Thinking / Analyzing loader ─────────────────────────────────── */
 .aiThinkingLoader {
   display: flex;
