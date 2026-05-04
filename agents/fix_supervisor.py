@@ -105,6 +105,26 @@ class FixSupervisor:
                 attempt, _MAX_ATTEMPTS, strat_name, ctx.iflow_id,
             )
 
+            # FIX 1: Restore original XML before each retry so attempt N never sees
+            # broken state left by attempt N-1 (e.g. a partial/bad update-iflow).
+            if attempt > 1 and ctx.original_xml and ctx.original_filepath:
+                _mcp = getattr(self._applier, "_mcp", None)
+                if _mcp:
+                    try:
+                        await _mcp.execute_integration_tool(
+                            "update-iflow",
+                            {
+                                "id":    ctx.iflow_id,
+                                "files": [{"filepath": ctx.original_filepath, "content": ctx.original_xml}],
+                            },
+                        )
+                        logger.info("[Supervisor] Restored original XML before attempt=%d", attempt)
+                    except Exception as _restore_exc:
+                        logger.warning(
+                            "[Supervisor] Could not restore original XML before attempt=%d: %s",
+                            attempt, _restore_exc,
+                        )
+
             patch   = await self._generator.generate(ctx, strategy, progress_fn=progress_fn)
             vresult = self._validator.pre_validate(ctx, patch)
 
@@ -163,7 +183,7 @@ class FixSupervisor:
             if last_result.fix_applied and last_result.failed_stage in ("deploy", "deploy_validation"):
                 deploy_error_hint = await self._rollback_and_get_deploy_error(ctx)
                 if deploy_error_hint:
-                    ctx = dataclasses.replace(ctx, deploy_error_hint=deploy_error_hint)
+                    ctx = dataclasses.replace(ctx, last_deploy_error=deploy_error_hint)
 
             _reason = (
                 f"Strategy '{strat_name}' failed (stage={result.failed_stage}); "
@@ -250,7 +270,7 @@ class FixSupervisor:
             err_result = await mcp.execute_integration_tool(
                 "get-deploy-error", {"id": ctx.iflow_id}
             )
-            deploy_error = str(err_result.get("output", "")).strip()[:500]
+            deploy_error = str(err_result.get("output", "")).strip()
             if deploy_error:
                 logger.info(
                     "[Supervisor] Deploy error fetched for iflow=%s: %s",

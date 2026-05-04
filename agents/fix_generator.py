@@ -159,6 +159,12 @@ STEP 4: Call update-iflow with id, files, autoDeploy=true.
     If still locked → STOP, return failed_stage="locked".
   - If any other failure → STOP, return failed_stage="update".
 
+=== CRITICAL — FILEPATH FOR update-iflow ===
+CRITICAL: When calling update_iflow, the filepath MUST match the actual .iflw filename
+from the get-iflow output. Read the filepath from the get-iflow response carefully.
+NEVER use a hardcoded or guessed filepath.
+The filepath comes from the get-iflow response files list.
+
 STEP 5: Call deploy-iflow with the iFlow ID.
   - If FAILS: call get-deploy-error to retrieve diagnostic details.
   - Return failed_stage="deploy" with the error details.
@@ -342,15 +348,11 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         if ctx.cross_pattern_text:
             prompt += f"\n\n{ctx.cross_pattern_text}"
 
-        if ctx.deploy_error_hint:
+        if ctx.last_deploy_error:
             prompt += (
-                "\n\n=== PREVIOUS DEPLOY FAILURE — READ CAREFULLY ===\n"
-                "The previous fix attempt was applied (update-iflow succeeded) but SAP CPI "
-                "rejected it at deploy time. The original iFlow XML has been restored. "
-                "SAP CPI returned the following error from get-deploy-error:\n"
-                f"{ctx.deploy_error_hint}\n"
-                "Your fix this attempt MUST address the root cause shown above, not just "
-                "repeat the same change."
+                "\n\nPREVIOUS ATTEMPT DEPLOY ERROR: "
+                f"{ctx.last_deploy_error}\n"
+                "Your fix must address this specific deploy error."
             )
 
         # Inject static component map from XMLAnalyst (no LLM, no network)
@@ -447,6 +449,15 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         answer += f"\n\n__TOOLS_INVOKED__={','.join(invoked_tools)}"
         logger.info("[FixGenerator] Tools invoked: %s", invoked_tools)
 
+        # FIX 3: Validate filepath used in update-iflow against what get-iflow returned
+        _used_fp     = _extract_update_filepath(_result["messages"])
+        _expected_fps = _extract_getiflow_filepaths(_result["messages"])
+        if _used_fp and _expected_fps and _used_fp not in _expected_fps:
+            logger.warning(
+                "[FixGenerator] WRONG FILEPATH detected: used=%s expected=%s",
+                _used_fp, _expected_fps,
+            )
+
         # Extract patched XML from update-iflow tool call arguments
         raw_xml = _extract_patched_xml(_result["messages"])
 
@@ -459,7 +470,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         )
 
 
-# ── XML extraction helper ─────────────────────────────────────────────────────
+# ── XML / filepath extraction helpers ────────────────────────────────────────
 
 def _extract_patched_xml(messages: List[Any]) -> str:
     """
@@ -478,3 +489,34 @@ def _extract_patched_xml(messages: List[Any]) -> str:
                         if content:
                             return content
     return ""
+
+
+def _extract_update_filepath(messages: List[Any]) -> str:
+    """Return the filepath the LLM passed to update-iflow, or '' if not found."""
+    for msg in messages:
+        for tc in (getattr(msg, "tool_calls", None) or []):
+            name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+            if name and "update" in name.lower() and "iflow" in name.lower():
+                args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                if isinstance(args, dict):
+                    files = args.get("files", [])
+                    if files and isinstance(files, list) and isinstance(files[0], dict):
+                        return files[0].get("filepath", "")
+    return ""
+
+
+def _extract_getiflow_filepaths(messages: List[Any]) -> List[str]:
+    """
+    Scan tool-response messages (ToolMessage content) for filepath values
+    returned by get-iflow.  Matches any "filepath": "..." in the response JSON.
+    """
+    filepaths: List[str] = []
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if not content or not isinstance(content, str):
+            continue
+        for match in re.finditer(r'"filepath"\s*:\s*"([^"]+)"', content):
+            fp = match.group(1)
+            if fp and fp not in filepaths:
+                filepaths.append(fp)
+    return filepaths
