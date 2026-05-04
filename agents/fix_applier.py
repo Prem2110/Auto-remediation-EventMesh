@@ -221,6 +221,14 @@ class FixApplier:
                 technical_details="",
                 steps=patch.steps,
             )
+        if raw.startswith("__RECURSION_LIMIT__"):
+            return ApplyResult(
+                success=False, fix_applied=False, deploy_success=False,
+                failed_stage="recursion_limit",
+                summary="Fix agent hit LangGraph recursion limit — will retry with a simpler strategy.",
+                technical_details="",
+                steps=patch.steps,
+            )
         if raw.startswith("__ERROR__:"):
             return ApplyResult(
                 success=False, fix_applied=False, deploy_success=False,

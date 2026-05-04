@@ -348,7 +348,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
             _result = await asyncio.wait_for(
                 agent.ainvoke(
                     {"messages": messages},
-                    config={"callbacks": [logger_cb], "recursion_limit": 18},
+                    config={"callbacks": [logger_cb], "recursion_limit": 30},
                 ),
                 timeout=600.0,
             )
@@ -362,6 +362,25 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 steps=logger_cb.steps,
             )
         except Exception as exc:
+            exc_type = type(exc).__name__
+            # GraphRecursionError means the agent ran out of steps, not that it crashed.
+            # Treat it like a timeout so the supervisor can retry with a different strategy.
+            _is_recursion = (
+                "GraphRecursionError" in exc_type
+                or "recursion limit" in str(exc).lower()
+            )
+            if _is_recursion:
+                logger.warning(
+                    "[FixGenerator] Recursion limit reached for iflow=%s — will retry with simpler strategy.",
+                    ctx.iflow_id,
+                )
+                return PatchSpec(
+                    mode="free_xml",
+                    operations=[],
+                    raw_xml="",
+                    raw_answer="__RECURSION_LIMIT__",
+                    steps=logger_cb.steps,
+                )
             logger.error("[FixGenerator] agent error: %s", exc)
             return PatchSpec(
                 mode="free_xml",
