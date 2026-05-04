@@ -159,8 +159,21 @@ Return exactly:
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>"
+  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>",
+  "property_to_change": "<exact property name, e.g. 'Address', 'CredentialName', 'httpMethod'> or null if unknown",
+  "current_value":      "<the broken value as it exists now in the iFlow XML> or null if unknown",
+  "correct_value":      "<the exact correct value to set> or null if cannot be determined"
 }}
+
+For property_to_change, current_value, correct_value:
+- These MUST be populated when the fix is a simple value change (URL typo, credential name, field rename, method change, etc.)
+- Read the ACTUAL values from get-iflow output — never guess
+- correct_value must be the EXACT string to put in XML
+- If the fix requires structural changes (add/remove steps) → set all three to null
+- Example:
+  property_to_change: "Address"
+  current_value: "https://api.example.com/calcWebServic/Calc.asmx"
+  correct_value: "https://api.example.com/calcWebService/Calc.asmx"
 """
         self._agent = await _mcp.build_agent(
             tools=all_tools,
@@ -282,7 +295,10 @@ Return ONLY valid JSON (no markdown, no preamble):
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>"
+  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>",
+  "property_to_change": "<exact property name, e.g. 'Address', 'CredentialName'> or null",
+  "current_value":      "<the broken value from the iFlow XML> or null",
+  "correct_value":      "<the exact correct value to set> or null"
 }}
 
 STOP after returning JSON. Do not call any other tools.
@@ -315,7 +331,10 @@ Return ONLY valid JSON (no markdown, no preamble):
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>"
+  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>",
+  "property_to_change": "<exact property name, e.g. 'Address', 'CredentialName'> or null",
+  "current_value":      "<the broken value from the iFlow XML> or null",
+  "correct_value":      "<the exact correct value to set> or null"
 }}
 """
 

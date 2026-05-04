@@ -30,7 +30,7 @@ from agents.fix_context import FixContext
 logger = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS    = 3
-_STRATEGY_ORDER  = ["component_replace", "structured", "free_xml"]
+_STRATEGY_ORDER  = ["direct_patch", "component_replace", "structured", "free_xml"]
 
 # Failure stages that are not recoverable by trying another strategy
 _NON_RECOVERABLE = {"locked", "timeout", "agent", "no_tool_calls"}
@@ -173,11 +173,21 @@ class FixSupervisor:
                 _reason += f" SAP CPI deploy error: {deploy_error_hint[:200]}"
 
             from agents.fix_planner import FixStrategy  # noqa: PLC0415
-            strategy = FixStrategy(
-                strategy=next_strat,
-                operations=[],
-                reason=_reason,
-            )
+            if next_strat == "direct_patch":
+                # direct_patch needs merged_xml — re-invoke planner to compute it.
+                # If the planner cannot produce a direct_patch (component not found),
+                # it falls through to another strategy; mark direct_patch tried so
+                # _next_strategy skips it on the following iteration.
+                strategy, _new_sliced = await self._planner.plan(ctx)
+                if strategy.strategy != "direct_patch":
+                    tried_strategies.add("direct_patch")
+                ctx = dataclasses.replace(ctx, sliced_xml=_new_sliced)
+            else:
+                strategy = FixStrategy(
+                    strategy=next_strat,
+                    operations=[],
+                    reason=_reason,
+                )
 
         # Escalate
         if last_result is not None:

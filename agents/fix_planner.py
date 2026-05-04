@@ -16,7 +16,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from agents.fix_context import FixContext
 from core.constants import FIX_OPERATION_PROMPT_TEMPLATE
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FixStrategy:
-    strategy: Literal["structured", "free_xml", "deploy_only", "component_replace"]
+    strategy: Literal["structured", "free_xml", "deploy_only", "component_replace", "direct_patch"]
     operations: List[Dict]
     reason: str
     reference_name: str = ""
@@ -75,6 +75,41 @@ class FixPlanner:
         snippet centred on the affected component, or "" if unavailable.
         """
         sliced_xml = self._slice_xml(ctx.original_xml, ctx.affected_component)
+
+        # ── Direct patch — RCA gave exact component + property + value ────────
+        _ac = (ctx.affected_component or "").strip()
+        if (
+            ctx.property_to_change
+            and ctx.correct_value
+            and _ac
+            and _ac.lower() not in ("unknown", "")
+            and ctx.original_xml
+        ):
+            patched_xml = self._apply_direct_patch(
+                xml=ctx.original_xml,
+                component_id=_ac,
+                property_name=ctx.property_to_change,
+                new_value=ctx.correct_value,
+            )
+            if patched_xml:
+                logger.info(
+                    "[FixPlanner] Direct patch succeeded: iflow=%s component=%s property=%s old=%r new=%r",
+                    ctx.iflow_id, _ac, ctx.property_to_change,
+                    ctx.current_value, ctx.correct_value,
+                )
+                return FixStrategy(
+                    strategy="direct_patch",
+                    operations=[{"merged_xml": patched_xml}],
+                    reason=(
+                        f"RCA provided exact change: "
+                        f"{ctx.property_to_change} → {ctx.correct_value}"
+                    ),
+                ), sliced_xml
+            else:
+                logger.info(
+                    "[FixPlanner] Direct patch failed (component/property not found) — "
+                    "falling through to structured path"
+                )
 
         if not ctx.original_xml or not ctx.original_filepath:
             return FixStrategy(
@@ -149,6 +184,74 @@ class FixPlanner:
                 "falling through to free-XML LLM agent."
             ),
         ), sliced_xml
+
+    # ── Direct XML patch (no LLM) ────────────────────────────────────────────
+
+    @staticmethod
+    def _apply_direct_patch(
+        xml: str,
+        component_id: str,
+        property_name: str,
+        new_value: str,
+    ) -> Optional[str]:
+        """
+        Pure XML find-and-replace. No LLM involved.
+        Finds the element with id=component_id, then finds the ifl:property child
+        with the matching key and sets its value to new_value.
+        Returns patched XML string or None if not found.
+        """
+        try:
+            root = ET.fromstring(xml)
+
+            # Find target element by id attribute
+            target = None
+            for elem in root.iter():
+                if elem.get("id") == component_id:
+                    target = elem
+                    break
+
+            if target is None:
+                logger.warning("[DirectPatch] Component id=%s not found", component_id)
+                return None
+
+            prop_found = False
+
+            # Search for ifl:property with matching key
+            for prop in target.iter():
+                tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
+                if tag == "property":
+                    key_elem = prop.find(".//{*}key") or prop.find("key")
+                    val_elem = prop.find(".//{*}value") or prop.find("value")
+                    if key_elem is not None and val_elem is not None:
+                        if (key_elem.text or "").strip().lower() == property_name.lower():
+                            old_val = val_elem.text
+                            val_elem.text = new_value
+                            prop_found = True
+                            logger.info(
+                                "[DirectPatch] Changed %s: %r → %r",
+                                property_name, old_val, new_value,
+                            )
+                            break
+
+            if not prop_found:
+                # Fallback: try as a direct attribute on the element
+                if property_name in target.attrib:
+                    target.set(property_name, new_value)
+                    prop_found = True
+                    logger.info("[DirectPatch] Changed attribute %s → %r", property_name, new_value)
+
+            if not prop_found:
+                logger.warning(
+                    "[DirectPatch] Property %s not found in component %s",
+                    property_name, component_id,
+                )
+                return None
+
+            return ET.tostring(root, encoding="unicode")
+
+        except Exception as exc:
+            logger.warning("[DirectPatch] failed: %s", exc)
+            return None
 
     # ── XML context slicer ───────────────────────────────────────────────────
 

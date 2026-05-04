@@ -120,18 +120,25 @@ Your ONLY job is to fix and deploy broken SAP CPI iFlows.
 STEP 1: Call get-iflow with the iFlow ID provided in the user message.
   - If get-iflow fails → STOP immediately. Return failed_stage="get".
 
-STEP 2: Determine the exact XML changes based on error_type:
-  - BACKEND_ERROR / 404: Find <Address> tag with broken URL — fix the path or trailing slash.
-  - MAPPING_ERROR: Find the renamed/missing field in Message Mapping XML. Update ALL occurrences.
-  - AUTH_ERROR / AUTH_CONFIG_ERROR: Fix the Credential Name property in the adapter config.
-  - CONNECTIVITY_ERROR: Fix <Address> or <Url> in the receiver adapter.
-  - DEPLOY_ERROR (structural):
-      A. Call list-iflow-examples to find a reference iFlow.
-      B. Call get-iflow-example to download the reference XML.
-      C. Find the disconnected step in the broken iFlow.
-      D. Insert the missing <bpmn2:SequenceFlow> to wire it up.
-      E. Do NOT change adapter config or message mappings.
-  - SCRIPT_ERROR / XSLT_ERROR: Check Groovy script file path references.
+STEP 2: Apply the fix described in the RCA.
+
+Read root_cause and proposed_fix carefully. They tell you exactly what is broken and what to change.
+
+Your job:
+- Find the exact XML property, adapter, or step mentioned in proposed_fix
+- Change ONLY that specific value
+- Do NOT change anything else in the iFlow
+- Do NOT add or remove steps
+- Do NOT restructure sequence flows
+
+Examples of what you might change:
+- A URL/Address property value (fix typo, add missing path)
+- A CredentialName property value
+- A mapping field name
+- An adapter configuration property
+- A script file reference
+
+The SAP CPI iFlow XML structure is standard — you already know how to read it. Trust the RCA output.
 
 STEP 3: Call validate_iflow_xml with the modified XML.
   - If ERRORS returned → fix the XML issues and re-validate.
@@ -230,6 +237,29 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         For 'free_xml':   run the LLM agent pipeline and return the full PatchSpec
                           containing the tool-call steps.
         """
+        if strategy.strategy == "direct_patch":
+            merged_xml = strategy.operations[0].get("merged_xml", "") if strategy.operations else ""
+            if merged_xml:
+                logger.info(
+                    "[FixGenerator] Using direct_patch strategy for iflow=%s — no LLM call needed",
+                    ctx.iflow_id,
+                )
+                return PatchSpec(
+                    mode="structured",
+                    operations=[{
+                        "change_type":    "component_replace",
+                        "merged_xml":     merged_xml,
+                        "reference_name": "direct_patch",
+                    }],
+                    raw_xml=merged_xml,
+                    raw_answer=(
+                        f"Direct patch: {ctx.property_to_change} "
+                        f"changed from {ctx.current_value!r} "
+                        f"to {ctx.correct_value!r}"
+                    ),
+                    steps=[],
+                )
+
         if strategy.strategy == "component_replace":
             merged_xml = strategy.operations[0].get("merged_xml", "") if strategy.operations else ""
             if merged_xml:

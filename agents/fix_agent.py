@@ -308,6 +308,9 @@ class FixAgent:
         timestamp: str,
         progress_fn: Optional[Callable] = None,
         message_guid: str = "",
+        property_to_change: str = "",
+        current_value: str = "",
+        correct_value: str = "",
     ) -> Dict[str, Any]:
         agent = self._agent or self._mcp.agent
         if agent is None:
@@ -410,6 +413,9 @@ class FixAgent:
             user_id=user_id,
             session_id=session_id,
             timestamp=timestamp,
+            property_to_change=property_to_change or "",
+            current_value=current_value or "",
+            correct_value=correct_value or "",
         )
 
         # ── Core pipeline (via FixSupervisor with strategy rotation) ──────────
@@ -758,6 +764,9 @@ class FixAgent:
             timestamp=get_hana_timestamp(),
             progress_fn=progress_fn,
             message_guid=incident.get("message_guid", ""),
+            property_to_change=rca.get("property_to_change") or "",
+            current_value=rca.get("current_value") or "",
+            correct_value=rca.get("correct_value") or "",
         )
 
     # ── determine_post_fix_status ─────────────────────────────────────────────

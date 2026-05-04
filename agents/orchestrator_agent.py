@@ -936,10 +936,13 @@ Rules:
                 "affected_component": rca.get("affected_component", ""),
             })
             working_incident.update({
-                "root_cause":     rca.get("root_cause", ""),
-                "proposed_fix":   rca.get("proposed_fix", ""),
-                "rca_confidence": rca.get("confidence", 0.0),
+                "root_cause":         rca.get("root_cause", ""),
+                "proposed_fix":       rca.get("proposed_fix", ""),
+                "rca_confidence":     rca.get("confidence", 0.0),
                 "affected_component": rca.get("affected_component", ""),
+                "property_to_change": rca.get("property_to_change") or "",
+                "current_value":      rca.get("current_value") or "",
+                "correct_value":      rca.get("correct_value") or "",
             })
 
         # ── Unfixable detection ───────────────────────────────────────────────
@@ -976,15 +979,10 @@ Rules:
             "backend team must",
             "infrastructure change required",
         ]
-        # Only unfixable when the PROPOSED FIX (not just the root cause) mentions these.
-        # "backend response/returns" in the root cause merely describes what happened —
-        # the adapter configuration may still be fixable via iFlow XML.
-        _fix_only_signals = ["backend returns", "backend response"]
         _fix_hint   = (rca.get("proposed_fix") or "").lower()
         _rc_hint    = (rca.get("root_cause") or "").lower()
-        _unfixable  = (
-            next((s for s in _unfixable_signals if s in _fix_hint or s in _rc_hint), None)
-            or next((s for s in _fix_only_signals if s in _fix_hint), None)
+        _unfixable  = next(
+            (s for s in _unfixable_signals if s in _fix_hint or s in _rc_hint), None
         )
         if _unfixable and not deploy_only:
             _reason = (
