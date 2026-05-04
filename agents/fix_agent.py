@@ -311,6 +311,7 @@ class FixAgent:
         property_to_change: str = "",
         current_value: str = "",
         correct_value: str = "",
+        fixes: Optional[List] = None,
     ) -> Dict[str, Any]:
         agent = self._agent or self._mcp.agent
         if agent is None:
@@ -416,6 +417,7 @@ class FixAgent:
             property_to_change=property_to_change or "",
             current_value=current_value or "",
             correct_value=correct_value or "",
+            fixes=list(fixes) if fixes else [],
         )
 
         # ── Core pipeline (via FixSupervisor with strategy rotation) ──────────
@@ -767,6 +769,7 @@ class FixAgent:
             property_to_change=rca.get("property_to_change") or "",
             current_value=rca.get("current_value") or "",
             correct_value=rca.get("correct_value") or "",
+            fixes=rca.get("fixes") or [],
         )
 
     # ── determine_post_fix_status ─────────────────────────────────────────────

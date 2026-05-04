@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agents.base import StepLogger, TestExecutionTracker
@@ -30,6 +31,53 @@ from utils.vector_store import get_vector_store
 logger = logging.getLogger(__name__)
 
 _WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "false").lower() == "true"
+
+
+@dataclass
+class FixStep:
+    """One atomic property change produced by RCA."""
+    component_id: str
+    property_to_change: str
+    current_value: str
+    correct_value: str
+
+
+def get_all_fixes(rca: Dict[str, Any]) -> List[FixStep]:
+    """
+    Return the list of FixStep objects from a raw RCA result dict.
+
+    Prefers the `fixes` list when present; falls back to the legacy
+    single-fix fields (property_to_change / current_value / correct_value +
+    affected_component) so older RCA results still route through DirectPatch.
+    """
+    steps: List[FixStep] = []
+    for item in (rca.get("fixes") or []):
+        if not isinstance(item, dict):
+            continue
+        cid = (item.get("component_id") or "").strip()
+        ptc = (item.get("property_to_change") or "").strip()
+        cv  = (item.get("correct_value") or "").strip()
+        if cid and ptc and cv:
+            steps.append(FixStep(
+                component_id=cid,
+                property_to_change=ptc,
+                current_value=(item.get("current_value") or ""),
+                correct_value=cv,
+            ))
+
+    # Legacy fallback: single-fix scalar fields
+    if not steps:
+        ptc = (rca.get("property_to_change") or "").strip()
+        cv  = (rca.get("correct_value") or "").strip()
+        ac  = (rca.get("affected_component") or "").strip()
+        if ptc and cv and ac and ac.lower() not in ("unknown", ""):
+            steps.append(FixStep(
+                component_id=ac,
+                property_to_change=ptc,
+                current_value=(rca.get("current_value") or ""),
+                correct_value=cv,
+            ))
+    return steps
 
 
 class RCAAgent:
@@ -159,21 +207,40 @@ Return exactly:
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>",
-  "property_to_change": "<exact property name, e.g. 'Address', 'CredentialName', 'httpMethod'> or null if unknown",
-  "current_value":      "<the broken value as it exists now in the iFlow XML> or null if unknown",
-  "correct_value":      "<the exact correct value to set> or null if cannot be determined"
+  "affected_component": "<exact id= attribute value from iFlow XML — use the FIRST affected component>",
+  "property_to_change": "<primary property name> or null",
+  "current_value":      "<primary broken value from iFlow XML> or null",
+  "correct_value":      "<primary correct value to set> or null",
+  "fixes": [
+    {{
+      "component_id":      "<exact id= attribute value from iFlow XML>",
+      "property_to_change": "<exact ifl:property key name>",
+      "current_value":      "<the broken value as it exists now in the iFlow XML>",
+      "correct_value":      "<the exact correct value to set>"
+    }}
+  ]
 }}
 
-For property_to_change, current_value, correct_value:
-- These MUST be populated when the fix is a simple value change (URL typo, credential name, field rename, method change, etc.)
-- Read the ACTUAL values from get-iflow output — never guess
-- correct_value must be the EXACT string to put in XML
-- If the fix requires structural changes (add/remove steps) → set all three to null
-- Example:
-  property_to_change: "Address"
-  current_value: "https://api.example.com/calcWebServic/Calc.asmx"
-  correct_value: "https://api.example.com/calcWebService/Calc.asmx"
+Rules for `fixes`:
+- ALWAYS populate `fixes` as a list — even for a single change.
+- Each entry targets one ifl:property key on one component.
+- When multiple properties must change simultaneously (e.g. httpShouldSendBody AND isDefault),
+  add one entry per property — all will be applied atomically in a single DirectPatch call.
+- Read ALL values from the actual get-iflow output — never guess.
+- If the fix requires structural changes (add/remove steps) → return `fixes: []` and set the
+  scalar fields to null.
+- The scalar fields (property_to_change / current_value / correct_value) MUST mirror the first
+  entry in `fixes` so older consumers remain compatible.
+
+Example — two simultaneous property changes on the same component:
+  "affected_component": "ReceiverHTTP_1",
+  "property_to_change": "httpShouldSendBody",
+  "current_value": "false",
+  "correct_value": "true",
+  "fixes": [
+    {{"component_id": "ReceiverHTTP_1", "property_to_change": "httpShouldSendBody", "current_value": "false", "correct_value": "true"}},
+    {{"component_id": "ReceiverHTTP_1", "property_to_change": "isDefault",          "current_value": "false", "correct_value": "true"}}
+  ]
 """
         self._agent = await _mcp.build_agent(
             tools=all_tools,
@@ -295,11 +362,22 @@ Return ONLY valid JSON (no markdown, no preamble):
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>",
-  "property_to_change": "<exact property name, e.g. 'Address', 'CredentialName'> or null",
-  "current_value":      "<the broken value from the iFlow XML> or null",
-  "correct_value":      "<the exact correct value to set> or null"
+  "affected_component": "<exact id= attribute value from iFlow XML — first affected component>",
+  "property_to_change": "<primary property name> or null",
+  "current_value":      "<primary broken value from iFlow XML> or null",
+  "correct_value":      "<primary correct value to set> or null",
+  "fixes": [
+    {{
+      "component_id":       "<exact id= attribute value>",
+      "property_to_change": "<exact ifl:property key>",
+      "current_value":      "<broken value from iFlow XML>",
+      "correct_value":      "<correct value to set>"
+    }}
+  ]
 }}
+
+Always populate `fixes` as a list (one entry per property change). Mirror the first entry in the
+scalar fields for backwards compatibility. For structural changes set `fixes: []` and scalars to null.
 
 STOP after returning JSON. Do not call any other tools.
 """
@@ -331,11 +409,22 @@ Return ONLY valid JSON (no markdown, no preamble):
   "confidence": 0.0,
   "auto_apply": false,
   "error_type": "<error type>",
-  "affected_component": "<exact id= attribute value from iFlow XML, e.g. CallActivity_1>",
-  "property_to_change": "<exact property name, e.g. 'Address', 'CredentialName'> or null",
-  "current_value":      "<the broken value from the iFlow XML> or null",
-  "correct_value":      "<the exact correct value to set> or null"
+  "affected_component": "<exact id= attribute value from iFlow XML — first affected component>",
+  "property_to_change": "<primary property name> or null",
+  "current_value":      "<primary broken value from iFlow XML> or null",
+  "correct_value":      "<primary correct value to set> or null",
+  "fixes": [
+    {{
+      "component_id":       "<exact id= attribute value>",
+      "property_to_change": "<exact ifl:property key>",
+      "current_value":      "<broken value from iFlow XML>",
+      "correct_value":      "<correct value to set>"
+    }}
+  ]
 }}
+
+Always populate `fixes` as a list (one entry per property change). Mirror the first entry in the
+scalar fields for backwards compatibility. For structural changes set `fixes: []` and scalars to null.
 """
 
         timestamp = get_hana_timestamp()
@@ -402,6 +491,7 @@ Return ONLY valid JSON (no markdown, no preamble):
             rca.get("affected_component", ""),
             root_cause, proposed_fix,
         )
+        all_fixes = get_all_fixes(rca)
         return {
             "root_cause":         root_cause,
             "proposed_fix":       proposed_fix,
@@ -409,5 +499,9 @@ Return ONLY valid JSON (no markdown, no preamble):
             "auto_apply":         bool(rca.get("auto_apply", False)),
             "error_type":         final_error_type,
             "affected_component": rca.get("affected_component", ""),
+            "property_to_change": (rca.get("property_to_change") or ""),
+            "current_value":      (rca.get("current_value") or ""),
+            "correct_value":      (rca.get("correct_value") or ""),
+            "fixes":              all_fixes,
             "agent_steps":        logger_cb.steps,
         }

@@ -35,3 +35,4 @@ class FixContext:
     property_to_change: str = ""
     current_value: str = ""
     correct_value: str = ""
+    fixes: List = field(default_factory=list)

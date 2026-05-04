@@ -27,6 +27,33 @@ import type {
 import styles from "./observability.module.css";
 import EventMeshFlow from "./EventMeshFlow.tsx";
 
+/* ── Strip raw agent noise from fix_summary strings ──────────────────── */
+function cleanFixSummary(raw: string): string {
+  if (!raw) return raw;
+
+  // 1. Drop everything from __TOOLS_INVOKED__ onwards (agent metadata suffix)
+  let text = raw.replace(/\s*__TOOLS_INVOKED__.*$/s, "").trim();
+
+  // 2. If a JSON blob is embedded, prefer its "summary" field; otherwise use
+  //    the human-readable text that precedes the opening brace.
+  const braceIdx = text.indexOf("{");
+  if (braceIdx !== -1) {
+    const jsonCandidate = text.slice(braceIdx);
+    try {
+      const parsed = JSON.parse(jsonCandidate) as Record<string, unknown>;
+      const summary = (parsed.summary as string | undefined)?.trim();
+      if (summary) return summary;
+    } catch {
+      // not valid JSON — fall through
+    }
+    // Fall back: keep whatever text came before the brace
+    const before = text.slice(0, braceIdx).trim();
+    if (before) return before;
+  }
+
+  return text;
+}
+
 /* ── Top-level tab type ───────────────────────────────────────────────── */
 type MainTabKey = "messages" | "tickets" | "approvals" | "eventmesh";
 
@@ -1375,7 +1402,7 @@ export default function Observability() {
                     )}
                     {fixResult && (
                       <div className={`${styles.fixResultBanner} ${styles[`fixResultBanner_${fixState}`] || ""}`}>
-                        {fixResult}
+                        {cleanFixSummary(fixResult)}
                       </div>
                     )}
                     <div className={styles.fixFooterActions}>

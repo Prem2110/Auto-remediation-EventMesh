@@ -24,6 +24,13 @@ from core.constants import FIX_OPERATION_PROMPT_TEMPLATE
 logger = logging.getLogger(__name__)
 
 
+def _fget(fix: Any, key: str) -> str:
+    """Read a field from a FixStep object or a plain dict interchangeably."""
+    if isinstance(fix, dict):
+        return (fix.get(key) or "").strip()
+    return (getattr(fix, key, "") or "").strip()
+
+
 @dataclass(frozen=True)
 class FixStrategy:
     strategy: Literal["structured", "free_xml", "deploy_only", "component_replace", "direct_patch"]
@@ -76,34 +83,34 @@ class FixPlanner:
         """
         sliced_xml = self._slice_xml(ctx.original_xml, ctx.affected_component)
 
-        # ── Direct patch — RCA gave exact component + property + value ────────
+        # ── Direct patch — RCA gave exact component + property + value(s) ─────
         _ac = (ctx.affected_component or "").strip()
-        if (
-            ctx.property_to_change
-            and ctx.correct_value
-            and _ac
-            and _ac.lower() not in ("unknown", "")
-            and ctx.original_xml
-        ):
-            patched_xml = self._apply_direct_patch(
-                xml=ctx.original_xml,
-                component_id=_ac,
-                property_name=ctx.property_to_change,
-                new_value=ctx.correct_value,
-            )
+
+        # Build canonical fixes list: prefer ctx.fixes; fall back to legacy scalar fields.
+        _fixes: List[Any] = list(ctx.fixes) if ctx.fixes else []
+        if not _fixes and ctx.property_to_change and ctx.correct_value and _ac and _ac.lower() not in ("unknown", ""):
+            _fixes = [{
+                "component_id":      _ac,
+                "property_to_change": ctx.property_to_change,
+                "current_value":     ctx.current_value,
+                "correct_value":     ctx.correct_value,
+            }]
+
+        if _fixes and ctx.original_xml:
+            patched_xml = self._apply_direct_patch(xml=ctx.original_xml, fixes=_fixes)
             if patched_xml:
+                _labels = [
+                    f"{_fget(f, 'property_to_change')} → {_fget(f, 'correct_value')}"
+                    for f in _fixes
+                ]
                 logger.info(
-                    "[FixPlanner] Direct patch succeeded: iflow=%s component=%s property=%s old=%r new=%r",
-                    ctx.iflow_id, _ac, ctx.property_to_change,
-                    ctx.current_value, ctx.correct_value,
+                    "[FixPlanner] Direct patch succeeded: iflow=%s %d change(s): %s",
+                    ctx.iflow_id, len(_fixes), "; ".join(_labels),
                 )
                 return FixStrategy(
                     strategy="direct_patch",
                     operations=[{"merged_xml": patched_xml}],
-                    reason=(
-                        f"RCA provided exact change: "
-                        f"{ctx.property_to_change} → {ctx.correct_value}"
-                    ),
+                    reason=f"RCA provided {len(_fixes)} exact change(s): {'; '.join(_labels)}",
                 ), sliced_xml
             else:
                 logger.info(
@@ -188,35 +195,55 @@ class FixPlanner:
     # ── Direct XML patch (no LLM) ────────────────────────────────────────────
 
     @staticmethod
-    def _apply_direct_patch(
-        xml: str,
-        component_id: str,
-        property_name: str,
-        new_value: str,
-    ) -> Optional[str]:
+    def _apply_direct_patch(xml: str, fixes: List[Any]) -> Optional[str]:
         """
-        Pure XML find-and-replace. No LLM involved.
-        Finds the element with id=component_id, then finds the ifl:property child
-        with the matching key and sets its value to new_value.
-        Returns patched XML string or None if not found.
+        Apply one or more property patches to an iFlow XML in a single parse pass.
+
+        Each item in *fixes* must expose (via attribute or dict key):
+          component_id, property_to_change, correct_value, current_value (optional).
+
+        Returns the patched XML string, or None if zero patches were applied.
         """
+        if not fixes:
+            return None
         try:
             root = ET.fromstring(xml)
+        except Exception as exc:
+            logger.warning("[DirectPatch] XML parse failed: %s", exc)
+            return None
 
-            # Find target element by id attribute
-            target = None
-            for elem in root.iter():
-                if elem.get("id") == component_id:
-                    target = elem
-                    break
+        # Build id → element map once so repeated lookups are O(1)
+        elem_by_id: Dict[str, ET.Element] = {}
+        for elem in root.iter():
+            eid = elem.get("id")
+            if eid:
+                elem_by_id[eid] = elem
 
+        applied  = 0
+        skipped  = 0
+
+        for fix in fixes:
+            component_id  = _fget(fix, "component_id")
+            property_name = _fget(fix, "property_to_change")
+            new_value     = _fget(fix, "correct_value")
+
+            if not (component_id and property_name and new_value is not None):
+                logger.warning("[DirectPatch] Skipping incomplete fix entry: %s", fix)
+                skipped += 1
+                continue
+
+            target = elem_by_id.get(component_id)
             if target is None:
-                logger.warning("[DirectPatch] Component id=%s not found", component_id)
-                return None
+                logger.warning(
+                    "[DirectPatch] Component id=%s not found — patch target missing",
+                    component_id,
+                )
+                skipped += 1
+                continue
 
             prop_found = False
 
-            # Search for ifl:property with matching key
+            # Primary: ifl:property child element with matching key
             for prop in target.iter():
                 tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
                 if tag == "property":
@@ -227,31 +254,48 @@ class FixPlanner:
                             old_val = val_elem.text
                             val_elem.text = new_value
                             prop_found = True
+                            applied += 1
                             logger.info(
-                                "[DirectPatch] Changed %s: %r → %r",
-                                property_name, old_val, new_value,
+                                "[DirectPatch] %s.%s: %r → %r",
+                                component_id, property_name, old_val, new_value,
                             )
                             break
 
             if not prop_found:
-                # Fallback: try as a direct attribute on the element
+                # Fallback: plain XML attribute on the element
                 if property_name in target.attrib:
+                    old_val = target.get(property_name)
                     target.set(property_name, new_value)
                     prop_found = True
-                    logger.info("[DirectPatch] Changed attribute %s → %r", property_name, new_value)
+                    applied += 1
+                    logger.info(
+                        "[DirectPatch] attr %s.%s: %r → %r",
+                        component_id, property_name, old_val, new_value,
+                    )
 
             if not prop_found:
                 logger.warning(
                     "[DirectPatch] Property %s not found in component %s",
                     property_name, component_id,
                 )
-                return None
+                skipped += 1
 
-            return ET.tostring(root, encoding="unicode")
-
-        except Exception as exc:
-            logger.warning("[DirectPatch] failed: %s", exc)
+        if applied == 0:
+            logger.warning(
+                "[DirectPatch] Zero patches applied (skipped=%d) — falling through",
+                skipped,
+            )
             return None
+
+        if skipped:
+            logger.warning(
+                "[DirectPatch] Partial patch: %d applied, %d not found",
+                applied, skipped,
+            )
+        else:
+            logger.info("[DirectPatch] All %d patch(es) applied successfully", applied)
+
+        return ET.tostring(root, encoding="unicode")
 
     # ── XML context slicer ───────────────────────────────────────────────────
 
