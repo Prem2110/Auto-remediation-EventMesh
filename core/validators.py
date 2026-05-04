@@ -25,6 +25,25 @@ logger = logging.getLogger(__name__)
 _BPMN2 = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 _IFL   = "http:///com.sap.ifl.model/Ifl.xsd"
 
+# Global iFlow properties that live at collaboration level by design — never flag these.
+ALLOWED_COLLABORATION_KEYS: frozenset = frozenset({
+    "namespaceMapping",
+    "httpSessionHandling",
+    "accessControlMaxAge",
+    "returnExceptionToSender",
+    "log",
+    "corsEnabled",
+    "exposedHeaders",
+    "componentVersion",
+    "allowedHeaderList",
+    "ServerTrace",
+    "allowedOrigins",
+    "accessControlAllowCredentials",
+    "allowedHeaders",
+    "allowedMethods",
+    "cmdVariantUri",
+})
+
 # Per-fix run state: stores original filepath + XML captured from get-iflow snapshot.
 # Each asyncio Task inherits a copy so concurrent fixes don't interfere.
 _fix_ctx: ContextVar[Optional[Dict[str, str]]] = ContextVar("_fix_ctx", default=None)
@@ -128,7 +147,10 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                     p.findtext(f"{{{_IFL}}}key") or p.findtext("key") or "?"
                     for p in bad_props
                 ]
-                new_keys = [k for k in all_keys if k not in orig_collab_prop_keys]
+                new_keys = [
+                    k for k in all_keys
+                    if k not in orig_collab_prop_keys and k not in ALLOWED_COLLABORATION_KEYS
+                ]
                 if new_keys:
                     errors.append(
                         f"NEW: ifl:property elements found inside <bpmn2:collaboration> extensionElements "

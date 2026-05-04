@@ -1482,19 +1482,36 @@ async def apply_fix(
     update_incident(incident_id, {"status": "FIX_IN_PROGRESS"})
 
     async def _run_fix_background() -> None:
+        result = None
         try:
             result = await mcp.execute_incident_fix(dict(incident), human_approved=True, force=force)
-            if not result.get("success"):
-                update_incident(incident_id, {
-                    "last_failed_stage": result.get("failed_stage", "unknown"),
-                })
         except Exception as exc:
             logger.error(f"[SM] background apply_fix error for {message_guid}: {exc}")
-            update_incident(incident_id, {
-                "status":            "FIX_FAILED",
-                "fix_summary":       str(exc),
-                "last_failed_stage": "agent",
-            })
+            try:
+                update_incident(incident_id, {
+                    "status":            "FIX_FAILED",
+                    "fix_summary":       str(exc),
+                    "last_failed_stage": "agent",
+                })
+            except Exception as db_exc:
+                logger.error(f"[SM] DB update failed after apply_fix error for {message_guid}: {db_exc}")
+            return
+
+        # ── Persist outcome — wrapped so a DB failure cannot hide the fix result ──
+        try:
+            if result and result.get("success"):
+                update_incident(incident_id, {
+                    "status":       "AUTO_FIXED",
+                    "fix_summary":  result.get("summary", "Fix applied and deployed successfully."),
+                })
+            else:
+                update_incident(incident_id, {
+                    "status":            "FIX_FAILED",
+                    "fix_summary":       (result or {}).get("summary", "Fix did not complete successfully."),
+                    "last_failed_stage": (result or {}).get("failed_stage", "unknown"),
+                })
+        except Exception as db_exc:
+            logger.error(f"[SM] DB status update failed after apply_fix for {message_guid}: {db_exc}")
 
     background_tasks.add_task(_run_fix_background)
 
