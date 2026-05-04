@@ -378,20 +378,13 @@ class ClassifierAgent:
         error_message: str = "",
     ) -> str:
         """
-        Stable 16-char MD5 hex key used to look up fix patterns in the DB.
-
-        GUIDs, timestamps, and long numeric IDs are stripped so the same
-        logical error always produces the same signature regardless of IDs.
+        Generate a deduplication signature for an incident.
+        MUST include iflow_id so different iFlows are never merged into the
+        same incident even if the error message is identical.
+        Truncates error_message to first 200 chars for stability.
         """
-        clean = re.sub(
-            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"  # UUID
-            r"|[A-Z0-9]{20,}"      # long message GUIDs / IDs
-            r"|\b\d{4,}\b"         # standalone 4+ digit numbers
-            r"|[\s]+",             # collapse whitespace
-            " ",
-            (error_message or "").lower(),
-        ).strip()[:60]
-        return hashlib.md5(f"{iflow_id}:{error_type}:{clean}".encode()).hexdigest()[:16]
+        sig_input = f"{iflow_id}:{error_type}:{(error_message or '').lower()[:200]}"
+        return hashlib.md5(sig_input.encode()).hexdigest()[:16]
 
     # ── fallback_root_cause ──────────────────────────────────────────────────
 

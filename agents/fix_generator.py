@@ -165,6 +165,36 @@ STEP 6: Call record_fix_outcome with iflow_id, error_type, root_cause, fix_appli
 - Never use /src/main/resources, scripts/<Name>.groovy, or absolute paths.
 - Verify both the file path and the model reference before calling update-iflow.
 
+=== URL / ADDRESS FIX RULES ===
+When fixing an HTTP or OData receiver Address or URL property:
+
+STEP A — Read the CURRENT value first from get-iflow output
+STEP B — Identify what is wrong (typo, missing .svc, wrong path)
+STEP C — Write the corrected value using ONLY ONE of these formats:
+
+  Valid formats:
+  a) Complete hardcoded URL:
+     https://api.example.com/v1/${header.param}
+  b) Single header expression:
+     ${header.baseurl}/${header.param}
+  c) Simple hardcoded URL:
+     https://api.example.com/v1/resource
+
+  INVALID formats (NEVER produce these):
+  - ${header.X}-https://...    ← dash between expression and URL
+  - https://...${header.X}...  ← unless it's a proper template
+  - Any URL with two separate expressions joined by dash
+
+STEP D — Validate the Address value:
+  - Must start with 'https://' OR start with '${'
+  - Must NOT contain '-https://' or '-http://'
+  - Must NOT concatenate two separate URL bases
+
+STEP E — If unsure about the correct URL value:
+  - Call get_message_logs with the MessageGuid to read
+    the actual request URL from message processing logs
+  - Use ONLY confirmed values from logs, not guesses
+
 === CRITICAL — DO NOT HALLUCINATE TOOL RESULTS ===
 - Every tool call MUST be a real invocation using an available tool.
 - The pipeline verifies tool_calls in the message history.

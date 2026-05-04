@@ -837,21 +837,28 @@ Rules:
         # modifying a working iFlow.
         # When force=True the user explicitly wants to apply the fix anyway
         # (e.g. iFlow is running but still has wrong config).
-        if not force and iflow_id and self._observer and self._observer.error_fetcher:
+        _HEALTHY_STATES = {"started", "starting", "deployed", "active", "running"}
+        _hc_fetcher = (
+            (self._observer.error_fetcher if self._observer and self._observer.error_fetcher else None)
+            or getattr(self._fix, "error_fetcher", None)
+        )
+        if not force and iflow_id and _hc_fetcher:
             try:
-                _rt = await self._observer.error_fetcher.fetch_runtime_artifact_detail(iflow_id)
+                _rt = await _hc_fetcher.fetch_runtime_artifact_detail(iflow_id)
                 _rt_status = (
                     str(_rt.get("Status") or _rt.get("DeployState") or _rt.get("RuntimeStatus") or "")
                     .strip().lower()
                 )
-                if _rt_status == "started":
+                if _rt_status in _HEALTHY_STATES:
                     _health_summary = (
-                        f"iFlow '{iflow_id}' is already in Started state — "
-                        f"likely fixed manually before the AI fix could run. No changes applied."
+                        f"iFlow was already healthy (status={_rt_status}) — no fix needed."
                     )
-                    logger.info("[FIX] Runtime pre-check: %s is healthy (Started) — skipping fix.", iflow_id)
+                    logger.info(
+                        "[FIX] iFlow %s is already healthy (status=%s) — skipping fix",
+                        iflow_id, _rt_status,
+                    )
                     update_incident(incident_id, {
-                        "status":              "HUMAN_INITIATED_FIX",
+                        "status":              "FIX_VERIFIED",
                         "fix_summary":         _health_summary,
                         "resolved_at":         get_hana_timestamp(),
                         "verification_status": "VERIFIED",
@@ -859,21 +866,21 @@ Rules:
                     return {
                         "incident_id":    incident_id,
                         "iflow_id":       iflow_id,
-                        "status":         "HUMAN_INITIATED_FIX",
+                        "status":         "FIX_VERIFIED",
                         "success":        True,
                         "fix_applied":    False,
                         "deploy_success": False,
                         "failed_stage":   None,
-                        "summary":        _health_summary,
+                        "summary":        f"iFlow '{iflow_id}' was already running — no fix required.",
                         "root_cause":     working_incident.get("root_cause"),
                         "proposed_fix":   working_incident.get("proposed_fix"),
                         "confidence":     working_incident.get("rca_confidence"),
                         "incident":       get_incident_by_id(incident_id) or working_incident,
                     }
-            except Exception as _rt_exc:
-                logger.warning("[FIX] Runtime health pre-check failed for %s: %s — proceeding with fix.", iflow_id, _rt_exc)
+            except Exception as hc_exc:
+                logger.debug("[FIX] Pre-fix health check failed (non-fatal): %s", hc_exc)
         elif force and iflow_id:
-            logger.info("[FIX] force=True — skipping Started-state pre-flight check for %s", iflow_id)
+            logger.info("[FIX] force=True — skipping health pre-flight check for %s", iflow_id)
 
         rca = {
             "root_cause":         working_incident.get("root_cause", ""),

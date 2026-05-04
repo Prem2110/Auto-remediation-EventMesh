@@ -414,6 +414,7 @@ class FixAgent:
 
         # ── Core pipeline (via FixSupervisor with strategy rotation) ──────────
         try:
+            logger.info("[FixSupervisor] Starting supervision for iflow=%s", ctx.iflow_id)
             sup_result   = await self._supervisor.supervise(ctx, progress_fn=progress_fn)
             evaluation   = sup_result.to_dict()
             logger_steps = sup_result.steps
