@@ -156,37 +156,27 @@ def _get_autonomous_incident_column_lookup() -> Dict[str, str]:
 
 def _migrate_fix_patterns_table(conn) -> None:
     """
-    Add any missing columns to EM_FIX_PATTERNS.
-    Accepts an open connection so it can be called from ensure_em_schema()
-    without opening a second connection.
+    Add missing columns to EM_FIX_PATTERNS on every startup.
+    Runs unconditionally — no SYS.TABLE_COLUMNS pre-check.
+    Each ALTER executes in its own try/except so a "column already exists"
+    error from HANA is silently ignored while any real error is debug-logged.
     """
-    _REQUIRED = {
-        "success_count":        "INTEGER DEFAULT 0",
-        "replay_success_count": "INTEGER DEFAULT 0",
-        "key_steps":            "NVARCHAR(2000)",
-        "supervisor_strategy":  "NVARCHAR(50)",
-    }
-    schema = os.getenv("HANA_SCHEMA", "")
-    tbl    = _FIX_TABLE.upper()
-    cur    = conn.cursor()
-    try:
-        if schema:
-            cur.execute(
-                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
-                (tbl, schema),
-            )
-        else:
-            cur.execute("SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?", (tbl,))
-        existing = {str(r[0]).lower() for r in cur.fetchall()}
-        for col, col_type in _REQUIRED.items():
-            if col.lower() not in existing:
-                try:
-                    cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("{col}" {col_type})')
-                    logger.info("[DB] Added column %s to %s", col, _FIX_TABLE)
-                except Exception as col_err:
-                    logger.warning("[DB] _migrate_fix_patterns_table: ADD %s skipped: %s", col, col_err)
-    except Exception as e:
-        logger.warning("[DB] _migrate_fix_patterns_table: %s", e)
+    _MIGRATIONS = [
+        f'ALTER TABLE "{_FIX_TABLE}" ADD ("success_count" INTEGER DEFAULT 0)',
+        f'ALTER TABLE "{_FIX_TABLE}" ADD ("replay_success_count" INTEGER DEFAULT 0)',
+        f'ALTER TABLE "{_FIX_TABLE}" ADD ("key_steps" NVARCHAR(2000))',
+        f'ALTER TABLE "{_FIX_TABLE}" ADD ("supervisor_strategy" NVARCHAR(50))',
+    ]
+    cur = conn.cursor()
+    for sql in _MIGRATIONS:
+        try:
+            cur.execute(sql)
+            # Extract column name from ALTER statement for the log message
+            col = sql.split('"')[3] if sql.count('"') >= 4 else sql
+            logger.info("[DB] Migration applied: ADD %s to %s", col, _FIX_TABLE)
+        except Exception as col_err:
+            # HANA raises an error when the column already exists — this is expected
+            logger.debug("[DB] _migrate_fix_patterns_table skipped (likely exists): %s", col_err)
 
 
 def ensure_fix_patterns_schema():
@@ -928,17 +918,28 @@ def get_similar_patterns(error_signature: str) -> List[Dict]:
     try:
         conn = get_connection()
         cur  = conn.cursor()
-        cur.execute(
-            f"""SELECT * FROM "{_FIX_TABLE}"
-               WHERE error_signature=? AND outcome='SUCCESS'
-               ORDER BY
-                 CAST(COALESCE("success_count", 0) AS REAL) /
-                   NULLIF(applied_count, 0) DESC,
-                 last_seen DESC,
-                 applied_count DESC
-               LIMIT 5""",
-            (error_signature,),
-        )
+        try:
+            cur.execute(
+                f"""SELECT * FROM "{_FIX_TABLE}"
+                   WHERE error_signature=? AND outcome='SUCCESS'
+                   ORDER BY
+                     CAST(COALESCE("success_count", 0) AS REAL) /
+                       NULLIF(applied_count, 0) DESC,
+                     last_seen DESC,
+                     applied_count DESC
+                   LIMIT 5""",
+                (error_signature,),
+            )
+        except Exception:
+            # success_count column not yet migrated — fall back to recency sort
+            logger.debug("[DB] get_similar_patterns: success_count unavailable, using fallback sort")
+            cur.execute(
+                f"""SELECT * FROM "{_FIX_TABLE}"
+                   WHERE error_signature=? AND outcome='SUCCESS'
+                   ORDER BY last_seen DESC, applied_count DESC
+                   LIMIT 5""",
+                (error_signature,),
+            )
         rows = _rows_to_dicts(cur)
         conn.close()
         return rows
@@ -960,13 +961,24 @@ def get_patterns_by_error_type(
     try:
         conn = get_connection()
         cur  = conn.cursor()
-        cur.execute(
-            f'SELECT iflow_id, error_type, root_cause, fix_applied, '
-            f'"success_count", applied_count FROM "{_FIX_TABLE}" '
-            f'WHERE error_type = ? AND "success_count" >= ? '
-            f'ORDER BY "success_count" DESC LIMIT ?',
-            (error_type, min_success_count, limit),
-        )
+        try:
+            cur.execute(
+                f'SELECT iflow_id, error_type, root_cause, fix_applied, '
+                f'"success_count", applied_count FROM "{_FIX_TABLE}" '
+                f'WHERE error_type = ? AND "success_count" >= ? '
+                f'ORDER BY "success_count" DESC LIMIT ?',
+                (error_type, min_success_count, limit),
+            )
+        except Exception:
+            # success_count column not yet migrated — return any successful patterns
+            logger.debug("[DB] get_patterns_by_error_type: success_count unavailable, using fallback query")
+            cur.execute(
+                f'SELECT iflow_id, error_type, root_cause, fix_applied, applied_count '
+                f'FROM "{_FIX_TABLE}" '
+                f'WHERE error_type = ? AND outcome = \'SUCCESS\' '
+                f'ORDER BY applied_count DESC LIMIT ?',
+                (error_type, limit),
+            )
         rows = _rows_to_dicts(cur)
         conn.close()
         return rows

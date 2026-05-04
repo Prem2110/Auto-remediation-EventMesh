@@ -165,6 +165,36 @@ class VectorStoreRetriever:
             logger.warning("[VectorStore] Retrieval failed — could not connect to HANA")
             return []
 
+        # Guard: verify the vector table exists before running any search.
+        # HANA raises error 422 when a table/view is not found — catching it here
+        # produces a clear diagnostic instead of a cryptic "(422, 'Could not find...')"
+        # cascading through all four fallback strategies.
+        try:
+            _chk = conn.cursor()
+            _schema = self.schema or ""
+            if _schema:
+                _chk.execute(
+                    "SELECT COUNT(*) FROM SYS.TABLES WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
+                    (self.table.upper(), _schema.upper()),
+                )
+            else:
+                _chk.execute(
+                    "SELECT COUNT(*) FROM SYS.TABLES WHERE TABLE_NAME=?",
+                    (self.table.upper(),),
+                )
+            _exists = int(_chk.fetchone()[0]) > 0
+            _chk.close()
+            if not _exists:
+                logger.error(
+                    "[VectorStore] Table '%s' not found in schema '%s' — "
+                    "run the migration script or create the table first. "
+                    "SAP Note retrieval will be skipped.",
+                    self.table, _schema,
+                )
+                return []
+        except Exception as _chk_exc:
+            logger.warning("[VectorStore] Table existence check failed (non-fatal): %s", _chk_exc)
+
         query_text = f"{error_type} {error_message[:300]} {iflow_id}".strip()
         table_ref  = f'"{self.table}"'
         results: List[Dict] = []

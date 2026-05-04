@@ -31,6 +31,7 @@ class FixContext:
     reference_component_name: str = ""
     reference_component_xml: str = ""
     deploy_error_hint: str = ""
+    last_deploy_error: str = ""
     property_to_change: str = ""
     current_value: str = ""
     correct_value: str = ""
