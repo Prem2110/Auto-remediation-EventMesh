@@ -312,6 +312,17 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         if ctx.cross_pattern_text:
             prompt += f"\n\n{ctx.cross_pattern_text}"
 
+        if ctx.deploy_error_hint:
+            prompt += (
+                "\n\n=== PREVIOUS DEPLOY FAILURE — READ CAREFULLY ===\n"
+                "The previous fix attempt was applied (update-iflow succeeded) but SAP CPI "
+                "rejected it at deploy time. The original iFlow XML has been restored. "
+                "SAP CPI returned the following error from get-deploy-error:\n"
+                f"{ctx.deploy_error_hint}\n"
+                "Your fix this attempt MUST address the root cause shown above, not just "
+                "repeat the same change."
+            )
+
         # Inject static component map from XMLAnalyst (no LLM, no network)
         try:
             from agents.fix_xml_analyst import XMLAnalyst  # noqa: PLC0415

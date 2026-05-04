@@ -158,14 +158,25 @@ class FixSupervisor:
                 logger.info("[Supervisor] All strategies exhausted for iflow=%s", ctx.iflow_id)
                 break
 
+            # Rollback and capture deploy error before next attempt
+            deploy_error_hint = ""
+            if last_result.fix_applied and last_result.failed_stage in ("deploy", "deploy_validation"):
+                deploy_error_hint = await self._rollback_and_get_deploy_error(ctx)
+                if deploy_error_hint:
+                    ctx = dataclasses.replace(ctx, deploy_error_hint=deploy_error_hint)
+
+            _reason = (
+                f"Strategy '{strat_name}' failed (stage={result.failed_stage}); "
+                f"retrying with '{next_strat}'."
+            )
+            if deploy_error_hint:
+                _reason += f" SAP CPI deploy error: {deploy_error_hint[:200]}"
+
             from agents.fix_planner import FixStrategy  # noqa: PLC0415
             strategy = FixStrategy(
                 strategy=next_strat,
                 operations=[],
-                reason=(
-                    f"Strategy '{strat_name}' failed (stage={result.failed_stage}); "
-                    f"retrying with '{next_strat}'."
-                ),
+                reason=_reason,
             )
 
         # Escalate
@@ -189,6 +200,59 @@ class FixSupervisor:
             ctx.iflow_id, last_result.attempts, last_result.failed_stage,
         )
         return last_result
+
+    async def _rollback_and_get_deploy_error(self, ctx: FixContext) -> str:
+        """
+        After a failed deploy:
+        1. Restore the iFlow to ctx.original_xml via update-iflow.
+        2. Call get-deploy-error to fetch the SAP CPI deploy diagnostics.
+        Returns the deploy error text (empty string on any failure).
+        """
+        mcp = getattr(self._applier, "_mcp", None)
+        if mcp is None:
+            logger.warning("[Supervisor] Cannot rollback — applier has no _mcp")
+            return ""
+
+        # Restore original XML
+        try:
+            restore_result = await mcp.execute_integration_tool(
+                "update-iflow",
+                {
+                    "id":    ctx.iflow_id,
+                    "files": [{"filepath": ctx.original_filepath, "content": ctx.original_xml}],
+                },
+            )
+            restore_out = str(restore_result.get("output", ""))
+            from agents.fix_applier import FixApplier  # noqa: PLC0415
+            if FixApplier._update_succeeded(restore_out):
+                logger.info("[Supervisor] Rollback succeeded for iflow=%s", ctx.iflow_id)
+            else:
+                logger.warning(
+                    "[Supervisor] Rollback may have failed for iflow=%s: %s",
+                    ctx.iflow_id, restore_out[:200],
+                )
+        except Exception as exc:
+            logger.warning("[Supervisor] Rollback error for iflow=%s: %s", ctx.iflow_id, exc)
+
+        # Fetch SAP CPI deploy error
+        deploy_error = ""
+        try:
+            err_result = await mcp.execute_integration_tool(
+                "get-deploy-error", {"id": ctx.iflow_id}
+            )
+            deploy_error = str(err_result.get("output", "")).strip()[:500]
+            if deploy_error:
+                logger.info(
+                    "[Supervisor] Deploy error fetched for iflow=%s: %s",
+                    ctx.iflow_id, deploy_error[:100],
+                )
+        except Exception as exc:
+            logger.debug(
+                "[Supervisor] get-deploy-error unavailable for iflow=%s (non-fatal): %s",
+                ctx.iflow_id, exc,
+            )
+
+        return deploy_error
 
     @staticmethod
     def _next_strategy(current: str, tried: set) -> Optional[str]:

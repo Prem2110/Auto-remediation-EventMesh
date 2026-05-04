@@ -30,3 +30,4 @@ class FixContext:
     timestamp: str = ""
     reference_component_name: str = ""
     reference_component_xml: str = ""
+    deploy_error_hint: str = ""
