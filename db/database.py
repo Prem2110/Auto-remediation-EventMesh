@@ -154,18 +154,22 @@ def _get_autonomous_incident_column_lookup() -> Dict[str, str]:
     return lookup
 
 
-def ensure_fix_patterns_schema():
-    """Add missing columns to fix_patterns if absent."""
-    required = {
-        "success_count":        "INTEGER",
-        "replay_success_count": "INTEGER",
+def _migrate_fix_patterns_table(conn) -> None:
+    """
+    Add any missing columns to EM_FIX_PATTERNS.
+    Accepts an open connection so it can be called from ensure_em_schema()
+    without opening a second connection.
+    """
+    _REQUIRED = {
+        "success_count":        "INTEGER DEFAULT 0",
+        "replay_success_count": "INTEGER DEFAULT 0",
         "key_steps":            "NVARCHAR(2000)",
+        "supervisor_strategy":  "NVARCHAR(50)",
     }
+    schema = os.getenv("HANA_SCHEMA", "")
+    tbl    = _FIX_TABLE.upper()
+    cur    = conn.cursor()
     try:
-        conn   = get_connection()
-        cur    = conn.cursor()
-        schema = os.getenv("HANA_SCHEMA", "")
-        tbl    = _FIX_TABLE.upper()
         if schema:
             cur.execute(
                 "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
@@ -174,13 +178,22 @@ def ensure_fix_patterns_schema():
         else:
             cur.execute("SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?", (tbl,))
         existing = {str(r[0]).lower() for r in cur.fetchall()}
-        for col, typ in required.items():
+        for col, col_type in _REQUIRED.items():
             if col.lower() not in existing:
-                default = " DEFAULT 0" if "INTEGER" in typ else ""
                 try:
-                    cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("{col}" {typ}{default})')
+                    cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("{col}" {col_type})')
+                    logger.info("[DB] Added column %s to %s", col, _FIX_TABLE)
                 except Exception as col_err:
-                    logger.warning(f"ensure_fix_patterns_schema: ADD {col} skipped: {col_err}")
+                    logger.warning("[DB] _migrate_fix_patterns_table: ADD %s skipped: %s", col, col_err)
+    except Exception as e:
+        logger.warning("[DB] _migrate_fix_patterns_table: %s", e)
+
+
+def ensure_fix_patterns_schema():
+    """Add missing columns to fix_patterns if absent (standalone entry point)."""
+    try:
+        conn = get_connection()
+        _migrate_fix_patterns_table(conn)
         conn.commit()
         conn.close()
     except Exception as e:
@@ -263,13 +276,8 @@ def ensure_em_schema():
                 key_steps             NVARCHAR(2000)
             )""")
             logger.info("[DB] Created table %s", _FIX_TABLE)
-        # Defensive migration: add success_count if the table predates this column
-        try:
-            cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ("success_count" INTEGER DEFAULT 0)')
-            conn.commit()
-            logger.info("[DB] Added success_count column to %s", _FIX_TABLE)
-        except Exception:
-            pass  # Column already exists
+        # Migrate any missing columns (handles tables created before schema was complete)
+        _migrate_fix_patterns_table(conn)
 
         # ── EM_ESCALATION_TICKETS ────────────────────────────────────────────
         cur.execute(check, (_TICKETS_TABLE.upper(), schema_q) if schema_q else (_TICKETS_TABLE.upper(),))

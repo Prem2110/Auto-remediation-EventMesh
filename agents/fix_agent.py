@@ -25,6 +25,7 @@ from agents.fix_applier import ApplyResult, FixApplier
 from agents.fix_context import FixContext
 from agents.fix_generator import FixGenerator
 from agents.fix_planner import FixPlanner
+from agents.fix_supervisor import FixSupervisor
 from agents.fix_validator import FixValidator
 from core.validators import _extract_iflow_file, _fix_ctx
 from db.database import get_similar_patterns
@@ -49,10 +50,13 @@ class FixAgent:
         self.error_fetcher = error_fetcher
         self._agent        = None          # set from FixGenerator after build_agent()
 
-        self._planner   = FixPlanner(mcp)
-        self._generator = FixGenerator(mcp)
-        self._validator = FixValidator(error_fetcher)
-        self._applier   = FixApplier(mcp)
+        self._planner    = FixPlanner(mcp)
+        self._generator  = FixGenerator(mcp)
+        self._validator  = FixValidator(error_fetcher)
+        self._applier    = FixApplier(mcp)
+        self._supervisor = FixSupervisor(
+            self._planner, self._generator, self._validator, self._applier
+        )
 
     def set_error_fetcher(self, error_fetcher) -> None:
         self.error_fetcher = error_fetcher
@@ -408,19 +412,31 @@ class FixAgent:
             timestamp=timestamp,
         )
 
-        # ── Core pipeline ─────────────────────────────────────────────────────
-        strategy, sliced_xml = await self._planner.plan(ctx)
-        ctx   = dataclasses.replace(ctx, sliced_xml=sliced_xml)
-        patch = await self._generator.generate(ctx, strategy, progress_fn=progress_fn)
-        vresult  = self._validator.pre_validate(ctx, patch)
-        result   = await self._applier.apply(ctx, patch, vresult)
+        # ── Core pipeline (via FixSupervisor with strategy rotation) ──────────
+        try:
+            sup_result   = await self._supervisor.supervise(ctx, progress_fn=progress_fn)
+            evaluation   = sup_result.to_dict()
+            logger_steps = sup_result.steps
+            answer       = sup_result.raw_answer
+        except Exception as _sup_exc:
+            logger.warning(
+                "[FIX_DEPLOY] Supervisor raised exception (%s) — falling back to linear pipeline",
+                _sup_exc,
+            )
+            strategy, sliced_xml = await self._planner.plan(ctx)
+            ctx      = dataclasses.replace(ctx, sliced_xml=sliced_xml)
+            patch    = await self._generator.generate(ctx, strategy, progress_fn=progress_fn)
+            vresult  = self._validator.pre_validate(ctx, patch)
+            result   = await self._applier.apply(ctx, patch, vresult)
+            evaluation   = result.to_dict()
+            logger_steps = patch.steps
+            answer       = patch.raw_answer
 
-        evaluation: Dict[str, Any] = result.to_dict()
-        logger_steps = patch.steps
-        answer       = patch.raw_answer
-
-        # Structured path succeeded — skip retry machinery
-        if strategy.strategy == "structured" and evaluation.get("success"):
+        # Structured/component_replace paths succeeded — skip retry machinery
+        if (
+            evaluation.get("strategy_used") in ("structured", "component_replace")
+            and evaluation.get("success")
+        ):
             self._mcp.update_memory(session_id, f"Fix {iflow_id}", evaluation["summary"])
             logger.info("[FIX] Structured path succeeded: iflow=%s", iflow_id)
             return evaluation

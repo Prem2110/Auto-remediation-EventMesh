@@ -282,6 +282,15 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         if ctx.cross_pattern_text:
             prompt += f"\n\n{ctx.cross_pattern_text}"
 
+        # Inject static component map from XMLAnalyst (no LLM, no network)
+        try:
+            from agents.fix_xml_analyst import XMLAnalyst  # noqa: PLC0415
+            _xml_summary = XMLAnalyst().analyse(ctx.original_xml, ctx.affected_component)
+            if _xml_summary:
+                prompt += f"\n\n{_xml_summary}"
+        except Exception as _xa_exc:
+            logger.debug("[FixGenerator] XMLAnalyst failed (non-fatal): %s", _xa_exc)
+
         if ctx.sliced_xml:
             prompt += (
                 "\n\n=== XML CONTEXT (focused view) ===\n"

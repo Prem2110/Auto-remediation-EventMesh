@@ -30,6 +30,24 @@ _IFL   = "http:///com.sap.ifl.model/Ifl.xsd"
 _fix_ctx: ContextVar[Optional[Dict[str, str]]] = ContextVar("_fix_ctx", default=None)
 
 
+def _find_gateways_without_default(xml_str: str) -> set:
+    """Return set of exclusiveGateway IDs that have no default route."""
+    try:
+        root = ET.fromstring(xml_str)
+        all_gw_ids: set = set()
+        default_source_ids: set = set()
+        for elem in root.iter():
+            tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+            if tag == "exclusiveGateway":
+                all_gw_ids.add(elem.get("id", ""))
+            if tag == "sequenceFlow":
+                if elem.get("isDefault", "").lower() == "true":
+                    default_source_ids.add(elem.get("sourceRef", ""))
+        return all_gw_ids - default_source_ids
+    except Exception:
+        return set()
+
+
 def _extract_iflow_file(snapshot_str: str) -> tuple[str, str]:
     """
     Parse a get-iflow response string and return (filepath, xml_content)
@@ -76,7 +94,7 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
     try:
         mod_root = ET.fromstring(modified_xml)
     except ET.ParseError as e:
-        return [f"Modified iFlow XML is not valid XML: {e}. Fix the XML before calling update-iflow."]
+        return [f"NEW: Modified iFlow XML is not valid XML: {e}. Fix the XML before calling update-iflow."]
 
     # Parse original XML once — reused by all pre-existing issue checks below.
     orig_root: Optional[ET.Element] = None
@@ -113,8 +131,8 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                 new_keys = [k for k in all_keys if k not in orig_collab_prop_keys]
                 if new_keys:
                     errors.append(
-                        f"ifl:property elements found inside <bpmn2:collaboration> extensionElements "
-                        f"(keys: {all_keys}). These MUST be placed inside the specific step that uses them "
+                        f"NEW: ifl:property elements found inside <bpmn2:collaboration> extensionElements "
+                        f"(keys: {new_keys}). These MUST be placed inside the specific step that uses them "
                         f"(e.g. inside the <bpmn2:serviceTask> for the XPath or mapping step), "
                         f"NOT at collaboration level. Move them to the correct step."
                     )
@@ -138,7 +156,7 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
             if el_id and el_ver and el_id in orig_versions:
                 if orig_versions[el_id] != el_ver:
                     errors.append(
-                        f"Version changed for element '{el_id}': "
+                        f"NEW: Version changed for element '{el_id}': "
                         f"original='{orig_versions[el_id]}', submitted='{el_ver}'. "
                         f"Do not modify version attributes."
                     )
@@ -161,7 +179,7 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                     try:
                         if float(el_ver) > cap_max:
                             errors.append(
-                                f"New element '{el_id}' has version '{el_ver}' which exceeds "
+                                f"NEW: New element '{el_id}' has version '{el_ver}' which exceeds "
                                 f"the IFLMAP platform maximum for {cap_label} ({cap_max}). "
                                 f"Set version='{cap_max}' or lower."
                             )
@@ -211,7 +229,7 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                         )
                         continue
                     errors.append(
-                        f"XPath expression in property '{key_el.text}' uses namespace prefix(es) "
+                        f"NEW: XPath expression in property '{key_el.text}' uses namespace prefix(es) "
                         f"{missing} but no 'declare namespace' directive found. "
                         f"Add inline declarations before the path, e.g.: "
                         f"declare namespace {missing[0]}='http://...'; //{missing[0]}:element"
@@ -261,46 +279,23 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                     )
                     continue
                 errors.append(
-                    f"Content Modifier step '{task_id}' has a header row with "
+                    f"NEW: Content Modifier step '{task_id}' has a header row with "
                     f"srcType='Constant' but the value '{src_val[:80]}' looks like a dynamic expression. "
                     f"Change srcType to 'Expression' for dynamic values."
                 )
 
     # ── Check 6 — every exclusiveGateway (CBR) must have a default route ──
-    # Pre-existing: gateways that already had no default route in original are skipped.
-    preexisting_no_default: set = set()
-    if orig_root is not None:
-        orig_gw_defaults: set = set()
-        for sf in orig_root.iter(f"{{{_BPMN2}}}sequenceFlow"):
-            if sf.get("isDefault", "").lower() == "true":
-                orig_gw_defaults.add(sf.get("sourceRef", ""))
-        for gw in orig_root.iter(f"{{{_BPMN2}}}exclusiveGateway"):
-            gw_id = gw.get("id", "")
-            outgoing_ids = {sf.text.strip() for sf in gw.findall(f"{{{_BPMN2}}}outgoing") if sf.text}
-            if outgoing_ids and len(outgoing_ids) > 1 and gw_id not in orig_gw_defaults:
-                preexisting_no_default.add(gw_id)
-
-    for gw in mod_root.iter(f"{{{_BPMN2}}}exclusiveGateway"):
-        gw_id = gw.get("id", "")
-        outgoing_ids = {sf.text.strip() for sf in gw.findall(f"{{{_BPMN2}}}outgoing") if sf.text}
-        if not outgoing_ids:
-            continue
-        has_default = any(
-            sf.get("sourceRef") == gw_id and sf.get("isDefault", "").lower() == "true"
-            for sf in mod_root.iter(f"{{{_BPMN2}}}sequenceFlow")
+    orig_bad_gateways = _find_gateways_without_default(original_xml or "")
+    new_bad_gateways  = _find_gateways_without_default(modified_xml)
+    truly_new_gw = new_bad_gateways - orig_bad_gateways
+    for gw_id in truly_new_gw:
+        errors.append(
+            f"NEW: Content-Based Router (exclusiveGateway) '{gw_id}' has no default route. "
+            f"Every router MUST have a default outgoing sequenceFlow with isDefault='true'. "
+            f"Add a default route to prevent deployment failure."
         )
-        if not has_default and len(outgoing_ids) > 1:
-            if gw_id in preexisting_no_default:
-                logger.info(
-                    "[Validator] Pre-existing issue ignored (existed in original): "
-                    "exclusiveGateway '%s' has no default route", gw_id
-                )
-                continue
-            errors.append(
-                f"Content-Based Router (exclusiveGateway) '{gw_id}' has no default route. "
-                f"Every router MUST have a default outgoing sequenceFlow with isDefault='true'. "
-                f"Add a default route to prevent deployment failure."
-            )
+    for gw_id in new_bad_gateways & orig_bad_gateways:
+        logger.info("[Validator] Pre-existing gateway issue ignored: %s", gw_id)
 
     # ── Check 7 — Groovy script references must use /script/<Name>.groovy ──
     # Pre-existing: skip if the same (key, value) pair was already wrong in original.
@@ -330,7 +325,7 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                 )
                 continue
             errors.append(
-                f"Groovy script reference '{val}' uses the full archive path. "
+                f"NEW: Groovy script reference '{val}' uses the full archive path. "
                 f"The model reference must be '/script/<FileName>.groovy' "
                 f"(not 'src/main/resources/script/...'). Fix the value."
             )

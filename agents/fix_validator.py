@@ -30,6 +30,8 @@ class PreValidateResult:
     errors: List[str]
     diff_node_count: int
     patched_xml: str = ""
+    pre_existing_issues: List[str] = field(default_factory=list)
+    new_issues: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -80,12 +82,38 @@ class FixValidator:
 
         # ── Step 2: Structural XML validation ─────────────────────────────────
         errors = _check_iflow_xml(ctx.original_xml, patched_xml)
-        if errors:
+
+        # Split errors into introduced-by-fix vs pre-existing.
+        # Errors prefixed "NEW:" are regressions and block the fix.
+        # Errors without "NEW:" pre-date this fix attempt and are only logged.
+        new_issues        = [e[4:].strip() for e in errors if e.startswith("NEW:")]
+        pre_existing      = [e for e in errors if not e.startswith("NEW:")]
+
+        if pre_existing:
+            logger.info(
+                "[FixValidator] %d pre-existing issue(s) in iflow=%s (not blocking): %s",
+                len(pre_existing), ctx.iflow_id, pre_existing[:2],
+            )
+
+        if new_issues:
             return PreValidateResult(
                 passed=False,
                 errors=errors,
                 diff_node_count=0,
                 patched_xml=patched_xml,
+                pre_existing_issues=pre_existing,
+                new_issues=new_issues,
+            )
+
+        if pre_existing:
+            # Pre-existing issues only — pass but expose them so supervisor can log
+            return PreValidateResult(
+                passed=True,
+                errors=errors,
+                diff_node_count=0,
+                patched_xml=patched_xml,
+                pre_existing_issues=pre_existing,
+                new_issues=[],
             )
 
         # ── Step 3: Unrelated-change diff ─────────────────────────────────────
