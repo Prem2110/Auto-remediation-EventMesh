@@ -29,6 +29,28 @@ from core.validators import _fix_ctx
 
 logger = logging.getLogger(__name__)
 
+# Validation errors the free-XML agent cannot self-correct: structural regressions
+# it introduced itself (e.g. removed a CBR default route while rewriting routing).
+_STRUCTURAL_PATTERNS: tuple = (
+    "no default route",
+    "exclusivegateway",
+    "ifl:property elements found inside",
+)
+
+
+def _find_fatal_validation(steps: List[Dict]) -> str:
+    """
+    Return the first FATAL: tool output from validate_iflow_xml steps,
+    or '' if no structural validation block was found.
+    """
+    for step in steps:
+        if "validate_iflow_xml" not in str(step.get("tool", "")):
+            continue
+        out = str(step.get("output", ""))
+        if out.startswith("FATAL:"):
+            return out
+    return ""
+
 
 @dataclass(frozen=True)
 class PatchSpec:
@@ -60,14 +82,23 @@ class FixGenerator:
         def validate_iflow_xml(xml_content: str) -> str:
             """
             Validate iFlow XML structure before sending to SAP CPI.
-            Runs 7 structural checks. Returns 'VALID' or 'ERRORS: <list>'.
+            Runs 7 structural checks. Returns 'VALID', 'ERRORS: <list>', or
+            'FATAL: <list>' for structural regressions that cannot be self-corrected.
             """
             ctx          = _vctx.get()
             original_xml = ctx.get("xml", "") if ctx else ""
             errors       = _check_iflow_xml(original_xml, xml_content)
             if not errors:
                 return "VALID"
-            return "ERRORS: " + " | ".join(errors)
+            el       = " | ".join(errors)
+            el_lower = el.lower()
+            if any(p in el_lower for p in _STRUCTURAL_PATTERNS):
+                return (
+                    "FATAL: " + el
+                    + "\n\nThis is a structural regression you cannot fix."
+                    " STOP immediately — return JSON with failed_stage='validation_blocked'."
+                )
+            return "ERRORS: " + el
 
         @_tool
         def record_fix_outcome(
@@ -153,6 +184,9 @@ CRITICAL: If validate_iflow_xml returns ERRORS:
   - If you cannot fix the validation errors after 2 attempts → STOP,
     return failed_stage="validation" immediately.
   - NEVER deploy XML that has not passed validation.
+  - If validate_iflow_xml returns FATAL: → STOP immediately.
+    Do NOT call any more tools. Return JSON with failed_stage="validation_blocked".
+    These are structural regressions you introduced — they cannot be self-corrected.
 
 STEP 4: Call update-iflow with id, files, autoDeploy=true.
   - If response contains "artifact is locked": call cancel-checkout → retry ONCE.
@@ -391,6 +425,19 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 timeout=_timeout,
             )
         except asyncio.TimeoutError:
+            fatal = _find_fatal_validation(logger_cb.steps)
+            if fatal:
+                logger.warning(
+                    "[FixGenerator] FATAL validation block (timed out) for iflow=%s: %s",
+                    ctx.iflow_id, fatal,
+                )
+                return PatchSpec(
+                    mode="free_xml",
+                    operations=[],
+                    raw_xml="",
+                    raw_answer="__VALIDATION_BLOCKED__",
+                    steps=logger_cb.steps,
+                )
             # Propagate via a sentinel answer so FixAgent can run _diagnose_timeout
             return PatchSpec(
                 mode="free_xml",
@@ -408,6 +455,19 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 or "recursion limit" in str(exc).lower()
             )
             if _is_recursion:
+                fatal = _find_fatal_validation(logger_cb.steps)
+                if fatal:
+                    logger.warning(
+                        "[FixGenerator] FATAL validation block (recursion limit) for iflow=%s: %s",
+                        ctx.iflow_id, fatal,
+                    )
+                    return PatchSpec(
+                        mode="free_xml",
+                        operations=[],
+                        raw_xml="",
+                        raw_answer="__VALIDATION_BLOCKED__",
+                        steps=logger_cb.steps,
+                    )
                 logger.warning(
                     "[FixGenerator] Recursion limit reached for iflow=%s — will retry with simpler strategy.",
                     ctx.iflow_id,
@@ -430,6 +490,21 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
 
         final_msg = _result["messages"][-1]
         answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+
+        # Check for structural validation block before any further processing
+        fatal = _find_fatal_validation(logger_cb.steps)
+        if fatal:
+            logger.warning(
+                "[FixGenerator] FATAL validation block detected for iflow=%s: %s",
+                ctx.iflow_id, fatal,
+            )
+            return PatchSpec(
+                mode="free_xml",
+                operations=[],
+                raw_xml="",
+                raw_answer="__VALIDATION_BLOCKED__",
+                steps=logger_cb.steps,
+            )
 
         # Verify tool invocations
         invoked_tools: List[str] = []

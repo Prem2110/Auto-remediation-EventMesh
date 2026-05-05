@@ -450,6 +450,21 @@ class FixAgent:
             logger.info("[FIX] Structured path succeeded: iflow=%s", iflow_id)
             return evaluation
 
+        # ── Validation-blocked (structural regression) — no retry ────────────
+        if evaluation.get("failed_stage") == "validation_blocked":
+            logger.warning(
+                "[FIX_DEPLOY] Structural validation block for iflow=%s — "
+                "agent introduced a regression it cannot self-correct.",
+                iflow_id,
+            )
+            evaluation.setdefault(
+                "summary",
+                f"Fix for '{iflow_id}' was blocked because the agent introduced a structural "
+                "regression (e.g. removed a CBR default route). No changes were deployed. "
+                "Manual review is required.",
+            )
+            return {**evaluation, "steps": logger_steps, "raw_answer": answer}
+
         # ── Timeout recovery ──────────────────────────────────────────────────
         if evaluation.get("failed_stage") == "timeout":
             diagnosis = self._diagnose_timeout(logger_steps, iflow_id)
@@ -751,11 +766,16 @@ class FixAgent:
     async def apply_fix(
         self, incident: Dict[str, Any], rca: Dict[str, Any], progress_fn=None
     ) -> Dict[str, Any]:
+        _iflow_id   = incident.get("designtime_artifact_id") or incident.get("iflow_id", "")
+        _fixes_list = rca.get("fixes") or []
+        logger.info(
+            "[apply_fix] RCA fixes list: count=%d targets=%s iflow=%s",
+            len(_fixes_list),
+            [f.get("property_to_change", "?") if isinstance(f, dict) else getattr(f, "property_to_change", "?") for f in _fixes_list],
+            _iflow_id,
+        )
         return await self.ask_fix_and_deploy(
-            iflow_id=(
-                incident.get("designtime_artifact_id")
-                or incident.get("iflow_id", "")
-            ),
+            iflow_id=_iflow_id,
             error_message=incident.get("error_message", ""),
             proposed_fix=rca.get("proposed_fix", ""),
             root_cause=rca.get("root_cause", ""),
@@ -769,14 +789,7 @@ class FixAgent:
             property_to_change=rca.get("property_to_change") or "",
             current_value=rca.get("current_value") or "",
             correct_value=rca.get("correct_value") or "",
-            fixes=rca.get("fixes") or [],
-        )
-        _fixes_list = rca.get("fixes") or []
-        logger.info(
-            "[apply_fix] RCA fixes list: count=%d targets=%s iflow=%s",
-            len(_fixes_list),
-            [f.get("property_to_change", "?") if isinstance(f, dict) else getattr(f, "property_to_change", "?") for f in _fixes_list],
-            incident.get("designtime_artifact_id") or incident.get("iflow_id", ""),
+            fixes=_fixes_list,
         )
 
     # ── determine_post_fix_status ─────────────────────────────────────────────
@@ -794,7 +807,7 @@ class FixAgent:
                 return "FIX_APPLIED_PENDING_VERIFICATION"
             if failed_stage in ("deploy", "deploy_validation"):
                 return "FIX_FAILED_DEPLOY"
-            if failed_stage in ("update", "get", "locked", "patcher", "validation"):
+            if failed_stage in ("update", "get", "locked", "patcher", "validation", "validation_blocked"):
                 return "FIX_FAILED_UPDATE"
             if failed_stage in ("agent", "tool_validation"):
                 return "FIX_FAILED"

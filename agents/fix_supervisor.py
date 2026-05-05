@@ -33,7 +33,7 @@ _MAX_ATTEMPTS    = 3
 _STRATEGY_ORDER  = ["direct_patch", "component_replace", "structured", "free_xml"]
 
 # Failure stages that are not recoverable by trying another strategy
-_NON_RECOVERABLE = {"locked", "timeout", "agent", "no_tool_calls"}
+_NON_RECOVERABLE = {"locked", "timeout", "agent", "no_tool_calls", "validation_blocked"}
 
 
 @dataclass
@@ -126,6 +126,34 @@ class FixSupervisor:
                         )
 
             patch   = await self._generator.generate(ctx, strategy, progress_fn=progress_fn)
+
+            # Structural validation block — agent cannot self-correct; stop immediately.
+            if patch.raw_answer == "__VALIDATION_BLOCKED__":
+                logger.warning(
+                    "[Supervisor] VALIDATION_BLOCKED for iflow=%s — structural regression "
+                    "detected; escalating without retry.",
+                    ctx.iflow_id,
+                )
+                return SuperviseResult(
+                    success=False,
+                    fix_applied=False,
+                    deploy_success=False,
+                    failed_stage="validation_blocked",
+                    summary=(
+                        f"iFlow '{ctx.iflow_id}' fix blocked: the agent introduced a structural "
+                        "regression (e.g. removed a CBR default route). No deploy was attempted. "
+                        "Manual review required."
+                    ),
+                    technical_details=(
+                        "validate_iflow_xml returned FATAL: for a structural error "
+                        "the agent cannot self-correct."
+                    ),
+                    steps=patch.steps,
+                    raw_answer=patch.raw_answer,
+                    strategy_used=strat_name,
+                    attempts=attempt,
+                )
+
             vresult = self._validator.pre_validate(ctx, patch)
 
             # Allow deploy when only pre-existing issues are present
