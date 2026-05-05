@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchPipelineStatus,
-  fetchToolDistribution,
   startPipeline,
   stopPipeline,
   fetchPipelineTrace,
@@ -57,13 +56,6 @@ export default function Pipeline() {
     staleTime: 0,
   });
 
-  // Tools never change after startup — fetch once, cache for 10 minutes
-  const { data: toolDist } = useQuery({
-    queryKey: ["tool-distribution"],
-    queryFn: fetchToolDistribution,
-    staleTime: 10 * 60 * 1000,
-    refetchInterval: false,
-  });
 
   const { data: traceData } = useQuery({
     queryKey: ["pipeline-trace"],
@@ -102,8 +94,6 @@ export default function Pipeline() {
   const running = pipelineData?.pipeline_running ?? false;
   const agentStatuses = pipelineData?.agents ?? {};
   const incidents: TraceIncident[] = (traceData?.incidents ?? []) as TraceIncident[];
-  const toolDistribution = toolDist ?? pipelineData?.tool_distribution;
-
   const AGENT_META = SPECIALIST_AGENTS;
   const STAGE_ORDER = SPECIALIST_ORDER;
 
@@ -165,7 +155,6 @@ export default function Pipeline() {
           if (!meta) return null;
           const rawStatus = agentStatuses[key] ?? "unknown";
           const isRunning = rawStatus === "running";
-          const toolCount = toolDistribution?.[key]?.length;
           return (
             <div key={key} className={styles.flowItem}>
               <div
