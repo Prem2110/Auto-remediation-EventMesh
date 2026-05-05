@@ -201,8 +201,7 @@ async def _run_pending_deploy_sweeper() -> None:
     while True:
         await asyncio.sleep(_SWEEP_INTERVAL)
         try:
-            from db.database import get_incidents_by_status  # noqa: PLC0415
-            pending = get_incidents_by_status("FIX_APPLIED_PENDING_VERIFICATION")
+            pending = get_all_incidents(status="FIX_APPLIED_PENDING_VERIFICATION", limit=10)
             if not pending:
                 continue
             logger.info("[SWEEPER] Found %d pending-deploy incident(s) — retrying", len(pending))
