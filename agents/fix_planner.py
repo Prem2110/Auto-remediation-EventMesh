@@ -258,7 +258,11 @@ class FixPlanner:
                     key_elem = prop.find(".//{*}key") or prop.find("key")
                     val_elem = prop.find(".//{*}value") or prop.find("value")
                     if key_elem is not None and val_elem is not None:
-                        if (key_elem.text or "").strip().lower() == property_name.lower():
+                        _key_text = (key_elem.text or "").strip()
+                        # Case-insensitive match first, then normalised (strip underscores/hyphens)
+                        _pname_norm = property_name.lower().replace("_", "").replace("-", "")
+                        _key_norm   = _key_text.lower().replace("_", "").replace("-", "")
+                        if _key_text.lower() == property_name.lower() or _key_norm == _pname_norm:
                             old_val = val_elem.text
                             val_elem.text = new_value
                             prop_found = True

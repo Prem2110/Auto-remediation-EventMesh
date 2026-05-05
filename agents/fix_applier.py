@@ -246,6 +246,19 @@ class FixApplier:
                 steps=patch.steps,
             )
 
+        if raw.startswith("__VALIDATION_BLOCKED__"):
+            return ApplyResult(
+                success=False, fix_applied=False, deploy_success=False,
+                failed_stage="validation_blocked",
+                summary=(
+                    "Fix was blocked: the agent introduced a structural regression "
+                    "(e.g. removed a Content-Based Router default route). "
+                    "No changes were deployed. Manual review is required."
+                ),
+                technical_details="FATAL structural validation failure — see validate_iflow_xml step output.",
+                steps=patch.steps,
+            )
+
         result = self.evaluate_fix_result(patch.steps, raw)
         return ApplyResult(
             success=result.get("success", False),
@@ -349,9 +362,13 @@ class FixApplier:
         text = (output or "").lower()
         return any(s in text for s in (
             '"status":200', '"status": 200',
+            '"statuscode":200', '"statuscode": 200',
             "successfully updated", "update successful", "saved successfully",
+            "upload successful", "uploaded successfully",
             '"result":"ok"', '"result": "ok"',
             '"success":true', '"success": true',
+            "http/1.1 200", "http/2 200", "status_code=200",
+            '"version":', '"artifactcontent"',  # SAP returns version on successful update
         ))
 
     @staticmethod
@@ -359,11 +376,19 @@ class FixApplier:
         text = (output or "").lower()
         return any(s in text for s in (
             '"deploystatus":"success"', '"deploystatus": "success"',
+            '"deploymentstatus":"success"', '"deploymentstatus": "success"',
+            '"deploymentstatus":"deployed"', '"deploymentstatus": "deployed"',
             '"status":"success"', '"status": "success"',
+            '"status":"deployed"', '"status": "deployed"',
+            '"status":"started"', '"status": "started"',
             '"result":"success"', '"result": "success"',
             "deployed successfully", "deployment successful",
-            "successfully deployed",
+            "successfully deployed", "deploy successful",
             '"deploy_success": true', '"deploy_success":true',
+            '"deploystate":"started"', '"deploystate": "started"',
+            '"deploystate":"success"', '"deploystate": "success"',
+            "http/1.1 202", "http/2 202", "status_code=202", "status: 202",
+            '"statuscode":202', '"statuscode": 202',
         ))
 
     @staticmethod

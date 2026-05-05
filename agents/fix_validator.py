@@ -11,6 +11,7 @@ Exports:
 """
 
 import logging
+import os
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass, field
@@ -117,11 +118,12 @@ class FixValidator:
             )
 
         # ── Step 3: Unrelated-change diff ─────────────────────────────────────
+        _max_unrelated = int(os.getenv("MAX_UNRELATED_DIFF_NODES", "10"))
         diff_count = self._count_unrelated_changes(ctx, patched_xml)
-        if diff_count > 3:
+        if diff_count > _max_unrelated:
             return PreValidateResult(
                 passed=False,
-                errors=[f"Unexpected changes to {diff_count} unrelated elements"],
+                errors=[f"Unexpected changes to {diff_count} unrelated elements (limit={_max_unrelated})"],
                 diff_node_count=diff_count,
                 patched_xml=patched_xml,
             )

@@ -829,6 +829,9 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
         if existing:
             if _has_success_count:
                 new_success = (existing.get("success_count") or 0) + (1 if outcome == "SUCCESS" else 0)
+                # PARTIAL = XML fix was correct but deploy failed; count as half-success for pattern reuse
+                if outcome == "PARTIAL":
+                    new_success = (existing.get("success_count") or 0)  # don't increment, but don't reset
                 new_replay  = (existing.get("replay_success_count") or 0) + (1 if replay_success else 0)
                 new_steps   = key_steps_json if (outcome == "SUCCESS" and key_steps_json) else existing.get("key_steps")
                 cur.execute(
@@ -855,7 +858,7 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                         str(uuid.uuid4()), sig,
                         data.get("iflow_id", ""), data.get("error_type", ""),
                         data.get("root_cause", ""), fix, outcome, 1, now,
-                        1 if outcome == "SUCCESS" else 0,
+                        1 if outcome == "SUCCESS" else 0,  # PARTIAL does not increment success_count on first insert
                         1 if replay_success else 0,
                         key_steps_json if outcome == "SUCCESS" else None,
                     ),

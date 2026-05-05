@@ -332,6 +332,27 @@ Example — two simultaneous property changes on the same component:
                     f"fix_applied: {best.get('fix_applied', '')}\n"
                 )
 
+        # ── Cross-iFlow patterns pre-fetch — proven fixes for same error type on other iFlows ──
+        from db.database import get_patterns_by_error_type as _get_cross  # noqa: PLC0415
+        _cross_patterns = _get_cross(error_type, min_success_count=1, limit=3)
+        cross_iflow_text = ""
+        if _cross_patterns:
+            lines = ["=== PROVEN FIXES FROM OTHER IFLOWS (same error type) ==="]
+            for _cp in _cross_patterns:
+                if _cp.get("iflow_id") != iflow_id:  # skip same iFlow — already in pattern_text
+                    lines.append(
+                        f"iFlow: {_cp.get('iflow_id')} | "
+                        f"root_cause: {(_cp.get('root_cause') or '')[:120]} | "
+                        f"fix: {(_cp.get('fix_applied') or '')[:150]} | "
+                        f"success_count: {_cp.get('success_count', 0)}"
+                    )
+            if len(lines) > 1:
+                cross_iflow_text = "\n".join(lines)
+                logger.info(
+                    "[RCA] Pre-fetched %d cross-iFlow pattern(s) for error_type=%s iflow=%s",
+                    len(lines) - 1, error_type, iflow_id,
+                )
+
         # ── Prompt — two variants depending on whether we have a message GUID ─
         if message_guid:
             prompt = f"""
@@ -349,6 +370,9 @@ Error detected:
 
 === pattern_history (pre-fetched — REUSE if success_count >= 2) ===
 {pattern_text}
+
+=== cross_iflow_patterns (proven fixes from other iFlows — use as reference) ===
+{cross_iflow_text}
 
 Steps (execute in order, stop after step 3):
 1. Call get_message_logs ONCE for message ID: {message_guid}
@@ -393,6 +417,9 @@ AUTONOMOUS RCA — do NOT ask for human input. No message GUID is available.
 === pattern_history (pre-fetched — REUSE if success_count >= 2) ===
 {pattern_text}
 
+=== cross_iflow_patterns (proven fixes from other iFlows — use as reference) ===
+{cross_iflow_text}
+
 Error detected:
 - iFlow:      {iflow_id}
 - Error Type: {error_type}
@@ -435,9 +462,12 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
         rca: Dict[str, Any] = {}
         for attempt in range(3):
             try:
-                result = await agent.ainvoke(
-                    {"messages": messages},
-                    config={"callbacks": [logger_cb], "recursion_limit": 14},
+                result = await asyncio.wait_for(
+                    agent.ainvoke(
+                        {"messages": messages},
+                        config={"callbacks": [logger_cb], "recursion_limit": 14},
+                    ),
+                    timeout=180.0,
                 )
                 final_msg = result["messages"][-1]
                 answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
@@ -451,6 +481,31 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                     except Exception:
                         rca = {}
                 break
+            except asyncio.TimeoutError:
+                logger.warning("[RCA] agent timed out on attempt %d/3 for iflow=%s", attempt + 1, iflow_id)
+                if attempt < 2:
+                    await asyncio.sleep(2)
+                    continue
+                logger.error("[RCA] All 3 attempts timed out for iflow=%s — using fallback", iflow_id)
+                # Return a fallback so the pipeline can still attempt a fix
+                _clf = self._classifier.classify_error(error_message)
+                _fallback_fix = FALLBACK_FIX_BY_ERROR_TYPE.get(
+                    _clf.get("error_type", "UNKNOWN_ERROR"),
+                    FALLBACK_FIX_BY_ERROR_TYPE["UNKNOWN_ERROR"],
+                )
+                return {
+                    "root_cause":         f"RCA timed out — classifier suggests {_clf.get('error_type')}: {error_message[:200]}",
+                    "proposed_fix":       _fallback_fix,
+                    "confidence":         min(_clf.get("confidence", 0.50), 0.65),
+                    "auto_apply":         False,
+                    "error_type":         _clf.get("error_type", error_type),
+                    "affected_component": "",
+                    "property_to_change": "",
+                    "current_value":      "",
+                    "correct_value":      "",
+                    "fixes":              [],
+                    "agent_steps":        logger_cb.steps,
+                }
             except Exception as exc:
                 if attempt < 2:
                     await asyncio.sleep(2)

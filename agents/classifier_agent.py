@@ -179,12 +179,24 @@ class ClassifierAgent:
         if any(k in msg for k in [
             "credential alias", "no security artifact", "security material not found",
             "credential reference", "security material", "no credential",
+            "credentialname", "no security material", "alias not found",
+            "keystore entry", "keystore alias", "keystorepassword",
         ]):
             return _r("AUTH_CONFIG_ERROR", 0.91, ["auth", "config"])
 
-        # ── Auth / credential — ambiguous; route to APPROVAL not AUTO_FIX ──
+        # ── Auth / credential — check for iFlow-config alias patterns first ──
+        # If the error names a specific alias or references a missing iFlow property,
+        # it is a config fix (AUTH_CONFIG_ERROR), not an infra issue (AUTH_ERROR).
+        if any(k in msg for k in ["credential", "unauthorized", "invalid credentials"]):
+            _is_config_auth = any(k in msg for k in [
+                "alias", "security artifact", "security material",
+                "keystore", "credential name", "no entry", "not found in",
+            ])
+            if _is_config_auth:
+                return _r("AUTH_CONFIG_ERROR", 0.88, ["auth", "config"])
+
         if any(k in msg for k in [
-            "unauthorized", "invalid credentials", "credential",
+            "unauthorized", "invalid credentials",
             "token expired", "access token", "oauth",
         ]):
             return _r("AUTH_ERROR", 0.93, ["auth"])

@@ -1753,7 +1753,15 @@ async def rollback_fix(
             )
             final_msg = result["messages"][-1]
             answer = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
-            success = "deploy_success\": true" in answer or "deployed successfully" in answer.lower()
+            from agents.fix_applier import FixApplier as _FixApplier  # noqa: PLC0415
+            _rb_steps = [
+                {"tool": tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", ""),
+                 "output": ""}
+                for msg in result["messages"]
+                for tc in (getattr(msg, "tool_calls", None) or [])
+            ]
+            _rb_eval = _FixApplier(mcp).evaluate_fix_result(_rb_steps, answer)
+            success = _rb_eval.get("deploy_success", False)
             update_incident(incident_id, {
                 "status":      "ROLLED_BACK" if success else "FIX_FAILED",
                 "fix_summary": f"Rollback {'succeeded' if success else 'failed'}: {answer[:300]}",

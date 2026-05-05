@@ -261,6 +261,20 @@ Rules:
             incident.get("error_message", "")
         ):
             policy["action"] = "RETRY"
+        # Repeated CONNECTIVITY_ERROR on same iFlow → likely a config issue, not transient.
+        # Upgrade to AUTO_FIX so the agent can inspect and fix timeout/port settings.
+        if (
+            error_type == "CONNECTIVITY_ERROR"
+            and int(incident.get("consecutive_failures") or incident.get("occurrence_count") or 0) >= 2
+            and policy["action"] == "RETRY"
+        ):
+            logger.info(
+                "[Policy] CONNECTIVITY_ERROR with %d+ failures on iflow=%s — upgrading to AUTO_FIX",
+                int(incident.get("consecutive_failures") or incident.get("occurrence_count") or 0),
+                incident.get("iflow_id", ""),
+            )
+            policy["action"] = "AUTO_FIX"
+            policy["replay_after_fix"] = True
         return policy
 
     @staticmethod
@@ -422,11 +436,21 @@ Rules:
                 return "RETRIED"
             logger.info("[Gate] Retry unavailable/failed — escalating to iFlow fix: %s", incident["iflow_id"])
 
+        # Re-evaluate policy using the RCA's error_type — RCA may have upgraded
+        # UNKNOWN_ERROR to a fixable type (e.g. ADAPTER_CONFIG_ERROR).
+        _rca_error_type = rca.get("error_type") or incident.get("error_type") or "UNKNOWN_ERROR"
+        if _rca_error_type != (incident.get("error_type") or "UNKNOWN_ERROR"):
+            policy = self.get_remediation_policy({**incident, "error_type": _rca_error_type}, rca)
+            logger.info(
+                "[Gate] Policy re-evaluated after RCA type upgrade: %s → %s (action=%s)",
+                incident.get("error_type", "UNKNOWN_ERROR"), _rca_error_type, policy["action"],
+            )
+
         # Auto-fix path: either policy says AUTO_FIX, or auto_fix_enabled runtime flag is set
         effective_auto_fix = (
             RUNTIME_FLAGS["auto_fix_enabled"]
             and self.has_actionable_fix(rca)
-            and rca.get("error_type", "UNKNOWN_ERROR") != "UNKNOWN_ERROR"
+            and _rca_error_type != "UNKNOWN_ERROR"
         )
         if self.should_auto_fix(incident, rca, policy, confidence) or effective_auto_fix:
             _iflow_id = incident.get("iflow_id", "")
@@ -479,6 +503,11 @@ Rules:
                 _fix_applied_desc = (
                     fix_result.get("summary") or rca.get("proposed_fix", "")
                 ).strip()[:1000]
+                _outcome = (
+                    "SUCCESS" if fix_result.get("success") else
+                    "PARTIAL" if (fix_result.get("fix_applied") and not fix_result.get("deploy_success")) else
+                    "FAILED"
+                )
                 upsert_fix_pattern({
                     "error_signature": self._classifier.error_signature(
                         incident["iflow_id"], rca.get("error_type", ""), incident.get("error_message", "")
@@ -487,8 +516,8 @@ Rules:
                     "error_type": rca.get("error_type", ""),
                     "root_cause": rca.get("root_cause", ""),
                     "fix_applied": _fix_applied_desc,
-                    "outcome":    "SUCCESS" if fix_result["success"] else "FAILED",
-                    "key_steps":  fix_result.get("steps", []) if fix_result["success"] else [],
+                    "outcome":    _outcome,
+                    "key_steps":  fix_result.get("steps", []) if fix_result.get("fix_applied") else [],
                 })
                 return final_status
             finally:
@@ -586,7 +615,25 @@ Rules:
             logger.error("[AEM:classified] Incident %s not found in DB", incident_id)
             return
         update_incident(incident_id, {"status": "RCA_IN_PROGRESS"})
-        rca = await self._rca.run_rca(dict(incident))
+        try:
+            rca = await asyncio.wait_for(
+                self._rca.run_rca(dict(incident)),
+                timeout=300.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("[Orchestrator] RCA timed out for incident=%s — marking RCA_FAILED", incident_id)
+            update_incident(incident_id, {
+                "status":     "RCA_FAILED",
+                "fix_summary": "RCA timed out after 300s. Retry or investigate manually.",
+            })
+            return
+        except Exception as _rca_exc:
+            logger.error("[Orchestrator] RCA raised exception for incident=%s: %s", incident_id, _rca_exc)
+            update_incident(incident_id, {
+                "status":     "RCA_FAILED",
+                "fix_summary": f"RCA error: {str(_rca_exc)[:400]}",
+            })
+            return
         update_incident(incident_id, {
             "status":             "RCA_COMPLETE",
             "root_cause":         rca.get("root_cause", ""),
@@ -1215,6 +1262,11 @@ Rules:
             _fix_applied_desc2 = (
                 fix_result.get("summary") or rca.get("proposed_fix", "")
             ).strip()[:1000]
+            _outcome2 = (
+                "SUCCESS" if fix_result.get("success") else
+                "PARTIAL" if (fix_result.get("fix_applied") and not fix_result.get("deploy_success")) else
+                "FAILED"
+            )
             upsert_fix_pattern(
                 {
                     "error_signature": self._classifier.error_signature(
@@ -1226,8 +1278,8 @@ Rules:
                     "error_type": rca.get("error_type", ""),
                     "root_cause": rca.get("root_cause", ""),
                     "fix_applied": _fix_applied_desc2,
-                    "outcome":    "SUCCESS" if fix_result.get("success") else "FAILED",
-                    "key_steps":  fix_result.get("steps", []) if fix_result.get("success") else [],
+                    "outcome":    _outcome2,
+                    "key_steps":  fix_result.get("steps", []) if fix_result.get("fix_applied") else [],
                 },
                 replay_success=replay_success,
             )
@@ -1253,6 +1305,30 @@ Rules:
                 "proposed_fix":     refreshed.get("proposed_fix"),
                 "confidence":       refreshed.get("rca_confidence"),
                 "incident":         refreshed,
+            }
+        except Exception as _fix_exc:
+            logger.error(
+                "[FIX] Unhandled exception in execute_incident_fix for incident=%s iflow=%s: %s",
+                incident_id, iflow_id, _fix_exc,
+            )
+            try:
+                update_incident(incident_id, {
+                    "status":            "FIX_FAILED",
+                    "fix_summary":       f"Unexpected error during fix: {str(_fix_exc)[:400]}",
+                    "last_failed_stage": "agent",
+                })
+            except Exception:
+                pass
+            return {
+                "incident_id":    incident_id,
+                "iflow_id":       iflow_id,
+                "status":         "FIX_FAILED",
+                "success":        False,
+                "fix_applied":    False,
+                "deploy_success": False,
+                "failed_stage":   "agent",
+                "summary":        f"Unexpected error during fix pipeline: {str(_fix_exc)[:400]}",
+                "incident":       get_incident_by_id(incident_id) or working_incident,
             }
         finally:
             if _fix_lock and _fix_lock.locked():

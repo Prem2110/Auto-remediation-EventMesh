@@ -172,7 +172,21 @@ Rules:
             )
             final_msg = result["messages"][-1]
             answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
-            return {"success": True, "skipped": False, "summary": answer, "steps": logger_cb.steps}
+            # Determine success from tool-call outputs, not just agent completion
+            _retry_tool_called = any(
+                any(kw in str(s.get("tool", "")).lower() for kw in ("retry", "replay", "resubmit"))
+                for s in logger_cb.steps
+            )
+            _answer_lower = answer.lower()
+            _success_signals = ("success", "retried", "replayed", "resubmitted", "200", "202", "accepted")
+            _failure_signals = ("fail", "error", "exception", "not found", "404", "500", "no tool")
+            if not _retry_tool_called:
+                _retry_success = False
+            elif any(s in _answer_lower for s in _failure_signals):
+                _retry_success = False
+            else:
+                _retry_success = any(s in _answer_lower for s in _success_signals)
+            return {"success": _retry_success, "skipped": False, "summary": answer, "steps": logger_cb.steps}
         except Exception as exc:
             logger.error("[RETRY] retry_failed_message error: %s", exc)
             return {"success": False, "skipped": False, "summary": str(exc), "steps": logger_cb.steps}

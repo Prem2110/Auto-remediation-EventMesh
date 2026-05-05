@@ -400,10 +400,17 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
 
         if ctx.sliced_xml:
             prompt += (
-                "\n\n=== XML CONTEXT (focused view) ===\n"
-                "The section below contains the failing component and its immediate\n"
-                "neighbours. Use get-iflow if you need the complete iFlow XML.\n"
-                f"{xml_to_send}"
+                "\n\n=== XML CONTEXT (focused view — centred on failing component) ===\n"
+                "The section below shows the failing component and its 2 nearest siblings.\n"
+                "This is sufficient for most fixes. Call get-iflow ONLY if you need the\n"
+                "full iFlow structure (e.g. to trace sequence flows or find a missing router).\n"
+                f"{ctx.sliced_xml}"
+            )
+        elif ctx.original_xml:
+            prompt += (
+                "\n\n=== FULL IFLOW XML (pre-fetched) ===\n"
+                "The complete iFlow XML is provided below. Focus on the affected component.\n"
+                f"{ctx.original_xml}"
             )
 
         messages  = [{"role": "user", "content": prompt}]

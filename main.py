@@ -1365,7 +1365,7 @@ async def _run_fixer_task(event: Dict[str, Any]) -> None:
 
         update_incident(incident_id, {"status": "FIX_IN_PROGRESS"})
         fix_result  = await orchestrator._fix.apply_fix(dict(incident), rca)  # type: ignore[union-attr]
-        fix_success = fix_result.get("fix_applied", False) and fix_result.get("deploy_success", False)
+        fix_success = fix_result.get("success", False)
         fix_status  = FixAgent.determine_post_fix_status(
             fix_success=fix_success,
             policy={"action": "AUTO_FIX"},

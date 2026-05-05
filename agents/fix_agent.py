@@ -527,12 +527,27 @@ class FixAgent:
                     )
                     _answer_val = _result_val["messages"][-1]
                     _answer_val = _answer_val.content if hasattr(_answer_val, "content") else str(_answer_val)
-                    _eval_val   = self._applier.evaluate_fix_result(_logger_cb_val.steps, _answer_val)
-                    if _eval_val.get("success") or _eval_val.get("fix_applied"):
-                        evaluation   = _eval_val
-                        logger_steps = _logger_cb_val.steps
-                        answer       = _answer_val
-                        logger.info("[FIX_DEPLOY] Validation retry succeeded: iflow=%s", iflow_id)
+                    if _answer_val.startswith("__VALIDATION_BLOCKED__"):
+                        logger.warning(
+                            "[FIX_DEPLOY] Validation retry also hit VALIDATION_BLOCKED for iflow=%s — stopping.",
+                            iflow_id,
+                        )
+                        evaluation = {
+                            "success": False, "fix_applied": False, "deploy_success": False,
+                            "failed_stage": "validation_blocked",
+                            "summary": (
+                                f"Fix for '{iflow_id}' was blocked on retry: structural regression "
+                                "detected. No changes were deployed. Manual review is required."
+                            ),
+                            "technical_details": "FATAL structural validation failure on retry.",
+                        }
+                    else:
+                        _eval_val = self._applier.evaluate_fix_result(_logger_cb_val.steps, _answer_val)
+                        if _eval_val.get("success") or _eval_val.get("fix_applied"):
+                            evaluation   = _eval_val
+                            logger_steps = _logger_cb_val.steps
+                            answer       = _answer_val
+                            logger.info("[FIX_DEPLOY] Validation retry succeeded: iflow=%s", iflow_id)
                 except Exception as _val_exc:
                     logger.warning("[FIX_DEPLOY] Validation retry failed: %s", _val_exc)
 
@@ -817,7 +832,10 @@ class FixAgent:
         if failed_stage == "validation_warning":
             return "FIX_DEPLOYED"
         if policy.get("action") == "RETRY":
-            if retry_result and (retry_result.get("success") or retry_result.get("skipped")):
+            if retry_result is None:
+                # No retry was attempted (e.g. called from main.py) — treat as verified.
+                return "FIX_VERIFIED"
+            if retry_result.get("success") or retry_result.get("skipped"):
                 return "FIX_VERIFIED"
             return "FIX_DEPLOYED"
         return "FIX_VERIFIED"

@@ -237,7 +237,28 @@ class FixSupervisor:
                     reason=_reason,
                 )
 
-        # Escalate
+        # Escalate — restore original XML first so the iFlow is not left in a broken state
+        if ctx.original_xml and ctx.original_filepath:
+            _mcp = getattr(self._applier, "_mcp", None)
+            if _mcp:
+                try:
+                    await _mcp.execute_integration_tool(
+                        "update-iflow",
+                        {
+                            "id":    ctx.iflow_id,
+                            "files": [{"filepath": ctx.original_filepath, "content": ctx.original_xml}],
+                        },
+                    )
+                    logger.info(
+                        "[Supervisor] Restored original XML after final escalation for iflow=%s",
+                        ctx.iflow_id,
+                    )
+                except Exception as _restore_exc:
+                    logger.warning(
+                        "[Supervisor] Could not restore original XML on escalation for iflow=%s: %s",
+                        ctx.iflow_id, _restore_exc,
+                    )
+
         if last_result is not None:
             last_result.failed_stage = last_result.failed_stage or "escalate"
             last_result.summary = (

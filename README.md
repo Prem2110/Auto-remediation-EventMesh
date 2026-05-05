@@ -305,12 +305,30 @@ binding (`VCAP_SERVICES` on CF). The app must have the Destination service insta
 - **Input:** `{"stage": "fixer", "incident_id": "<uuid>"}`
 - **Responsibilities:**
   - Read incident + RCA results from DB
-  - Execute the fix pipeline via MCP: `get-iflow` → `update-iflow` → `deploy-iflow`
-  - Evaluate outcome: `fix_applied AND deploy_success`
+  - Run the fix pipeline via `FixSupervisor`, which rotates through four strategies in priority order:
+    1. **`direct_patch`** — applies RCA-specified property changes directly to iFlow XML (no LLM, no network call); supports multiple simultaneous property changes from a single RCA pass
+    2. **`component_replace`** — swaps the broken component with a validated reference iFlow component
+    3. **`structured`** — applies structured operation list (change_type / field / target_component) via XML patcher
+    4. **`free_xml`** — full LLM agent loop: `get-iflow` → fix XML → `validate_iflow_xml` → `update-iflow` → `deploy-iflow`
+  - Strategies are retried up to 3 times; non-recoverable stages (`locked`, `timeout`, `validation_blocked`, etc.) halt immediately without retry
+  - For `free_xml`: `validate_iflow_xml` detects structural regressions and returns a `FATAL:` response; the agent stops immediately instead of burning its full tool budget
   - Update DB: `fix_summary`, `fix_applied`, `status`
   - Only publish to verifier if fix was successfully applied and deployed; otherwise halt
 - **Publishes to:** `default/sierra.automation/1/autofix/orbit/verifier` (success only)
-- **On failure:** Sets status `FIX_FAILED`
+- **On failure:** Sets status `FIX_FAILED` / `FIX_FAILED_UPDATE` / `FIX_FAILED_DEPLOY`
+
+#### Fix Pipeline Sub-components
+
+| Module | Role |
+|---|---|
+| `fix_supervisor.py` | Orchestrates strategy rotation and retry logic |
+| `fix_planner.py` | Selects strategy; runs direct_patch / component_replace / structured diagnosis |
+| `fix_generator.py` | Runs the free-XML LLM agent; scales timeout by XML size (120 s / 300 s) |
+| `fix_validator.py` | Pre-validates patched XML before sending to SAP CPI |
+| `fix_applier.py` | Calls SAP MCP tools; evaluates LLM tool-call history for free-XML mode |
+| `fix_context.py` | Frozen dataclass — shared contract across all sub-components |
+| `fix_component_replacer.py` | Fetches reference iFlow and merges the target component |
+| `fix_xml_analyst.py` | Static XML component-map summary injected into the LLM prompt |
 
 ### Stage 5 — Verifier Agent (`/agents/verifier`) — Terminal
 
@@ -471,6 +489,7 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `HANA_TABLE_EM_INCIDENTS` | `EM_AUTONOMOUS_INCIDENTS` | Incidents table |
 | `HANA_TABLE_EM_FIX_PATTERNS` | `EM_FIX_PATTERNS` | Fix patterns table |
 | `HANA_TABLE_EM_ESCALATION_TICKETS` | `EM_ESCALATION_TICKETS` | Escalation tickets table |
+| `HANA_TABLE_VECTOR` | `SAP_HELP_DOCS` | HANA vector store table for SAP Notes retrieval |
 
 ### AWS S3 Object Store
 
@@ -813,22 +832,25 @@ FIX_IN_PROGRESS         fixer is applying the change
 FIX_DEPLOYED            iFlow redeployed successfully
     │
     ├──► FIX_VERIFIED          verifier confirmed the fix works       ✓
+    ├──► AUTO_FIXED            fix applied via smart-monitoring path  ✓
     └──► FIX_FAILED_RUNTIME    verifier found the iFlow still failing ✗
 
 ── Failure variants (pipeline halts) ──────────────────────────────────
 OBS_FAILED              observer threw an exception
 RCA_FAILED              RCA agent threw an exception
 FIX_FAILED              fixer threw an unhandled exception
-FIX_FAILED_UPDATE       SAP CPI rejected the iFlow XML update
+FIX_FAILED_UPDATE       SAP CPI rejected the update (incl. structural
+                          validation block — validation_blocked stage)
 FIX_FAILED_DEPLOY       deploy step failed
 FIX_FAILED_RUNTIME      post-deploy verification failed
 
 ── Special statuses ────────────────────────────────────────────────────
-ARTIFACT_MISSING           iFlow not found in SAP CPI design time
-AWAITING_APPROVAL          human must approve before fix is applied
-TICKET_CREATED             escalated; ticket raised in external system
-BURST_DEDUPED              absorbed as duplicate within dedup window
-CIRCUIT_BREAKER_ESCALATED  too many consecutive failures; auto-escalated
+ARTIFACT_MISSING              iFlow not found in SAP CPI design time
+AWAITING_APPROVAL             human must approve before fix is applied
+FIX_APPLIED_PENDING_VERIFY    XML uploaded but deploy not confirmed yet
+TICKET_CREATED                escalated; ticket raised in external system
+BURST_DEDUPED                 absorbed as duplicate within dedup window
+CIRCUIT_BREAKER_ESCALATED     too many consecutive failures; auto-escalated
 ```
 
 ### Key Incident Fields
@@ -889,6 +911,76 @@ backend application.
 ---
 
 ## 12. What's New
+
+### Fix pipeline refactored into a supervised multi-strategy engine
+
+The fixer agent now delegates entirely to `FixSupervisor`, which owns a four-strategy
+rotation (`direct_patch → component_replace → structured → free_xml`) with up to three
+attempts. Each attempt is independent — the original iFlow XML is restored before retry
+so a bad attempt never poisons the next one. Non-recoverable stages
+(`locked`, `timeout`, `no_tool_calls`, `validation_blocked`) stop rotation immediately
+without consuming further attempts.
+
+### Multi-fix DirectPatch — atomic multi-property patching without LLM
+
+The RCA agent now outputs a `fixes` list in addition to the legacy scalar
+`property_to_change` / `correct_value` fields. `FixPlanner._apply_direct_patch()` applies
+all entries in a single XML parse pass: it builds an `id → element` map once (O(1)
+lookup), iterates every fix, patches `ifl:property` child elements or falls back to plain
+XML attributes, and returns `None` only if zero patches were applied — triggering fallback
+to the next strategy. This means a single RCA pass can now fix multiple misconfigured
+properties in one atomic operation.
+
+### Structural validation early-bail — stop agent loops on unresolvable errors
+
+When the free-XML LLM agent calls `validate_iflow_xml` and the errors contain structural
+regressions it introduced (e.g. removed a CBR default route, broke `exclusiveGateway`
+routing), the tool now returns `FATAL: <error>` instead of `ERRORS: <error>`. The agent's
+system prompt instructs it to stop immediately and return `failed_stage="validation_blocked"`.
+All three exit paths in `FixGenerator` (`TimeoutError`, `GraphRecursionError`, normal
+completion) check for a `FATAL:` step in the tool-call history and return the
+`__VALIDATION_BLOCKED__` sentinel instead of the normal `__TIMEOUT__` / `__RECURSION_LIMIT__`
+sentinels. The supervisor treats `validation_blocked` as non-recoverable — preventing the
+agent from burning its full 300-second budget retrying an error it cannot fix.
+
+### Free-XML agent timeout now scales with iFlow XML size
+
+Previously the free-XML LLM agent always ran with a fixed 600 s timeout. The timeout is
+now set at invocation time based on the pre-fetched iFlow XML size:
+
+- XML < 30,000 chars → **120 s**
+- XML ≥ 30,000 chars → **300 s**
+
+### iFlow collaboration key whitelist — eliminates false-positive validator errors
+
+`core/validators.py` now includes `ALLOWED_COLLABORATION_KEYS` — a frozenset of 16 known
+valid global iFlow property keys (`namespaceMapping`, `httpSessionHandling`, `corsEnabled`,
+etc.) that appear inside `<bpmn2:collaboration>` extensionElements. The XML diff validator
+no longer flags these as unexpected new keys after a fix is applied.
+
+### Frontend fix summary — clean human-readable result display
+
+The Observability page "Fix Applied" banner previously rendered raw JSON including
+`__TOOLS_INVOKED__=...` metadata. A `cleanFixSummary()` helper now extracts the `summary`
+field from any embedded JSON response before display, falling back to the text before the
+first `{` if no JSON is present.
+
+### Smart monitoring background fix — proper status tracking and error isolation
+
+`_run_fix_background()` in `smart_monitoring.py` now:
+- Initialises `result = None` before the execution block to prevent `UnboundLocalError`
+- Separates the execution `try/except` from the DB-write `try/except` so a DB failure
+  cannot mask the fix outcome
+- Explicitly sets status `AUTO_FIXED` on success (previously only failure was persisted)
+- Uses `result.get("success")` (the authoritative field) rather than ANDing
+  `fix_applied AND deploy_success`
+
+### `determine_post_fix_status` — `retry_result=None` now correctly reaches `FIX_VERIFIED`
+
+When `post_fix_policy.action == "RETRY"` but no retry was attempted (e.g. the call
+comes from `main.py` which does not run a test retry), `retry_result` is `None`. The
+method previously fell through to `FIX_DEPLOYED`; it now returns `FIX_VERIFIED` for the
+`None` case.
 
 ### CPI iFlow replaced by Python microservice
 
@@ -960,8 +1052,16 @@ auto-remediation - EventMesh/
 │   ├── base.py                      # StepLogger, TestExecutionTracker base classes
 │   ├── classifier_agent.py          # Rule-based + LLM error classifier
 │   ├── observer_agent.py            # SAP CPI OData polling + metadata enrichment
-│   ├── rca_agent.py                 # LLM-based root cause analysis
-│   ├── fix_agent.py                 # iFlow fix generation + deploy pipeline
+│   ├── rca_agent.py                 # LLM root cause analysis; outputs fixes[] list + scalar fields
+│   ├── fix_agent.py                 # Fix pipeline coordinator (ask_fix_and_deploy, apply_fix)
+│   ├── fix_supervisor.py            # Strategy rotation (direct_patch→replace→structured→free_xml)
+│   ├── fix_planner.py               # Strategy selection; direct_patch; component_replace; structured
+│   ├── fix_generator.py             # Free-XML LLM agent; structural FATAL: early-bail; timeout scaling
+│   ├── fix_validator.py             # Pre-validate patched XML before SAP CPI update
+│   ├── fix_applier.py               # Execute MCP calls; evaluate LLM tool-call history
+│   ├── fix_context.py               # Frozen FixContext dataclass — shared pipeline contract
+│   ├── fix_component_replacer.py    # Reference iFlow fetch + component merge
+│   ├── fix_xml_analyst.py           # Static XML component map injected into LLM prompts
 │   ├── verifier_agent.py            # Post-fix test execution + runtime check
 │   └── orchestrator_agent.py        # Pipeline coordinator, dedup logic, chatbot
 │
