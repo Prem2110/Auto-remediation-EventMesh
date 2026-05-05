@@ -141,27 +141,31 @@ class FixAgent:
     async def _poll_deploy_status(
         self, iflow_id: str, polls: int = 5, interval: float = 15.0
     ) -> Dict[str, Any]:
-        _STARTED = {"started", "starting", "deployed", "active", "running"}
-        _FAILED  = {"error", "failed", "stopped"}
+        _STARTED  = {"started", "starting", "deployed", "active", "running"}
+        _FAILED   = {"error", "failed", "stopped"}
+        _schedule = [10, 10, 10, 10, 10, 10, 20, 20, 20, 20, 20, 20]
 
         if self.error_fetcher is None:
             return {"deploy_confirmed": False, "status": "error_fetcher_unavailable"}
 
-        for attempt in range(1, polls + 1):
+        for attempt, wait in enumerate(_schedule, start=1):
             try:
                 detail = await self.error_fetcher.fetch_runtime_artifact_detail(iflow_id)
                 raw_status = str(
                     detail.get("Status") or detail.get("DeployState") or detail.get("RuntimeStatus") or ""
                 ).lower().strip()
-                logger.info("[DEPLOY_POLL] iflow=%s attempt=%d/%d status=%s", iflow_id, attempt, polls, raw_status)
+                logger.info(
+                    "[DEPLOY_POLL] iflow=%s attempt=%d/%d status=%s",
+                    iflow_id, attempt, len(_schedule), raw_status,
+                )
                 if raw_status in _STARTED:
                     return {"deploy_confirmed": True, "status": raw_status}
                 if raw_status in _FAILED:
                     return {"deploy_confirmed": False, "status": raw_status}
             except Exception as exc:
                 logger.warning("[DEPLOY_POLL] iflow=%s attempt=%d error: %s", iflow_id, attempt, exc)
-            if attempt < polls:
-                await asyncio.sleep(interval)
+            if attempt < len(_schedule):
+                await asyncio.sleep(wait)
 
         return {"deploy_confirmed": False, "status": "timeout"}
 
@@ -632,6 +636,24 @@ class FixAgent:
                 deploy_errors = None
             else:
                 deploy_errors = await self.get_deploy_error_details(iflow_id)
+                if not deploy_errors:
+                    # SAP CPI sometimes reports a failed deploy that actually succeeded —
+                    # attempt one blind redeploy before entering correction passes.
+                    logger.info(
+                        "[FixAgent] No deploy errors found — attempting blind redeploy for iflow=%s",
+                        iflow_id,
+                    )
+                    _redeploy = await self._mcp.execute_integration_tool(
+                        "deploy-iflow", {"id": iflow_id}
+                    )
+                    from agents.fix_applier import FixApplier  # noqa: PLC0415
+                    if FixApplier._deploy_succeeded(str(_redeploy.get("output", ""))):
+                        evaluation.update({
+                            "success": True, "deploy_success": True, "failed_stage": None,
+                            "summary": f"iFlow '{iflow_id}' deployed successfully on blind redeploy.",
+                            "technical_details": "Blind redeploy after empty deploy-error response.",
+                        })
+                        deploy_errors = None
 
             if deploy_errors:
                 for _pass in range(1, 4):

@@ -192,6 +192,42 @@ async def _run_cpi_monitor() -> None:
         await asyncio.sleep(_POLL_INTERVAL)
 
 
+async def _run_pending_deploy_sweeper() -> None:
+    """
+    Background task: every 5 minutes retry any incident stuck in
+    FIX_APPLIED_PENDING_VERIFICATION by triggering a deploy-only fix pass.
+    """
+    _SWEEP_INTERVAL = int(os.getenv("PENDING_DEPLOY_SWEEP_INTERVAL_SECONDS", "300"))
+    while True:
+        await asyncio.sleep(_SWEEP_INTERVAL)
+        try:
+            from db.database import get_incidents_by_status  # noqa: PLC0415
+            pending = get_incidents_by_status("FIX_APPLIED_PENDING_VERIFICATION")
+            if not pending:
+                continue
+            logger.info("[SWEEPER] Found %d pending-deploy incident(s) — retrying", len(pending))
+            for incident in pending:
+                iflow_id    = incident.get("iflow_id") or incident.get("artifact_id")
+                incident_id = incident.get("id") or incident.get("incident_id")
+                if not iflow_id or not incident_id or orchestrator is None:
+                    continue
+                try:
+                    deploy_result = await mcp.execute_integration_tool(
+                        "deploy-iflow", {"id": iflow_id}
+                    )
+                    from agents.fix_applier import FixApplier  # noqa: PLC0415
+                    if FixApplier._deploy_succeeded(str(deploy_result.get("output", ""))):
+                        from db.database import update_incident_status  # noqa: PLC0415
+                        update_incident_status(incident_id, "AUTO_FIXED")
+                        logger.info("[SWEEPER] iflow=%s deployed — status → AUTO_FIXED", iflow_id)
+                    else:
+                        logger.warning("[SWEEPER] iflow=%s deploy still failing", iflow_id)
+                except Exception as _exc:
+                    logger.warning("[SWEEPER] iflow=%s sweep error: %s", iflow_id, _exc)
+        except Exception as exc:
+            logger.error("[SWEEPER] Unhandled sweeper error: %s", exc)
+
+
 # ─────────────────────────────────────────────
 # LIFESPAN
 # ─────────────────────────────────────────────
@@ -263,6 +299,7 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_init_background())
     asyncio.create_task(_run_cpi_monitor())
+    asyncio.create_task(_run_pending_deploy_sweeper())
     logger.info("[CPI_MONITOR] Poller started, interval=%ds", int(os.getenv("CPI_POLL_INTERVAL_SECONDS", "600")))
     logger.info("[Startup] FastAPI ready — agents initialising in background.")
     logger.info("[Startup] Event-driven mode active — waiting for SAP Event Mesh webhooks")

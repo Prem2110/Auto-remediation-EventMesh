@@ -110,7 +110,6 @@ class FixApplier:
                     {
                         "id": ctx.iflow_id,
                         "files": [{"filepath": ctx.original_filepath, "content": merged_xml}],
-                        "autoDeploy": True,
                     },
                 )
                 update_ok = self._update_succeeded(str(update_result.get("output", "")))

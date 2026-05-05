@@ -1553,7 +1553,7 @@ async def retry_fix(
         raise HTTPException(status_code=404, detail="Incident not found.")
 
     status = incident.get("status", "")
-    _retryable = {"FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME"}
+    _retryable = {"FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "FIX_APPLIED_PENDING_VERIFICATION"}
     if status not in _retryable:
         raise HTTPException(
             status_code=400,
@@ -1586,7 +1586,7 @@ async def retry_fix(
     # ── Decide retry strategy based on what failed ──────────────────────────
     # deploy stage (timeout/infra): update already applied — skip get+update, just redeploy
     # deploy_validation: iFlow content itself was rejected by SAP CPI build — must re-fix from scratch
-    deploy_only = last_failed_stage == "deploy"
+    deploy_only = last_failed_stage == "deploy" or status == "FIX_APPLIED_PENDING_VERIFICATION"
 
     # For update/agent failures with low confidence: re-run RCA first to get
     # a fresh fix angle before retrying the full pipeline
