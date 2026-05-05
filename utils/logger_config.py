@@ -59,8 +59,11 @@ def configure_logging(level: int = logging.INFO):
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
 
+    # On BTP Cloud Foundry, VCAP_APPLICATION is set and the filesystem is ephemeral.
+    # Skip the rotating file handler entirely — all logs go to stdout (cf logs).
+    _on_cf = bool(os.getenv("VCAP_APPLICATION"))
+
     log_dir = os.path.join(os.getcwd(), "logs")
-    os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, LOG_FILE_NAME)
 
     file_handler = None
@@ -70,7 +73,8 @@ def configure_logging(level: int = logging.INFO):
             continue
         root_logger.removeHandler(handler)
 
-    if file_handler is None:
+    if file_handler is None and not _on_cf:
+        os.makedirs(log_dir, exist_ok=True)
         if RESET_LOG_ON_START and os.path.exists(log_file):
             try:
                 os.remove(log_file)
@@ -99,8 +103,9 @@ def configure_logging(level: int = logging.INFO):
         root_logger.removeHandler(console_handler)
         console_handler = None
 
-    file_handler.setLevel(level)
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    if file_handler is not None:
+        file_handler.setLevel(level)
+        file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     if console_handler is not None:
         console_handler.setLevel(level)
         console_handler.setFormatter(logging.Formatter(LOG_FORMAT))

@@ -105,8 +105,18 @@ class RCAAgent:
         async def get_vector_store_notes(error_description: str) -> str:
             """Search the SAP Notes vector store for guidance relevant to this error."""
             vs    = get_vector_store()
-            notes = vs.retrieve_relevant_notes(error_description, "", "", limit=5)
-            return vs.format_notes_for_prompt(notes)
+            notes = vs.retrieve_relevant_notes(
+                error_description,
+                error_type or "",   # pass classified error type for better embedding match
+                iflow_id   or "",   # pass iFlow ID for context
+                limit=5,
+            )
+            result = vs.format_notes_for_prompt(notes)
+            logger.info(
+                "[RCA] get_vector_store_notes tool returned %d note(s) for error_type=%s iflow=%s",
+                len(notes), error_type, iflow_id,
+            )
+            return result
 
         @_tool
         async def get_cross_iflow_patterns(error_type: str, fragment: str) -> str:
@@ -316,8 +326,20 @@ Example — two simultaneous property changes on the same component:
         # ── SAP Notes from vector store ────────────────────────────────────────
         vector_store      = get_vector_store()
         sap_notes         = vector_store.retrieve_relevant_notes(error_message, error_type, iflow_id, limit=3)
-        kb_notes          = vector_store.format_notes_for_prompt(sap_notes) if sap_notes else ""
-        iflow_hint        = f"- iFlow ID for config lookup: {iflow_id}" if iflow_id else ""
+        kb_notes = vector_store.format_notes_for_prompt(sap_notes) if sap_notes else ""
+        if kb_notes:
+            logger.info(
+                "[RCA] Pre-fetched %d SAP note(s) from vector store | error_type=%s | iflow=%s",
+                len(sap_notes), error_type, iflow_id,
+            )
+        else:
+            logger.warning(
+                "[RCA] Vector store returned NO notes for error_type=%s iflow=%s — "
+                "RCA will rely on LLM knowledge only. "
+                "Check HANA_TABLE_VECTOR and EMBEDDING_DEPLOYMENT_ID env vars.",
+                error_type, iflow_id,
+            )
+        iflow_hint = f"- iFlow ID for config lookup: {iflow_id}" if iflow_id else ""
 
         # ── MD5-based pattern pre-fetch (matches record_fix_outcome signature) ──
         _md5_sig      = hashlib.md5(f"{iflow_id}:{error_type}".encode()).hexdigest()[:16]

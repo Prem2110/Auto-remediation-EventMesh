@@ -373,10 +373,21 @@ class FixAgent:
         # SAP Notes from vector store
         from core.constants import ERROR_TYPE_FIX_GUIDANCE  # noqa: PLC0415
         _vs    = get_vector_store()
-        _notes = _vs.retrieve_relevant_notes(error_message or "", error_type or "", iflow_id, limit=3)
+        _notes = _vs.retrieve_relevant_notes(error_message or "", error_type or "", iflow_id, limit=5)
         sap_notes = _vs.format_notes_for_prompt(_notes) if _notes else ""
         if sap_notes:
-            logger.info("[FIX_DEPLOY] Vector store returned %d SAP note(s) for iflow=%s", len(_notes), iflow_id)
+            logger.info(
+                "[FIX_DEPLOY] Vector store returned %d SAP note(s) for iflow=%s | "
+                "top_titles=%s",
+                len(_notes), iflow_id,
+                [n.get("note_title", "N/A") for n in _notes[:3]],
+            )
+        else:
+            logger.warning(
+                "[FIX_DEPLOY] Vector store returned NO notes for iflow=%s error_type=%s — "
+                "fix prompt will have no KB context.",
+                iflow_id, error_type,
+            )
 
         error_type_guidance = ERROR_TYPE_FIX_GUIDANCE.get(error_type or "", "")
 

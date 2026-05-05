@@ -410,8 +410,8 @@ class VectorStoreRetriever:
 
             content = note.get("note_content", "")
             if content:
-                trimmed = content[:600].strip()
-                if len(content) > 600:
+                trimmed = content[:4000].strip()
+                if len(content) > 4000:
                     trimmed += "…"
                 lines.append(f"Content    : {trimmed}")
 

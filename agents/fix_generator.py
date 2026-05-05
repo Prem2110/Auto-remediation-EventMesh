@@ -320,6 +320,12 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 )
 
         if strategy.strategy == "structured":
+            logger.info(
+                "[FixGenerator] Strategy=structured_patch | iflow=%s | "
+                "affected_component=%s | sap_notes=%s",
+                ctx.iflow_id, ctx.affected_component,
+                "yes" if ctx.sap_notes else "NO — KB context missing",
+            )
             return PatchSpec(
                 mode="structured",
                 operations=strategy.operations,
@@ -420,8 +426,11 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         _xml_len   = len(ctx.original_xml or "")
         _timeout   = 120.0 if _xml_len < 30_000 else 300.0
         logger.info(
-            "[FixGenerator] free_xml timeout=%.0fs (xml_len=%d) iflow=%s",
-            _timeout, _xml_len, ctx.iflow_id,
+            "[FixGenerator] Strategy=free_xml | timeout=%.0fs | xml_len=%d | "
+            "sap_notes=%s | iflow=%s",
+            _timeout, _xml_len,
+            "yes" if ctx.sap_notes else "NO — KB context missing",
+            ctx.iflow_id,
         )
         try:
             _result = await asyncio.wait_for(
