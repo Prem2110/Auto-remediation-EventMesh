@@ -156,6 +156,21 @@ class FixSupervisor:
 
             vresult = self._validator.pre_validate(ctx, patch)
 
+            if vresult.new_issues:
+                logger.warning(
+                    "[Supervisor] pre_validate FAILED: iflow=%s new_issues=%d "
+                    "pre_existing=%d errors=%s",
+                    ctx.iflow_id, len(vresult.new_issues), len(vresult.pre_existing_issues),
+                    vresult.errors[:2],
+                )
+            elif vresult.pre_existing_issues:
+                logger.info(
+                    "[Supervisor] pre_validate PASSED (pre_existing_only): iflow=%s count=%d",
+                    ctx.iflow_id, len(vresult.pre_existing_issues),
+                )
+            else:
+                logger.info("[Supervisor] pre_validate PASSED clean: iflow=%s", ctx.iflow_id)
+
             # Allow deploy when only pre-existing issues are present
             if not vresult.passed and not vresult.new_issues and vresult.pre_existing_issues:
                 from agents.fix_validator import PreValidateResult  # noqa: PLC0415
@@ -203,8 +218,15 @@ class FixSupervisor:
 
             next_strat = self._next_strategy(strat_name, tried_strategies)
             if next_strat is None:
-                logger.info("[Supervisor] All strategies exhausted for iflow=%s", ctx.iflow_id)
+                logger.info(
+                    "[Supervisor] All strategies exhausted: iflow=%s tried=%s",
+                    ctx.iflow_id, sorted(tried_strategies),
+                )
                 break
+            logger.info(
+                "[Supervisor] Strategy rotation: %s → %s (tried=%s failed_stage=%s)",
+                strat_name, next_strat, sorted(tried_strategies), result.failed_stage,
+            )
 
             # Rollback and capture deploy error before next attempt
             deploy_error_hint = ""

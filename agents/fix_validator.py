@@ -121,6 +121,10 @@ class FixValidator:
         _max_unrelated = int(os.getenv("MAX_UNRELATED_DIFF_NODES", "10"))
         diff_count = self._count_unrelated_changes(ctx, patched_xml)
         if diff_count > _max_unrelated:
+            logger.warning(
+                "[FixValidator] unrelated-diff threshold exceeded: iflow=%s count=%d limit=%d",
+                ctx.iflow_id, diff_count, _max_unrelated,
+            )
             return PreValidateResult(
                 passed=False,
                 errors=[f"Unexpected changes to {diff_count} unrelated elements (limit={_max_unrelated})"],
@@ -128,6 +132,10 @@ class FixValidator:
                 patched_xml=patched_xml,
             )
 
+        logger.info(
+            "[FixValidator] pre_validate passed: iflow=%s diff_nodes=%d pre_existing=%d",
+            ctx.iflow_id, diff_count, len(pre_existing),
+        )
         return PreValidateResult(
             passed=True,
             errors=[],
@@ -157,6 +165,10 @@ class FixValidator:
                 or ""
             ).strip()
             passed = raw_status.lower() in {"started", "active", "running"}
+            logger.info(
+                "[FixValidator] post_validate: iflow=%s runtime_status=%s passed=%s",
+                ctx.iflow_id, raw_status, passed,
+            )
             return PostValidateResult(
                 runtime_status=raw_status,
                 passed=passed,

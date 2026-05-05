@@ -62,6 +62,10 @@ class FixApplier:
     ) -> ApplyResult:
         # Pre-validation gate
         if not validate_result.passed:
+            logger.warning(
+                "[FixApplier] pre-validation blocked apply: iflow=%s errors=%s",
+                ctx.iflow_id, validate_result.errors,
+            )
             return ApplyResult(
                 success=False,
                 fix_applied=False,
@@ -152,6 +156,10 @@ class FixApplier:
         )
         update_out = str(update_result.get("output", ""))
         if not self._update_succeeded(update_out):
+            logger.warning(
+                "[FixApplier] update-iflow failed: iflow=%s output=%.400s",
+                ctx.iflow_id, update_out,
+            )
             return ApplyResult(
                 success=False,
                 fix_applied=False,
@@ -168,6 +176,10 @@ class FixApplier:
         )
         deploy_out = str(deploy_result.get("output", ""))
         deploy_ok  = self._deploy_succeeded(deploy_out)
+        logger.info(
+            "[FixApplier] structured deploy result: iflow=%s deploy_ok=%s output=%.300s",
+            ctx.iflow_id, deploy_ok, deploy_out,
+        )
 
         op_summary = "; ".join(
             f"{op.get('change_type')} '{op.get('field')}' on '{op.get('target_component')}'"
@@ -205,6 +217,7 @@ class FixApplier:
         # Sentinel answers from FixGenerator signal early failures
         raw = patch.raw_answer or ""
         if raw.startswith("__NO_TOOL_CALLS__"):
+            logger.warning("[FixApplier] free_xml sentinel: NO_TOOL_CALLS steps=%d", len(patch.steps))
             return ApplyResult(
                 success=False, fix_applied=False, deploy_success=False,
                 failed_stage="no_tool_calls",
@@ -213,6 +226,7 @@ class FixApplier:
                 steps=patch.steps,
             )
         if raw.startswith("__TIMEOUT__"):
+            logger.warning("[FixApplier] free_xml sentinel: TIMEOUT steps=%d", len(patch.steps))
             return ApplyResult(
                 success=False, fix_applied=False, deploy_success=False,
                 failed_stage="timeout",
@@ -221,6 +235,9 @@ class FixApplier:
                 steps=patch.steps,
             )
         if raw.startswith("__RECURSION_LIMIT__"):
+            logger.warning(
+                "[FixApplier] free_xml sentinel: RECURSION_LIMIT steps=%d", len(patch.steps)
+            )
             return ApplyResult(
                 success=False, fix_applied=False, deploy_success=False,
                 failed_stage="recursion_limit",
@@ -229,6 +246,10 @@ class FixApplier:
                 steps=patch.steps,
             )
         if raw.startswith("__ERROR__:"):
+            logger.warning(
+                "[FixApplier] free_xml sentinel: AGENT_ERROR detail=%.200s",
+                raw[len("__ERROR__:"):],
+            )
             return ApplyResult(
                 success=False, fix_applied=False, deploy_success=False,
                 failed_stage="agent",
@@ -237,6 +258,7 @@ class FixApplier:
                 steps=patch.steps,
             )
         if raw.startswith("__NO_AGENT__"):
+            logger.warning("[FixApplier] free_xml sentinel: NO_AGENT")
             return ApplyResult(
                 success=False, fix_applied=False, deploy_success=False,
                 failed_stage="agent",
@@ -246,6 +268,9 @@ class FixApplier:
             )
 
         if raw.startswith("__VALIDATION_BLOCKED__"):
+            logger.warning(
+                "[FixApplier] free_xml sentinel: VALIDATION_BLOCKED steps=%d", len(patch.steps)
+            )
             return ApplyResult(
                 success=False, fix_applied=False, deploy_success=False,
                 failed_stage="validation_blocked",
@@ -281,6 +306,11 @@ class FixApplier:
         validation_called = False
         validation_failed = False
 
+        logger.debug(
+            "[FixApplier] evaluate_fix_result: total_steps=%d answer_len=%d",
+            len(steps), len(answer),
+        )
+
         for step in steps:
             tool_name = str(step.get("tool", ""))
             output    = str(step.get("output", ""))
@@ -307,6 +337,12 @@ class FixApplier:
             elif "deploy_iflow" in tool_name or "deploy-iflow" in tool_name:
                 deploy_output = output
                 deploy_ok     = self._deploy_succeeded(output)
+
+        logger.info(
+            "[FixApplier] evaluate_fix_result summary: update_ok=%s deploy_ok=%s "
+            "validation_called=%s validation_failed=%s",
+            update_ok, deploy_ok, validation_called, validation_failed,
+        )
 
         if not update_ok:
             is_locked = self._is_locked_error(update_output)

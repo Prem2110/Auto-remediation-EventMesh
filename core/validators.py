@@ -53,6 +53,7 @@ _fix_ctx_lock  = _threading.Lock()
 def _fix_ctx_set(iflow_id: str, filepath: str, xml: str) -> None:
     with _fix_ctx_lock:
         _fix_ctx_store[iflow_id] = {"filepath": filepath, "xml": xml}
+    logger.debug("[ValidatorCtx] set: iflow=%s filepath=%s xml_len=%d", iflow_id, filepath, len(xml))
 
 def _fix_ctx_get(iflow_id: str) -> Optional[Dict[str, str]]:
     with _fix_ctx_lock:
@@ -61,6 +62,7 @@ def _fix_ctx_get(iflow_id: str) -> Optional[Dict[str, str]]:
 def _fix_ctx_clear(iflow_id: str) -> None:
     with _fix_ctx_lock:
         _fix_ctx_store.pop(iflow_id, None)
+    logger.debug("[ValidatorCtx] cleared: iflow=%s", iflow_id)
 
 # Legacy shim — keeps any remaining .set()/.get() calls working without crashing
 class _FixCtxShim:
@@ -91,8 +93,17 @@ def _find_gateways_without_default(xml_str: str) -> set:
             if tag == "sequenceFlow":
                 if elem.get("isDefault", "").lower() == "true":
                     default_source_ids.add(elem.get("sourceRef", ""))
-        return all_gw_ids - default_source_ids
-    except Exception:
+        missing = all_gw_ids - default_source_ids
+        logger.debug(
+            "[Validator] gateway check: total_gateways=%d missing_default=%d ids=%s",
+            len(all_gw_ids), len(missing), sorted(missing),
+        )
+        return missing
+    except Exception as exc:
+        logger.warning(
+            "[Validator] _find_gateways_without_default failed — returning empty set "
+            "(gateway regression checks will be skipped): %s", exc
+        )
         return set()
 
 
@@ -107,20 +118,27 @@ def _extract_iflow_file(snapshot_str: str) -> tuple[str, str]:
         for f in files:
             fp = f.get("filepath", "")
             if fp.endswith(".iflw"):
+                logger.debug("[ValidatorCtx] _extract_iflow_file: found .iflw via JSON parse, filepath=%s", fp)
                 return fp, f.get("content", "")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[ValidatorCtx] _extract_iflow_file JSON parse failed: %s", exc)
     # Fallback: regex scan for filepath key in raw text
     try:
         m = re.search(r'"filepath"\s*:\s*"([^"]+\.iflw)"', snapshot_str or "")
         if m:
+            logger.debug(
+                "[ValidatorCtx] _extract_iflow_file: found .iflw via regex fallback, filepath=%s",
+                m.group(1),
+            )
             return m.group(1), ""
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[ValidatorCtx] _extract_iflow_file regex fallback failed: %s", exc)
     # Last resort: if the response itself is raw iFlow XML (starts with <), use it directly.
     stripped = (snapshot_str or "").strip()
     if stripped.startswith("<") and "bpmn" in stripped.lower():
+        logger.debug("[ValidatorCtx] _extract_iflow_file: treating raw XML response as iFlow content")
         return "", stripped
+    logger.warning("[ValidatorCtx] _extract_iflow_file: could not locate .iflw file in response")
     return "", ""
 
 
@@ -416,12 +434,24 @@ def validate_before_update_iflow(args: Dict) -> List[str]:
                 if _stored.get("filepath") == _submitted_fp:
                     ctx = _stored
                     break
+        if ctx is not None:
+            logger.debug(
+                "[Validator] ctx resolved via filepath-scan fallback: fp=%s", _submitted_fp
+            )
 
     if ctx is None:
+        logger.debug(
+            "[Validator] no fix context for iflow=%s — skipping pre-call validation",
+            _iflow_id_from_fp or _submitted_fp or "(unknown)",
+        )
         return []  # no context set (manual / chat use) — skip validation
 
     original_filepath = ctx.get("filepath", "")
     original_xml      = ctx.get("xml", "")
+    logger.info(
+        "[Validator] validate_before_update_iflow: iflow=%s original_fp=%s original_xml_len=%d",
+        _iflow_id_from_fp, original_filepath, len(original_xml),
+    )
 
     submitted_filepath = _submitted_fp
     submitted_xml      = ""

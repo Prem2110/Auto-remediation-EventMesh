@@ -47,7 +47,7 @@ def _find_fatal_validation(steps: List[Dict]) -> str:
         if "validate_iflow_xml" not in str(step.get("tool", "")):
             continue
         out = str(step.get("output", ""))
-        if out.startswith("FATAL:"):
+        if "FATAL:" in out:
             return out
     return ""
 
@@ -75,8 +75,8 @@ class FixGenerator:
 
     async def build_agent(self) -> None:
         """Build the fix+deploy agent with validate, record_outcome, and 3 MCP tools."""
-        from langchain_core.tools import tool as _tool          # noqa: PLC0415
-        from core.validators import _check_iflow_xml, _fix_ctx as _vctx  # noqa: PLC0415
+        from langchain_core.tools import tool as _tool                              # noqa: PLC0415
+        from core.validators import _check_iflow_xml, _fix_ctx_store, _fix_ctx_lock  # noqa: PLC0415
 
         @_tool
         def validate_iflow_xml(xml_content: str) -> str:
@@ -85,8 +85,11 @@ class FixGenerator:
             Runs 7 structural checks. Returns 'VALID', 'ERRORS: <list>', or
             'FATAL: <list>' for structural regressions that cannot be self-corrected.
             """
-            ctx          = _vctx.get()
-            original_xml = ctx.get("xml", "") if ctx else ""
+            # Read original XML from the process-global store (replaces ContextVar shim
+            # which always returned None from inside a LangChain agent sub-task).
+            with _fix_ctx_lock:
+                _ctx_entry = next(iter(_fix_ctx_store.values()), None)
+            original_xml = _ctx_entry["xml"] if _ctx_entry else ""
             errors       = _check_iflow_xml(original_xml, xml_content)
             if not errors:
                 return "VALID"

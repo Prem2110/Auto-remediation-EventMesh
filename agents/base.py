@@ -126,7 +126,7 @@ class TestExecutionTracker:
             self.tool_map[tool_call_id] = len(self.executions) - 1
             update_test_suite_executions(self.test_suite_id, self.executions)
         except Exception as exc:
-            logger.debug("[TestTracker] handle_test_start skipped: %s", exc)
+            logger.warning("[TestTracker] handle_test_start failed: %s", exc)
 
     def handle_test_response(self, tool_call_id: str, response_json: Dict[str, Any]):
         try:
@@ -146,7 +146,7 @@ class TestExecutionTracker:
             self.executions[index]["message_id"] = message_id
             update_test_suite_executions(self.test_suite_id, self.executions)
         except Exception as exc:
-            logger.debug("[TestTracker] handle_test_response skipped: %s", exc)
+            logger.warning("[TestTracker] handle_test_response failed: %s", exc)
 
     def handle_log_response(self, message_id: str, logs: Any):
         try:
@@ -156,7 +156,7 @@ class TestExecutionTracker:
                     break
             update_test_suite_executions(self.test_suite_id, self.executions)
         except Exception as exc:
-            logger.debug("[TestTracker] handle_log_response skipped: %s", exc)
+            logger.warning("[TestTracker] handle_log_response failed: %s", exc)
 
 
 # ─────────────────────────────────────────────
@@ -244,10 +244,13 @@ class StepLogger(BaseCallbackHandler):
             logs       = response_json.get("logs")
             self.tracker.handle_log_response(message_id, logs)
 
-        # Fill in the output for the matching pending step
+        # Fill in the output for the matching pending step.
+        # Extract .content first so the stored value is the raw tool response string,
+        # not the LangChain ToolMessage repr (e.g. content="FATAL:..." name=... tool_call_id=...).
+        _stored_output = output.content if hasattr(output, "content") else str(output)
         for step in reversed(self.steps):
             if step["tool"] == tool_name and step["output"] is None:
-                step["output"] = str(output)
+                step["output"] = _stored_output
                 break
 
         logger.info("[TOOL_RESULT] tool=%s | output=%.2000s", tool_name, str(output))
