@@ -17,7 +17,6 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from contextvars import ContextVar
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -44,9 +43,39 @@ ALLOWED_COLLABORATION_KEYS: frozenset = frozenset({
     "cmdVariantUri",
 })
 
-# Per-fix run state: stores original filepath + XML captured from get-iflow snapshot.
-# Each asyncio Task inherits a copy so concurrent fixes don't interfere.
-_fix_ctx: ContextVar[Optional[Dict[str, str]]] = ContextVar("_fix_ctx", default=None)
+import threading as _threading
+
+# Process-global store: iflow_id → {"filepath": str, "xml": str}
+# Replaces ContextVar which does not propagate into LangChain agent sub-tasks.
+_fix_ctx_store: Dict[str, Dict[str, str]] = {}
+_fix_ctx_lock  = _threading.Lock()
+
+def _fix_ctx_set(iflow_id: str, filepath: str, xml: str) -> None:
+    with _fix_ctx_lock:
+        _fix_ctx_store[iflow_id] = {"filepath": filepath, "xml": xml}
+
+def _fix_ctx_get(iflow_id: str) -> Optional[Dict[str, str]]:
+    with _fix_ctx_lock:
+        return _fix_ctx_store.get(iflow_id)
+
+def _fix_ctx_clear(iflow_id: str) -> None:
+    with _fix_ctx_lock:
+        _fix_ctx_store.pop(iflow_id, None)
+
+# Legacy shim — keeps any remaining .set()/.get() calls working without crashing
+class _FixCtxShim:
+    _current_iflow: Dict = {}
+
+    def set(self, value: Optional[Dict[str, str]]) -> None:
+        if value and value.get("filepath"):
+            iflow_id = value["filepath"].split("/")[0] if "/" in value.get("filepath","") else ""
+            if iflow_id:
+                _fix_ctx_set(iflow_id, value["filepath"], value.get("xml", ""))
+
+    def get(self) -> Optional[Dict[str, str]]:
+        return None  # shim only — real lookup is done by iFlow ID in validate_iflow_xml
+
+_fix_ctx = _FixCtxShim()
 
 
 def _find_gateways_without_default(xml_str: str) -> set:
@@ -361,29 +390,44 @@ def validate_before_update_iflow(args: Dict) -> List[str]:
     Returns list of error strings. Empty list = valid, proceed with the real API call.
     Called by MultiMCP.execute() before every update-iflow tool call.
     """
-    ctx = _fix_ctx.get()
-    if ctx is None:
-        return []  # no context set (manual / chat use) — skip validation
-
     errors: List[str] = []
-    original_filepath = ctx.get("filepath", "")
-    original_xml      = ctx.get("xml", "")
 
-    # Parse the files argument (LLM may pass it as a JSON string or a list)
+    # Resolve iFlow ID from the submitted filepath or from the args directly.
+    # This replaces the ContextVar lookup which did not propagate into LangChain sub-tasks.
     files = args.get("files", [])
     if isinstance(files, str):
         try:
             files = json.loads(files)
         except Exception:
             files = []
+    _submitted_fp = ""
+    if isinstance(files, list) and files:
+        _submitted_fp = files[0].get("filepath", "") if isinstance(files[0], dict) else ""
 
-    submitted_filepath = ""
+    # Extract iflow_id from filepath: "RuntimeHeaderError/src/main/resources/RuntimeHeaderError.iflw"
+    _iflow_id_from_fp = _submitted_fp.split("/")[0] if "/" in _submitted_fp else ""
+
+    ctx = _fix_ctx_get(_iflow_id_from_fp) if _iflow_id_from_fp else None
+
+    if ctx is None:
+        # Fallback: search the store for any entry whose filepath matches the submitted one
+        with _fix_ctx_lock:
+            for _stored in _fix_ctx_store.values():
+                if _stored.get("filepath") == _submitted_fp:
+                    ctx = _stored
+                    break
+
+    if ctx is None:
+        return []  # no context set (manual / chat use) — skip validation
+
+    original_filepath = ctx.get("filepath", "")
+    original_xml      = ctx.get("xml", "")
+
+    submitted_filepath = _submitted_fp
     submitted_xml      = ""
     if isinstance(files, list) and files:
-        submitted_filepath = files[0].get("filepath", "") if isinstance(files[0], dict) else ""
-        submitted_xml      = files[0].get("content", "")  if isinstance(files[0], dict) else ""
+        submitted_xml = files[0].get("content", "") if isinstance(files[0], dict) else ""
     elif args.get("content"):
-        # update-iflow called with a direct content= field (e.g. rollback path, validate tool)
         submitted_xml = args["content"]
 
     # Check filepath matches original exactly

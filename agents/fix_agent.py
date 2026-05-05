@@ -27,7 +27,7 @@ from agents.fix_generator import FixGenerator
 from agents.fix_planner import FixPlanner
 from agents.fix_supervisor import FixSupervisor
 from agents.fix_validator import FixValidator
-from core.validators import _extract_iflow_file, _fix_ctx
+from core.validators import _extract_iflow_file, _fix_ctx, _fix_ctx_set, _fix_ctx_clear
 from db.database import get_similar_patterns
 from utils.utils import get_hana_timestamp
 from utils.vector_store import get_vector_store
@@ -392,9 +392,10 @@ class FixAgent:
                 if _fp and _xml:
                     _original_filepath = _fp
                     _original_xml      = _xml
-                    _fix_ctx.set({"filepath": _fp, "xml": _xml})
-                    logger.debug("[FIX_DEPLOY] Snapshot captured: filepath=%s xml_len=%d",
-                                 _fp, len(_xml))
+                    # Store by iFlow ID so validate_iflow_xml can find it from any asyncio task.
+                    _fix_ctx_set(iflow_id, _fp, _xml)
+                    logger.debug("[FIX_DEPLOY] Snapshot captured: iflow=%s filepath=%s xml_len=%d",
+                                 iflow_id, _fp, len(_xml))
                 elif _out_str:
                     _original_xml = _out_str
         except Exception as _pre_exc:
@@ -731,6 +732,7 @@ class FixAgent:
             "[FIX_DEPLOY] iflow=%s fix_applied=%s deploy_success=%s",
             iflow_id, evaluation.get("fix_applied"), evaluation.get("deploy_success"),
         )
+        _fix_ctx_clear(iflow_id)
         return {**evaluation, "steps": logger_steps, "raw_answer": answer}
 
     # ── ask_deploy_only ───────────────────────────────────────────────────────
@@ -881,7 +883,7 @@ class FixAgent:
             logger.info("[FIX] iFlow snapshot captured for %s (%d chars)", iflow_id, len(snapshot_str))
             orig_fp, orig_xml = _extract_iflow_file(snapshot_str)
             if orig_fp:
-                _fix_ctx.set({"filepath": orig_fp, "xml": orig_xml})
+                _fix_ctx_set(iflow_id, orig_fp, orig_xml)
                 logger.info("[VALIDATOR] Fix context set: filepath='%s' xml_len=%d", orig_fp, len(orig_xml))
         except Exception as exc:
             logger.warning("[FIX] Could not capture iFlow snapshot for %s: %s", iflow_id, exc)
