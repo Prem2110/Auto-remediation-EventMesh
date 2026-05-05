@@ -20,11 +20,11 @@
   --orbit-gray-700:    #374151;
   --orbit-gray-900:    #111827;
 
-  --orbit-sidebar-bg:        #0f172a;
-  --orbit-sidebar-hover:     rgba(255,255,255,0.07);
-  --orbit-sidebar-active:    rgba(59,130,246,0.18);
-  --orbit-sidebar-text:      #cbd5e1;
-  --orbit-sidebar-text-muted:#64748b;
+  --orbit-sidebar-bg:        #ffffff;
+  --orbit-sidebar-hover:     #f1f5f9;
+  --orbit-sidebar-active:    #eff6ff;
+  --orbit-sidebar-text:      #64748b;
+  --orbit-sidebar-text-muted:#94a3b8;
 
   --orbit-shadow-sm:  0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
   --orbit-shadow-md:  0 4px 12px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.06);

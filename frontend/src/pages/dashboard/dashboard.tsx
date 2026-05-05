@@ -39,10 +39,45 @@ const INCIDENT_STATE: Record<string, string> = {
   FIX_APPLIED:  styles.stateSuccess,
 };
 
+// ── Status badge (colored pill with dot) ─────────────────────────────────────
+const STATUS_BADGE_STYLES: Record<string, { bg: string; color: string; dot: string; label: string }> = {
+  TICKET_CREATED:      { bg: "#f3e8ff", color: "#7c3aed", dot: "#7c3aed",  label: "Ticket Created" },
+  ARTIFACT_MISSING:    { bg: "#f1f5f9", color: "#64748b", dot: "#94a3b8",  label: "Artifact Missing" },
+  RCA_COMPLETED:       { bg: "#dcfce7", color: "#16a34a", dot: "#16a34a",  label: "RCA Completed" },
+  RCA_COMPLETE:        { bg: "#dcfce7", color: "#16a34a", dot: "#16a34a",  label: "RCA Completed" },
+  FIX_IN_PROGRESS:     { bg: "#fff7ed", color: "#ea580c", dot: "#ea580c",  label: "Fix In Progress" },
+  IN_PROGRESS:         { bg: "#fff7ed", color: "#ea580c", dot: "#ea580c",  label: "Fix In Progress" },
+  FIX_COMPLETED:       { bg: "#dcfce7", color: "#16a34a", dot: "#16a34a",  label: "Fix Completed" },
+  RCA_IN_PROGRESS:     { bg: "#fef3c7", color: "#d97706", dot: "#d97706",  label: "RCA In Progress" },
+  FAILED:              { bg: "#fee2e2", color: "#dc2626", dot: "#dc2626",  label: "Failed" },
+  AUTO_FIXED:          { bg: "#dcfce7", color: "#16a34a", dot: "#16a34a",  label: "Auto Fixed" },
+  FIX_FAILED:          { bg: "#fee2e2", color: "#dc2626", dot: "#dc2626",  label: "Fix Failed" },
+  PENDING:             { bg: "#f1f5f9", color: "#64748b", dot: "#94a3b8",  label: "Pending" },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const key = status.toUpperCase().replace(/ /g, "_");
+  const style = STATUS_BADGE_STYLES[key];
+  if (!style) {
+    return <span className={styles.statusError}>{status}</span>;
+  }
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: "0.3rem",
+      padding: "0.2rem 0.6rem", borderRadius: "999px",
+      background: style.bg, color: style.color,
+      fontSize: "0.75rem", fontWeight: 600,
+    }}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: style.dot, flexShrink: 0 }} />
+      {style.label}
+    </span>
+  );
+}
+
 // ── KPI card ──────────────────────────────────────────────────────────────────
-function KpiCard({ header, subheader, value, unit, indicator, valueColor, tooltip }: {
+function KpiCard({ header, subheader, value, unit, indicator, valueColor, tooltip, icon }: {
   header: string; subheader?: string; value: unknown;
-  unit?: string; indicator?: "Up" | "Down"; valueColor?: "Good" | "Critical"; tooltip?: string;
+  unit?: string; indicator?: "Up" | "Down"; valueColor?: "Good" | "Critical"; tooltip?: string; icon?: string;
 }) {
   const colorClass =
     valueColor === "Good"     ? styles.valueGood :
@@ -51,10 +86,36 @@ function KpiCard({ header, subheader, value, unit, indicator, valueColor, toolti
 
   return (
     <div className={styles.kpiCard} {...(tooltip ? { "data-tip": tooltip } : {})}>
-      <div className={styles.kpiHeader}>{header}</div>
+      <div className={styles.kpiCardTop}>
+        <div className={styles.kpiHeader}>{header}</div>
+        {icon && <span className={styles.kpiIcon}>{icon}</span>}
+      </div>
       {subheader && <div className={styles.kpiSub}>{subheader}</div>}
       <div className={`${styles.kpiValue} ${colorClass}`}>
         {String(value ?? "-")}{unit ? ` ${unit}` : ""}{arrow}
+      </div>
+    </div>
+  );
+}
+
+// ── Split KPI card (Fix Failed | Auto Fixed) ──────────────────────────────────
+function SplitKpiCard({ fixFailed, autoFixed, tooltip }: {
+  fixFailed: unknown; autoFixed: unknown; tooltip?: string;
+}) {
+  return (
+    <div className={`${styles.kpiCard} ${styles.kpiCardSplit}`} {...(tooltip ? { "data-tip": tooltip } : {})}>
+      <div className={styles.kpiSplitLeft}>
+        <div className={styles.kpiHeader} style={{ color: "#dc2626" }}>FIX FAILED</div>
+        <div className={`${styles.kpiValue} ${styles.valueCritical}`}>
+          {String(fixFailed ?? "-")} <span className={styles.kpiArrowDown}>↓</span>
+        </div>
+      </div>
+      <div className={styles.kpiSplitDivider} />
+      <div className={styles.kpiSplitRight}>
+        <div className={styles.kpiHeader} style={{ color: "#16a34a" }}>AUTO FIXED</div>
+        <div className={`${styles.kpiValue} ${styles.valueGood}`}>
+          {String(autoFixed ?? "-")} <span className={styles.kpiArrowUp}>↑</span>
+        </div>
       </div>
     </div>
   );
@@ -209,7 +270,7 @@ export default function Dashboard() {
 
   return (
     <div className={styles.page}>
-      <h2 className={styles.pageTitle}>Smart Monitoring</h2>
+      <h2 className={styles.pageTitle}>SAP CPI Dashboard Overview</h2>
 
       {/* ── Tab Navigation ── */}
       <div className={styles.tabNav}>
@@ -247,88 +308,87 @@ export default function Dashboard() {
           ))
         ) : (
           <>
-            <KpiCard header="Failed Messages" subheader="Live" value={kpi.total_failed_messages} tooltip="SAP CPI messages currently in FAILED state, polled live from the message processing log" />
-            <KpiCard header="Total Incidents" value={kpi.total_incidents} tooltip="All incidents tracked by the auto-remediation pipeline, including resolved and active" />
-            <KpiCard header="In Progress" value={kpi.in_progress} tooltip="Incidents currently being analyzed or fixed by pipeline agents" />
-            <KpiCard header="Fix Failed" value={kpi.fix_failed} indicator="Down" valueColor="Critical" tooltip="Incidents where the automated fix failed — manual review required" />
-            <KpiCard header="Auto Fixed" value={kpi.auto_fixed} indicator="Up" valueColor="Good" tooltip="Incidents resolved automatically without any human intervention" />
-            <KpiCard header="Pending Approval" value={kpi.pending_approval} tooltip="Fixes generated but awaiting manual approval before deployment to production" />
-            <KpiCard header="Auto Fix Rate" value={kpi.auto_fix_rate} unit="%" tooltip="Percentage of incidents resolved automatically vs all closed incidents" />
-            <KpiCard header="Avg Resolution Time" subheader="minutes" value={kpi.avg_resolution_time_minutes} unit="min" tooltip="Mean time from incident detection to terminal state (auto-fixed or failed)" />
-            <KpiCard header="RCA Coverage" value={kpi.rca_coverage_percent} unit="%" indicator="Up" valueColor="Good" tooltip="Percentage of incidents that received AI-powered root cause analysis" />
+            <KpiCard header="In Progress" value={kpi.in_progress} tooltip="Incidents currently being analyzed or fixed by pipeline agents" icon="⟳" />
+            <KpiCard header="Total Incidents" value={kpi.total_incidents} tooltip="All incidents tracked by the auto-remediation pipeline, including resolved and active" icon="⚠" />
+            <KpiCard header="Pending Approval" value={kpi.pending_approval} tooltip="Fixes generated but awaiting manual approval before deployment to production" icon="📋" />
+            <SplitKpiCard fixFailed={kpi.fix_failed} autoFixed={kpi.auto_fixed} tooltip="Fix Failed vs Auto Fixed counts" />
+            <KpiCard header="Failed Messages" subheader="Live" value={kpi.total_failed_messages} tooltip="SAP CPI messages currently in FAILED state, polled live from the message processing log" icon="✉" />
+            <KpiCard header="Auto Fix Rate" value={kpi.auto_fix_rate} unit="%" tooltip="Percentage of incidents resolved automatically vs all closed incidents" icon="⚙" />
+            <KpiCard header="Avg Resolution Time" subheader="Min" value={kpi.avg_resolution_time_minutes} unit="Min" tooltip="Mean time from incident detection to terminal state (auto-fixed or failed)" icon="⏱" />
+            <KpiCard header="RCA Coverage" value={kpi.rca_coverage_percent} tooltip="Percentage of incidents that received AI-powered root cause analysis" icon="📊" />
           </>
         )}
       </div>
 
-      {/* ── Status Breakdown ── */}
-      <div className={styles.chartBlock}>
-        <SectionTitle title="Status Breakdown" />
-        {dashLoading ? <SkeletonChart /> : (
-          <ResponsiveContainer width="100%" height={320}>
-            <PieChart>
-              <Pie data={statusData} dataKey="count" nameKey="status" cx="35%" label>
-                {statusData.map((_, i) => (
-                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-              <Legend
-                layout="vertical"
-                align="right"
-                verticalAlign="middle"
-                content={(props) => (
-                  <TwoColumnLegend payload={props.payload as Array<{ value: string; color: string }>} />
-                )}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* ── Error Distribution + Top Failing iFlows ── */}
+      {/* ── Status Breakdown + Error Distribution (side by side) ── */}
       <div className={styles.chartsRow}>
         <div className={styles.chartHalf}>
-          <SectionTitle title="Error Distribution" />
+          <SectionTitle title="Status Breakdown" />
           {dashLoading ? <SkeletonChart /> : (
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
-                <Pie data={errorData} dataKey="count" nameKey="error_type" innerRadius="40%" outerRadius="70%" label>
-                  {errorData.map((_, i) => (
+                <Pie data={statusData} dataKey="count" nameKey="status" cx="38%" label>
+                  {statusData.map((_, i) => (
                     <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip />
-                <Legend />
+                <Legend
+                  layout="vertical"
+                  align="right"
+                  verticalAlign="middle"
+                  content={(props) => (
+                    <TwoColumnLegend payload={props.payload as Array<{ value: string; color: string }>} />
+                  )}
+                />
               </PieChart>
             </ResponsiveContainer>
           )}
         </div>
 
         <div className={styles.chartHalf}>
-          <SectionTitle title="Top Failing iFlows" />
+          <SectionTitle title="Error Distribution" />
           {dashLoading ? <SkeletonChart /> : (
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={iflowData} layout="vertical" margin={{ left: 10, right: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" allowDecimals={false} />
-                <YAxis
-                  type="category"
-                  dataKey="iflow_name"
-                  width={175}
-                  tick={{ fontSize: 11 }}
-                  tickFormatter={(v: string) => v.length > 22 ? `${v.slice(0, 20)}…` : v}
-                />
+              <PieChart>
+                <Pie data={errorData} dataKey="count" nameKey="error_type" innerRadius="38%" outerRadius="68%">
+                  {errorData.map((_, i) => (
+                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
                 <Tooltip />
-                <Bar dataKey="failure_count" name="Failures" fill="#4dabf7" />
-              </BarChart>
+                <Legend layout="vertical" align="right" verticalAlign="middle" />
+              </PieChart>
             </ResponsiveContainer>
           )}
         </div>
       </div>
 
-      {/* ── Failures Over Time ── */}
+      {/* ── Top Failing Integration Artifact ── */}
       <div className={styles.chartBlock}>
-        <SectionTitle title="Failures Over Time" />
+        <SectionTitle title="Top Failing Integration Artifact" />
+        {dashLoading ? <SkeletonChart /> : (
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={iflowData} layout="vertical" margin={{ left: 10, right: 30, top: 5, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+              <YAxis
+                type="category"
+                dataKey="iflow_name"
+                width={190}
+                tick={{ fontSize: 11 }}
+                tickFormatter={(v: string) => v.length > 25 ? `${v.slice(0, 23)}…` : v}
+              />
+              <Tooltip />
+              <Bar dataKey="failure_count" name="Failures" fill="#1e6bb8" radius={[0, 3, 3, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ── Failure Over Time ── */}
+      <div className={styles.chartBlock}>
+        <SectionTitle title="Failure Over Time" />
         {dashLoading ? <SkeletonChart /> : (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={timelineData} margin={{ left: 10, right: 10 }}>
@@ -336,7 +396,7 @@ export default function Dashboard() {
               <XAxis dataKey="time" tick={{ fontSize: 11 }} />
               <YAxis />
               <Tooltip />
-              <Line type="monotone" dataKey="count" name="Failures" stroke="#ff6b6b" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="count" name="Failures" stroke="#c084fc" strokeWidth={2.5} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -344,16 +404,27 @@ export default function Dashboard() {
 
       {/* ── Recent Failed Messages with Pagination ── */}
       <div className={styles.tableBlock}>
-        <SectionTitle title="Recent Failed Messages" />
+        <div className={styles.tableBlockHeader}>
+          <span className={styles.tableBlockTitle}>Recent Failed Messages ({failuresTotalCount})</span>
+          <div className={styles.tableBlockControls}>
+            <div className={styles.tableSearch}>
+              <span className={styles.tableSearchIcon}>🔍</span>
+              <input className={styles.tableSearchInput} placeholder="search message ID / iflow name" />
+            </div>
+            <select className={styles.tableFilterSelect}>
+              <option>Status</option>
+            </select>
+          </div>
+        </div>
         <div className={styles.tableWrapper} style={failuresFetching && !failuresLoading ? { opacity: 0.6, pointerEvents: "none" } : undefined}>
           <table className={styles.table}>
             <thead>
               <tr>
                 <th title="Unique message processing log ID from SAP CPI">Message GUID</th>
-                <th title="Integration flow that generated this failure">iFlow Name</th>
+                <th title="Integration flow that generated this failure">Integration Scenario</th>
                 <th title="Current processing status">Status</th>
                 <th title="Message processing end time from SAP CPI">Time</th>
-                <th title="Truncated error message from the CPI processing log">Error Preview</th>
+                <th title="Time preview">Time Preview</th>
               </tr>
             </thead>
             <tbody>
@@ -366,9 +437,9 @@ export default function Dashboard() {
                   <tr key={i}>
                     <td className={styles.mono}>{String(row.message_guid ?? "-")}</td>
                     <td>{String(row.iflow_name ?? "-")}</td>
-                    <td><span className={styles.statusError}>{String(row.status ?? "-")}</span></td>
+                    <td><StatusBadge status={String(row.status ?? "")} /></td>
                     <td>{formatISODate(row.log_end as string)}</td>
-                    <td className={styles.errorPreview}>{String(row.error_preview ?? "-")}</td>
+                    <td className={styles.mono} style={{ color: "#94a3b8" }}>-</td>
                   </tr>
                 ))
               )}
@@ -392,7 +463,18 @@ export default function Dashboard() {
 
       {/* ── Active Incidents with Pagination ── */}
       <div className={styles.tableBlock}>
-        <SectionTitle title="Active Incidents" />
+        <div className={styles.tableBlockHeader}>
+          <span className={styles.tableBlockTitle}>Active Incidents ({incidentsTotalCount})</span>
+          <div className={styles.tableBlockControls}>
+            <div className={styles.tableSearch}>
+              <span className={styles.tableSearchIcon}>🔍</span>
+              <input className={styles.tableSearchInput} placeholder="search message ID / iflow name" />
+            </div>
+            <select className={styles.tableFilterSelect}>
+              <option>Status</option>
+            </select>
+          </div>
+        </div>
         <div className={styles.tableWrapper} style={incidentsFetching && !incidentsLoading ? { opacity: 0.6, pointerEvents: "none" } : undefined}>
           <table className={styles.table}>
             <thead>

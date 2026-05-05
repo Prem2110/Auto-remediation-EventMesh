@@ -55,7 +55,7 @@ function cleanFixSummary(raw: string): string {
 }
 
 /* ── Top-level tab type ───────────────────────────────────────────────── */
-type MainTabKey = "messages" | "tickets" | "approvals" | "eventmesh";
+type MainTabKey = "errortypeguide" | "messages" | "tickets" | "approvals" | "eventmesh";
 
 /* ── Ticket and Approval interfaces ───────────────────────────────────── */
 interface Ticket {
@@ -215,6 +215,75 @@ const ACTION_GROUPS: { key: ErrorTypeMeta["action"]; iconName: "lightning" | "ti
   { key: "APPROVAL",       iconName: "user",      label: "Awaiting Approval", desc: "Agent needs human sign-off before applying any fix",      color: "#92400e", bg: "#fffbeb" },
   { key: "RETRY",          iconName: "loop",      label: "Retry",             desc: "Transient issue — agent retries the iFlow automatically", color: "#1e40af", bg: "#eff6ff" },
 ];
+
+/* ── Error Type Guide Tab ─────────────────────────────────────────────── */
+function ErrorTypeGuideTab() {
+  const [activeGroup, setActiveGroup] = useState<ErrorTypeMeta["action"] | "ALL">("AUTO_FIX");
+  const [search, setSearch] = useState("");
+
+  const groupCounts: Record<string, number> = {};
+  for (const m of Object.values(ERROR_TYPE_META)) {
+    groupCounts[m.action] = (groupCounts[m.action] ?? 0) + 1;
+  }
+
+  const filtered = Object.entries(ERROR_TYPE_META).filter(([type, meta]) => {
+    const matchesGroup = activeGroup === "ALL" || meta.action === activeGroup;
+    const q = search.toLowerCase();
+    const matchesSearch = !q || type.toLowerCase().includes(q) || meta.label.toLowerCase().includes(q) || meta.description.toLowerCase().includes(q);
+    return matchesGroup && matchesSearch;
+  });
+
+  const activeGroupMeta = ACTION_GROUPS.find(g => g.key === activeGroup);
+
+  return (
+    <div className={styles.errorGuideTabContent}>
+      {/* Filter pills */}
+      <div className={styles.errorGuideFilters}>
+        <div className={styles.errorGuidePills}>
+          {ACTION_GROUPS.map((group) => (
+            <button
+              key={group.key}
+              className={`${styles.errorGuidePill} ${activeGroup === group.key ? styles.errorGuidePillActive : ""}`}
+              style={activeGroup === group.key ? { background: group.bg, color: group.color, borderColor: group.color } : {}}
+              onClick={() => setActiveGroup(group.key)}
+            >
+              {activeGroup === group.key && <span className={styles.errorGuidePillDot} style={{ background: group.color }} />}
+              {group.label} ({groupCounts[group.key] ?? 0})
+            </button>
+          ))}
+        </div>
+        <div className={styles.errorGuideSearch}>
+          <span className={styles.errorGuideSearchIcon}>🔍</span>
+          <input
+            className={styles.errorGuideSearchInput}
+            placeholder="search type guide"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Group description */}
+      {activeGroupMeta && (
+        <p className={styles.errorGuideGroupDesc}>{activeGroupMeta.desc}</p>
+      )}
+
+      {/* Cards grid */}
+      <div className={styles.errorGuideCardsGrid}>
+        {filtered.map(([type, meta]) => (
+          <div key={type} className={styles.errorGuideCardNew} style={{ borderLeft: `3px solid ${meta.dot}` }}>
+            <span className={styles.errorGuideCardNewLabel}>{meta.label}</span>
+            <span className={styles.errorGuideCardNewType}>{type}</span>
+            <p className={styles.errorGuideCardNewDesc}>{meta.description}</p>
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <div className={styles.errorGuideEmpty}>No error types match your search.</div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /* ── Field-change highlight component ────────────────────────────────── */
 function FieldChangeHighlight({ changes }: { changes: IFieldChange[] }) {
@@ -457,7 +526,7 @@ function ErrorExplanationCard({ exp }: { exp: IErrorExplanation }) {
    ════════════════════════════════════════════════════════════════════════ */
 export default function Observability() {
   // Main tab state
-  const [mainTab, setMainTab] = useState<MainTabKey>("messages");
+  const [mainTab, setMainTab] = useState<MainTabKey>("errortypeguide");
   const [guideOpen, setGuideOpen] = useState(false);
   
   const [filters, setFilters] = useState<IFilterState>(INITIAL_FILTERS);
@@ -913,74 +982,51 @@ export default function Observability() {
   return (
     <div className={styles.page}>
 
+      {/* ── Page Header ── */}
+      <div className={styles.pageHeader}>
+        <h2 className={styles.pageTitle}>Observability</h2>
+        <p className={styles.pageSubtitle}>Subheading one line description</p>
+      </div>
+
       {/* ── Main Tab Navigation ── */}
       <div className={styles.mainTabBar}>
+        <button
+          className={`${styles.mainTab} ${mainTab === "errortypeguide" ? styles.mainTabActive : ""}`}
+          onClick={() => setMainTab("errortypeguide")}
+        >
+          Error Type Guide
+        </button>
         <button
           className={`${styles.mainTab} ${mainTab === "messages" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("messages")}
         >
-          <SvgIcon name="messages" size={14} style={{ verticalAlign: "middle" }} /> Messages
+          Messages
         </button>
         <button
           className={`${styles.mainTab} ${mainTab === "tickets" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("tickets")}
         >
-          <SvgIcon name="tickets" size={14} style={{ verticalAlign: "middle" }} /> Tickets ({tickets.length})
+          Tickets
         </button>
         <button
           className={`${styles.mainTab} ${mainTab === "approvals" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("approvals")}
         >
-          <SvgIcon name="approvals" size={14} style={{ verticalAlign: "middle" }} /> Approvals ({approvals.length})
-        </button>
-        <button
-          className={`${styles.mainTab} ${mainTab === "eventmesh" ? styles.mainTabActive : ""}`}
-          onClick={() => setMainTab("eventmesh")}
-        >
-          <SvgIcon name="event-mesh" size={14} style={{ verticalAlign: "middle" }} /> Event Mesh
+          Approvals
         </button>
       </div>
 
-      {/* ── Error Type Guide ── */}
-      <div className={styles.errorGuide}>
-        <button className={styles.errorGuideToggle} onClick={() => setGuideOpen((o) => !o)}>
-          <span style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
-            <SvgIcon name="document" size={14} />
-            Error Type Guide
-          </span>
-          <span className={styles.errorGuideChevron}><SvgIcon name={guideOpen ? "chevron-down" : "chevron-right"} size={14} /></span>
-        </button>
-        {guideOpen && (
-          <div className={styles.errorGuideBody}>
-            {ACTION_GROUPS.map((group) => {
-              const types = Object.entries(ERROR_TYPE_META).filter(([, m]) => m.action === group.key);
-              return (
-                <div key={group.key} className={styles.errorGuideGroup}>
-                  <div className={styles.errorGuideGroupHeader} style={{ color: group.color, background: group.bg }}>
-                    <span className={styles.errorGuideGroupIcon}><SvgIcon name={group.iconName} size={16} /></span>
-                    <span className={styles.errorGuideGroupLabel}>{group.label}</span>
-                    <span className={styles.errorGuideGroupDesc}>{group.desc}</span>
-                  </div>
-                  <div className={styles.errorGuideCards}>
-                    {types.map(([type, meta]) => (
-                      <div key={type} className={styles.errorGuideCard} style={{ borderLeft: `3px solid ${meta.dot}` }}>
-                        <span className={styles.errorGuideCardType}>{type}</span>
-                        <span className={styles.errorGuideCardLabel}>{meta.label}</span>
-                        <p className={styles.errorGuideCardDesc}>{meta.description}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {/* ══ ERROR TYPE GUIDE TAB ══ */}
+      {mainTab === "errortypeguide" && (
+        <div className={styles.errorGuideTab}>
+          <ErrorTypeGuideTab />
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════════
           MESSAGES TAB
           ══════════════════════════════════════════════════════════════════ */}
-      <div style={{ display: mainTab === "messages" ? "block" : "none" }}>
+      <div style={{ display: mainTab === "messages" ? "contents" : "none" }}>
           {/* ── Summary cards ── */}
           <div className={styles.summaryRow}>
             {SUMMARY_CARD_KEYS.map((k) => {
@@ -1005,46 +1051,6 @@ export default function Observability() {
             })}
           </div>
 
-          {/* ── Filters ── */}
-          <div className={styles.filterBar}>
-            <input
-              className={styles.filterInput}
-              placeholder="Search messages..."
-              value={filters.searchQuery}
-              onChange={(e) => setFilters((f) => ({ ...f, searchQuery: e.target.value }))}
-              title="Filter messages by iFlow name or message title"
-            />
-            <input
-              className={styles.filterInput}
-              placeholder="Message ID / iFlow name..."
-              value={filters.idQuery}
-              onChange={(e) => setFilters((f) => ({ ...f, idQuery: e.target.value }))}
-              title="Filter by message GUID or iFlow name (exact or partial match)"
-            />
-            <select
-              className={styles.filterSelect}
-              value=""
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                setFilters((f) => ({ ...f, statuses: f.statuses.includes(v) ? f.statuses.filter((s) => s !== v) : [...f.statuses, v] }));
-              }}
-              title="Filter messages by their current remediation pipeline status"
-            >
-              <option value="">Filter by Status...</option>
-              {Object.entries(STATUS_CONFIG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
-            </select>
-            <button
-              className={styles.refreshBtn}
-              onClick={() => refetch()}
-              disabled={isFetching}
-              data-tip="Reload messages from SAP CPI (auto-refreshes every 30s)"
-            >
-              {isFetching ? "↻ Refreshing..." : "Refresh"}
-            </button>
-            <button className={styles.resetBtn} onClick={() => setFilters(INITIAL_FILTERS)} data-tip="Clear all active filters and show all messages">Reset</button>
-          </div>
-
           {/* Active filter chips */}
           {filters.statuses.length > 0 && (
             <div className={styles.chipRow}>
@@ -1064,6 +1070,36 @@ export default function Observability() {
           <div className={styles.columns}>
             {/* Message list */}
             <div className={`${styles.listCol} ${selectedGuid ? styles.listColNarrow : ""}`}>
+              <div className={styles.listColHeader}>
+                <span className={styles.listColTitle}>List Heading</span>
+                <div className={styles.listColControls}>
+                  <div className={styles.listColSearch}>
+                    <span className={styles.listColSearchIcon}>🔍</span>
+                    <input
+                      className={styles.listColSearchInput}
+                      placeholder="search message ID / iflow name"
+                      value={filters.idQuery}
+                      onChange={(e) => setFilters((f) => ({ ...f, idQuery: e.target.value }))}
+                    />
+                  </div>
+                  <select
+                    className={styles.listColStatusSelect}
+                    value=""
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      setFilters((f) => ({ ...f, statuses: f.statuses.includes(v) ? f.statuses.filter((s) => s !== v) : [...f.statuses, v] }));
+                    }}
+                  >
+                    <option value="">Status</option>
+                    {Object.entries(STATUS_CONFIG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+                  </select>
+                  <button className={styles.listColRefreshBtn} onClick={() => refetch()} disabled={isFetching}>
+                    Refresh
+                  </button>
+                  <button className={styles.listColResetBtn} onClick={() => setFilters(INITIAL_FILTERS)}>Reset</button>
+                </div>
+              </div>
               {isLoading ? (
                 <div className={styles.centered}>
                   <div className={styles.spinner} />
@@ -1088,14 +1124,13 @@ export default function Observability() {
                         onClick={() => handleSelect(msg)}
                       >
                         <div className={styles.messageMain}>
-                          <StatusPill status={msg.status} />
                           <span className={styles.messageName}>
                             {msg.iflow_display || msg.title || "Unknown"}
                           </span>
+                          <StatusPill status={msg.status} />
                         </div>
                         <div className={styles.messageMeta}>
-                          <span className={styles.metaItem} data-tip="Message processing duration in SAP CPI">{msg.duration || "--"}</span>
-                          <span className={styles.metaItem} data-tip="Last updated or processing start timestamp">{msg.log_start || msg.updatedAt || "--"}</span>
+                          <span className={styles.metaItem}>{msg.log_start || msg.updatedAt || "--"}</span>
                         </div>
                       </div>
                     );

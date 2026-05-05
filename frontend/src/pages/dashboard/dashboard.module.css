@@ -22,15 +22,60 @@
 .kpiCard {
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 1rem 1.25rem;
   min-width: 130px;
   flex: 1 1 130px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 
+.kpiCardTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.kpiIcon {
+  font-size: 1.1rem;
+  color: #94a3b8;
+  opacity: 0.7;
+  line-height: 1;
+}
+
+/* Split card: FIX FAILED | AUTO FIXED */
+.kpiCardSplit {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  padding: 0;
+  gap: 0;
+  min-width: 180px;
+  flex: 1.4 1 180px;
+}
+
+.kpiSplitLeft,
+.kpiSplitRight {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 1rem 1.1rem;
+}
+
+.kpiSplitDivider {
+  width: 1px;
+  background: #e2e8f0;
+  align-self: stretch;
+}
+
+.kpiArrowDown { font-size: 1rem; }
+.kpiArrowUp   { font-size: 1rem; }
+
 .kpiHeader {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   color: #64748b;
   text-transform: uppercase;
@@ -47,7 +92,8 @@
   font-size: 1.75rem;
   font-weight: 700;
   color: #1e293b;
-  margin-top: 0.4rem;
+  margin-top: 0.35rem;
+  line-height: 1.1;
 }
 
 .valueGood     { color: #16a34a; }
@@ -65,9 +111,9 @@
 .chartBlock {
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 1.25rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
 }
 
 .chartsRow {
@@ -80,18 +126,77 @@
   flex: 1 1 45%;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 1.25rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
 }
 
 /* ── Tables ── */
 .tableBlock {
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 1.25rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+.tableBlockHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.875rem;
+}
+
+.tableBlockTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.tableBlockControls {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.tableSearch {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: #fff;
+  min-width: 220px;
+}
+
+.tableSearchIcon {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.tableSearchInput {
+  border: none;
+  outline: none;
+  font-size: 0.8rem;
+  color: #374151;
+  background: transparent;
+  width: 100%;
+}
+.tableSearchInput::placeholder { color: #94a3b8; }
+
+.tableFilterSelect {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.625rem;
+  font-size: 0.8rem;
+  color: #374151;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
 }
 
 .tableWrapper {

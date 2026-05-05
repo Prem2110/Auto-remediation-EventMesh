@@ -71,17 +71,26 @@
 .toggleBtnStop  { background: linear-gradient(135deg,#7f1d1d 0%,#dc2626 100%); color: #fff; }
 
 /* ── Section label ───────────────────────────────────────────────────────── */
+.sectionLabelGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
 .sectionLabel {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.7rem;
+  font-size: 0.875rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--orbit-gray-600, #4b5563);
+  color: var(--orbit-gray-900, #111827);
   padding: 0.25rem 0;
-  border-bottom: 1px solid var(--orbit-gray-200, #e5e7eb);
+}
+
+.sectionSubLabel {
+  font-size: 0.78rem;
+  color: var(--orbit-gray-500, #6b7280);
+  font-weight: 400;
 }
 
 .sectionCount {
@@ -93,6 +102,42 @@
   border-radius: 0.25rem;
   margin-left: auto;
 }
+
+/* ── Trace table header ──────────────────────────────────────────────────── */
+.traceTableHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.traceSearch {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--orbit-gray-200, #e5e7eb);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: #fff;
+  min-width: 200px;
+}
+
+.traceSearchIcon {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.traceSearchInput {
+  border: none;
+  outline: none;
+  font-size: 0.8rem;
+  color: #374151;
+  background: transparent;
+  width: 100%;
+}
+.traceSearchInput::placeholder { color: #94a3b8; }
 
 /* ── Agent flow ──────────────────────────────────────────────────────────── */
 .agentFlow {
@@ -115,13 +160,14 @@
   flex: 1;
   background: #fff;
   border-radius: 0.75rem;
-  border: 2px solid transparent;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  border: 1px solid var(--orbit-gray-200, #e5e7eb);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
   overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .agentCardActive {
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.1), 0 2px 8px rgba(0,0,0,0.1);
+  border-color: #bfdbfe;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.12), 0 2px 8px rgba(0,0,0,0.08);
 }
 
 .agentBanner {
@@ -129,9 +175,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 0.875rem;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
 }
 
-.agentEmoji { font-size: 1.5rem; line-height: 1; }
+.agentEmoji { font-size: 1.25rem; line-height: 1; }
 
 .agentDot {
   width: 8px;
@@ -154,9 +201,9 @@
   padding: 0.625rem 0.875rem 0.75rem;
 }
 
-.agentLabel  { font-size: 0.85rem; font-weight: 700; color: #111827; }
-.agentStatus { font-size: 0.7rem; font-weight: 600; }
-.agentDesc   { font-size: 0.7rem; color: #6b7280; line-height: 1.4; }
+.agentLabel  { font-size: 0.875rem; font-weight: 700; color: #111827; }
+.agentStatus { font-size: 0.72rem; font-weight: 600; color: #22c55e; }
+.agentDesc   { font-size: 0.72rem; color: #6b7280; line-height: 1.45; }
 
 .flowArrow {
   font-size: 1.1rem;

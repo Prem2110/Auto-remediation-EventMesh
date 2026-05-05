@@ -85,6 +85,11 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
 
         <span className={styles.topBarSpacer} />
 
+        <div className={styles.topBarBadge}>
+          <span className={styles.topBarBadgeIcon}>S</span>
+          SAP CPI
+        </div>
+
         <div className={styles.userPill}>
           <div className={styles.userAvatar}>{initials}</div>
           {!collapsed && (

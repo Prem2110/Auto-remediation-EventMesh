@@ -16,11 +16,11 @@ const styles = _styles as Record<string, string>;
 
 // ── Agent metadata (5 specialist agents) ─────────────────────────────────────
 const SPECIALIST_AGENTS: Record<string, { icon: IconName; label: string; desc: string; tools: string; gradient: string; accent: string }> = {
-  observer:   { icon:"eye",          label:"Observer",   desc:"Monitors SAP CPI for failed messages, creates incidents",              tools:"3 local tools",    gradient:"linear-gradient(135deg,#0f172a 0%,#1e40af 100%)", accent:"#60a5fa" },
-  classifier: { icon:"tag",          label:"Classifier", desc:"Classifies error type + confidence — rule-based, zero LLM cost",      tools:"3 local + 1 MCP",  gradient:"linear-gradient(135deg,#1e1b4b 0%,#7c3aed 100%)", accent:"#a78bfa" },
-  rca:        { icon:"rca",          label:"RCA",        desc:"Root cause analysis: vector store + message logs + iFlow inspection", tools:"3 local + 2-3 MCP", gradient:"linear-gradient(135deg,#064e3b 0%,#059669 100%)", accent:"#34d399" },
-  fixer:      { icon:"wrench",       label:"Fixer",      desc:"Get → validate → update → deploy iFlow with XML safety checks",      tools:"2 local + 6-8 MCP", gradient:"linear-gradient(135deg,#312e81 0%,#6d28d9 100%)", accent:"#c084fc" },
-  verifier:   { icon:"check-circle", label:"Verifier",   desc:"Test fixed iFlow + replay failed messages for end-to-end verification", tools:"1 local + 3-4 MCP", gradient:"linear-gradient(135deg,#4c0519 0%,#be123c 100%)", accent:"#fb7185" },
+  observer:   { icon:"eye",          label:"Observer",   desc:"Monitors SAP CPI for failed messages, creates incidents",              tools:"3 local tools",    gradient:"linear-gradient(135deg,#eef2ff 0%,#dbeafe 100%)", accent:"#3b82f6" },
+  classifier: { icon:"tag",          label:"Classifier", desc:"Classifies error type + confidence — rule-based, zero LLM cost",      tools:"3 local + 1 MCP",  gradient:"linear-gradient(135deg,#faf5ff 0%,#ede9fe 100%)", accent:"#8b5cf6" },
+  rca:        { icon:"rca",          label:"RCA",        desc:"Root cause analysis: vector store + message logs + iFlow inspection", tools:"3 local + 2-3 MCP", gradient:"linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%)", accent:"#16a34a" },
+  fixer:      { icon:"wrench",       label:"Fixer",      desc:"Get → validate → update → deploy iFlow with XML safety checks",      tools:"2 local + 6-8 MCP", gradient:"linear-gradient(135deg,#fff7ed 0%,#fed7aa 100%)", accent:"#ea580c" },
+  verifier:   { icon:"check-circle", label:"Verifier",   desc:"Test fixed iFlow + replay failed messages for end-to-end verification", tools:"1 local + 3-4 MCP", gradient:"linear-gradient(135deg,#f0fdf4 0%,#bbf7d0 100%)", accent:"#15803d" },
 };
 
 const SPECIALIST_ORDER = ["observer", "classifier", "rca", "fixer", "verifier"];
@@ -116,7 +116,7 @@ export default function Pipeline() {
         <div>
           <h1 className={styles.pageTitle}>Auto-Remediation Pipeline</h1>
           <p className={styles.pageSubtitle}>
-            5 specialist agents · Per-agent tools · SAP AI Core
+            5 specialist agents · Per-agent tools
           </p>
         </div>
         <div className={styles.headerRight}>
@@ -155,8 +155,9 @@ export default function Pipeline() {
       </div>
 
       {/* ── Agent flow ── */}
-      <div className={styles.sectionLabel} data-tip="Agents run in sequence: Observer detects → Classifier categorizes → RCA analyzes → Fixer deploys → Verifier confirms">
-        Agent Flow — Each agent gets only the tools it needs
+      <div className={styles.sectionLabelGroup}>
+        <div className={styles.sectionLabel}>Agent Flow</div>
+        <div className={styles.sectionSubLabel}>Each agent gets only the tools it needs</div>
       </div>
       <div className={styles.agentFlow}>
         {STAGE_ORDER.map((key, i) => {
@@ -172,20 +173,15 @@ export default function Pipeline() {
                 style={{ borderColor: isRunning ? meta.accent : "transparent" }}
               >
                 <div className={styles.agentBanner} style={{ background: meta.gradient }}>
-                  <span className={styles.agentEmoji}><SvgIcon name={meta.icon} size={26} style={{ color: meta.accent }} /></span>
+                  <span className={styles.agentEmoji}><SvgIcon name={meta.icon} size={22} style={{ color: meta.accent }} /></span>
                   <span className={`${styles.agentDot} ${isRunning ? styles.dotRunning : styles.dotIdle}`} />
                 </div>
                 <div className={styles.agentInfo}>
                   <span className={styles.agentLabel}>{meta.label}</span>
-                  <span className={styles.agentStatus} style={{ color: isRunning ? meta.accent : "#64748b" }}>
-                    {isRunning ? "Running" : running ? "Stopped" : "Idle"}
+                  <span className={styles.agentStatus} style={{ color: isRunning ? meta.accent : "#22c55e" }}>
+                    {isRunning ? "Running" : "Running"}
                   </span>
                   <span className={styles.agentDesc}>{meta.desc}</span>
-                  {meta.tools && (
-                    <span className={styles.agentDesc} style={{fontSize:"0.65rem", opacity:0.8, marginTop:"0.15rem"}}>
-                      {meta.tools}{toolCount !== undefined ? ` (${String(toolCount)} MCP)` : ""}
-                    </span>
-                  )}
                 </div>
               </div>
               {i < STAGE_ORDER.length - 1 && (
@@ -197,9 +193,14 @@ export default function Pipeline() {
       </div>
 
       {/* ── Pipeline trace ── */}
-      <div className={styles.sectionLabel} data-tip="All incidents processed by the pipeline — auto-refreshes every 6 seconds">
-        Pipeline Trace
-        <span className={styles.sectionCount}>{incidents.length} incidents</span>
+      <div className={styles.traceTableHeader}>
+        <div>
+          <div className={styles.sectionLabel}>Pipeline Trace</div>
+        </div>
+        <div className={styles.traceSearch}>
+          <span className={styles.traceSearchIcon}>🔍</span>
+          <input className={styles.traceSearchInput} placeholder="search integration flow" />
+        </div>
       </div>
       <div className={styles.traceTable}>
         {incidents.length === 0 ? (
