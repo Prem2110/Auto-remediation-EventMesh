@@ -983,7 +983,6 @@ export default function Observability() {
       {/* ── Page Header ── */}
       <div className={styles.pageHeader}>
         <h2 className={styles.pageTitle}>Observability</h2>
-        <p className={styles.pageSubtitle}>Subheading one line description</p>
       </div>
 
       {/* ── Main Tab Navigation ── */}

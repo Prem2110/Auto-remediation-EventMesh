@@ -174,6 +174,26 @@ html, body, #root {
   opacity: 1;
 }
 
+/* ── Tooltip below variant (for header / top-of-page elements) ───────────── */
+.tooltip-below[data-tip]::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-4px);
+}
+.tooltip-below[data-tip]::before {
+  bottom: auto;
+  top: calc(100% + 2px);
+  border-top-color: transparent;
+  border-bottom-color: #1e293b;
+}
+.tooltip-below[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.tooltip-below[data-tip]:hover::before {
+  opacity: 1;
+}
+
 /* ── Utility: animate children sequentially ───────────────────────────────── */
 .animate-in { animation: fade-in-up var(--orbit-transition) both; }
 

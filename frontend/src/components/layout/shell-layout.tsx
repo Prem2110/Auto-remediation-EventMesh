@@ -103,8 +103,6 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
       <div className={styles.body}>
         {/* ── Sidebar ── */}
         <aside className={`${styles.sidebar} ${collapsed ? styles.sidebarCollapsed : ""}`}>
-          {!collapsed && <div className={styles.navGroupLabel}>Navigation</div>}
-
           {NAV_ITEMS.map((item) => (
             <div
               key={item.key}

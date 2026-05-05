@@ -111,16 +111,16 @@ export default function Pipeline() {
         </div>
         <div className={styles.headerRight}>
           <span
-            className={`${styles.statusBadge} ${running ? styles.statusBadgeOn : styles.statusBadgeOff}`}
+            className={`${styles.statusBadge} ${running ? styles.statusBadgeOn : styles.statusBadgeOff} tooltip-below`}
             data-tip={running ? "Pipeline is actively monitoring SAP CPI for failures" : "Pipeline is stopped — no new incidents will be detected"}
           >
             {running ? "● Running" : "○ Stopped"}
           </span>
           {running && (
-            <span className={styles.aemBadge} data-tip="5-agent specialist mode — each agent has a curated, minimal tool set for safety and efficiency">Specialist</span>
+            <span className={`${styles.aemBadge} tooltip-below`} data-tip="5-agent specialist mode — each agent has a curated, minimal tool set for safety and efficiency">Specialist</span>
           )}
           <div
-            className={`${styles.autoFixToggle} ${autoFixOn ? styles.autoFixToggleOn : styles.autoFixToggleOff}`}
+            className={`${styles.autoFixToggle} ${autoFixOn ? styles.autoFixToggleOn : styles.autoFixToggleOff} tooltip-below`}
             onClick={togglingAutoFix ? undefined : handleToggleAutoFix}
             data-tip={autoFixOn
               ? "Auto-Fix ON — AI applies fixes automatically when confidence is high. Click to require manual approval for all fixes."
@@ -134,7 +134,7 @@ export default function Pipeline() {
             </span>
           </div>
           <button
-            className={`${styles.toggleBtn} ${running ? styles.toggleBtnStop : styles.toggleBtnStart}`}
+            className={`${styles.toggleBtn} ${running ? styles.toggleBtnStop : styles.toggleBtnStart} tooltip-below`}
             onClick={handleToggle}
             disabled={toggling}
             data-tip={running ? "Stop the pipeline — in-flight incidents will complete before halting" : "Start the autonomous 5-agent remediation pipeline"}
