@@ -771,6 +771,13 @@ class FixAgent:
             correct_value=rca.get("correct_value") or "",
             fixes=rca.get("fixes") or [],
         )
+        _fixes_list = rca.get("fixes") or []
+        logger.info(
+            "[apply_fix] RCA fixes list: count=%d targets=%s iflow=%s",
+            len(_fixes_list),
+            [f.get("property_to_change", "?") if isinstance(f, dict) else getattr(f, "property_to_change", "?") for f in _fixes_list],
+            incident.get("designtime_artifact_id") or incident.get("iflow_id", ""),
+        )
 
     # ── determine_post_fix_status ─────────────────────────────────────────────
 

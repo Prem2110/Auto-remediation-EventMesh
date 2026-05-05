@@ -88,6 +88,14 @@ class FixPlanner:
 
         # Build canonical fixes list: prefer ctx.fixes; fall back to legacy scalar fields.
         _fixes: List[Any] = list(ctx.fixes) if ctx.fixes else []
+        logger.info(
+            "[FixPlanner] direct-patch probe: iflow=%s fixes_from_rca=%d "
+            "legacy_scalar=%s affected_component=%r",
+            ctx.iflow_id,
+            len(_fixes),
+            bool(ctx.property_to_change and ctx.correct_value and _ac and _ac.lower() not in ("unknown", "")),
+            _ac or "(none)",
+        )
         if not _fixes and ctx.property_to_change and ctx.correct_value and _ac and _ac.lower() not in ("unknown", ""):
             _fixes = [{
                 "component_id":      _ac,

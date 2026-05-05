@@ -376,13 +376,19 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         tracker   = TestExecutionTracker(ctx.user_id, f"fix:{ctx.iflow_id}", ctx.timestamp)
         logger_cb = StepLogger(tracker, progress_fn=progress_fn)
 
+        _xml_len   = len(ctx.original_xml or "")
+        _timeout   = 120.0 if _xml_len < 30_000 else 300.0
+        logger.info(
+            "[FixGenerator] free_xml timeout=%.0fs (xml_len=%d) iflow=%s",
+            _timeout, _xml_len, ctx.iflow_id,
+        )
         try:
             _result = await asyncio.wait_for(
                 agent.ainvoke(
                     {"messages": messages},
                     config={"callbacks": [logger_cb], "recursion_limit": 30},
                 ),
-                timeout=600.0,
+                timeout=_timeout,
             )
         except asyncio.TimeoutError:
             # Propagate via a sentinel answer so FixAgent can run _diagnose_timeout
