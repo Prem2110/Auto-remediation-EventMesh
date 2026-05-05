@@ -1,0 +1,62 @@
+# Environment
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.so
+
+# Logs
+*.log
+logs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+node_modules/
+git add .gitattributes
+git add agents/specialists/stages.py
+git add dashboard_router.py
+git add messaging/
+git add frontend1/
+# Locks (keep package-lock.json, ignore uv.lock)
+uv.lock
+.python-version
+
+# Database / storage files
+*.db
+*.sqlite
+*.sqlite3
+storage/*.json
+storage/*.pkl
+
+# Test / scratch
+test_local.py
+list_all
+
+# Runtime artefacts
+manifest.yaml
+Procfile
+runtime.txt
