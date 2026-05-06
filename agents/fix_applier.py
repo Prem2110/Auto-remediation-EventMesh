@@ -109,6 +109,10 @@ class FixApplier:
                 logger.info(
                     "[FixApplier] Applying component replacement for iflow=%s", ctx.iflow_id
                 )
+                logger.info(
+                    "[FixApplier] component-replace update-iflow: iflow=%s filepath=%r xml_len=%d",
+                    ctx.iflow_id, ctx.original_filepath, len(merged_xml),
+                )
                 update_result = await self._mcp.execute_integration_tool(
                     "update-iflow",
                     {
@@ -116,7 +120,21 @@ class FixApplier:
                         "files": [{"filepath": ctx.original_filepath, "content": merged_xml}],
                     },
                 )
-                update_ok = self._update_succeeded(str(update_result.get("output", "")))
+                _cr_out = str(update_result.get("output", ""))
+                logger.info(
+                    "[FixApplier] component-replace update-iflow response: iflow=%s output_len=%d output=%.200s",
+                    ctx.iflow_id, len(_cr_out), _cr_out,
+                )
+                _cr_verified = False
+                if not _cr_out.strip() and not _cr_out.startswith("ERROR") and not _cr_out.startswith("VALIDATION"):
+                    _vr = await self._mcp.execute_integration_tool("get-iflow", {"id": ctx.iflow_id})
+                    if _vr.get("success") and _vr.get("output", ""):
+                        logger.info(
+                            "[FixApplier] component-replace empty body verified via get-iflow: iflow=%s",
+                            ctx.iflow_id,
+                        )
+                        _cr_verified = True
+                update_ok = _cr_verified or self._update_succeeded(_cr_out)
                 if not update_ok:
                     logger.warning(
                         "[FixApplier] Component replace update failed for iflow=%s", ctx.iflow_id
@@ -127,7 +145,7 @@ class FixApplier:
                         deploy_success=False,
                         failed_stage="update",
                         summary=f"Component replacement update failed for {ctx.iflow_id}",
-                        technical_details=str(update_result.get("output", ""))[:300],
+                        technical_details=_cr_out[:300],
                         steps=[],
                     )
                 deploy_result = await self._mcp.execute_integration_tool(
@@ -149,13 +167,32 @@ class FixApplier:
                 )
 
         # Call update-iflow
+        logger.info(
+            "[FixApplier] update-iflow preflight: iflow=%s filepath=%r xml_len=%d",
+            ctx.iflow_id, ctx.original_filepath, len(vr.patched_xml),
+        )
         update_result = await self._mcp.execute_integration_tool(
             "update-iflow",
             {"id": ctx.iflow_id,
              "files": [{"filepath": ctx.original_filepath, "content": vr.patched_xml}]},
         )
         update_out = str(update_result.get("output", ""))
-        if not self._update_succeeded(update_out):
+        logger.info(
+            "[FixApplier] update-iflow response: iflow=%s output_len=%d output=%.300s",
+            ctx.iflow_id, len(update_out), update_out,
+        )
+        # SAP BTP sometimes returns HTTP 200 with an empty body.
+        # Verify via get-iflow before treating an empty response as failure.
+        _update_verified = False
+        if not update_out.strip() and not update_out.startswith("ERROR") and not update_out.startswith("VALIDATION"):
+            _verify = await self._mcp.execute_integration_tool("get-iflow", {"id": ctx.iflow_id})
+            if _verify.get("success") and _verify.get("output", ""):
+                logger.info(
+                    "[FixApplier] update-iflow empty body — iFlow accessible via get-iflow: iflow=%s",
+                    ctx.iflow_id,
+                )
+                _update_verified = True
+        if not _update_verified and not self._update_succeeded(update_out):
             logger.warning(
                 "[FixApplier] update-iflow failed: iflow=%s output=%.400s",
                 ctx.iflow_id, update_out,

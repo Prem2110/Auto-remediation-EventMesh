@@ -263,10 +263,16 @@ class MultiMCP:
                 )
 
         client = self.clients[server]
+        _update_timeout = float(os.getenv("UPDATE_IFLOW_TIMEOUT", "120.0"))
         for attempt in range(MAX_RETRIES):
             try:
                 async with client:
-                    res = await client.call_tool(tool, args)
+                    if tool == "update-iflow":
+                        res = await asyncio.wait_for(
+                            client.call_tool(tool, args), timeout=_update_timeout
+                        )
+                    else:
+                        res = await client.call_tool(tool, args)
                 parts: List[str] = []
                 for c in res.content:
                     if getattr(c, "text", None):
@@ -279,6 +285,14 @@ class MultiMCP:
                 if tool == "get-iflow":
                     output = _unwrap_getiflow_response(output)
                 return output
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[MCP] update-iflow timed out after %.0fs (attempt %d/%d): iflow=%s",
+                    _update_timeout, attempt + 1, MAX_RETRIES, args.get("id", "?"),
+                )
+                if attempt == MAX_RETRIES - 1:
+                    return f"ERROR: update-iflow timed out after {_update_timeout:.0f}s"
+                await asyncio.sleep(2)
             except Exception as e:
                 if attempt == MAX_RETRIES - 1:
                     return f"ERROR: {e}"
