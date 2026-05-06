@@ -11,7 +11,9 @@
       "Bash(netstat -ano)",
       "Bash(python -c ' *)",
       "Bash(python -c \"import ast, sys; ast.parse\\(open\\('core/xml_patcher.py'\\).read\\(\\)\\); ast.parse\\(open\\('agents/fix_agent.py'\\).read\\(\\)\\); ast.parse\\(open\\('core/constants.py'\\).read\\(\\)\\); print\\('All 3 files parse OK'\\)\")",
-      "Bash(grep -E \"\\(^[^/]*\\\\.py$|aem/|agents/|core/|db/\\)\")"
+      "Bash(grep -E \"\\(^[^/]*\\\\.py$|aem/|agents/|core/|db/\\)\")",
+      "Bash(python scripts/debug_get_iflow_extract.py \"Enricher-I-Flow_2_copy151156\")",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

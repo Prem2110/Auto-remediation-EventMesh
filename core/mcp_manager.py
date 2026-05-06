@@ -119,6 +119,32 @@ class MCPTool(BaseTool):
 
 
 # ─────────────────────────────────────────────
+# GET-IFLOW RESPONSE UNWRAPPER
+# ─────────────────────────────────────────────
+
+def _unwrap_getiflow_response(raw: str) -> str:
+    """
+    The get-iflow MCP tool wraps its payload in {"type":"success","iflowContent":"..."}.
+    Extracting iflowContent gives the LLM clean filepath-per-line text so it can read
+    the correct .iflw filepath and XML without navigating a JSON blob.
+    Returns raw unchanged if the envelope is absent or unparseable.
+    """
+    stripped = (raw or "").lstrip()
+    if not stripped.startswith("{"):
+        return raw
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict) and "iflowContent" in parsed:
+            content = parsed["iflowContent"]
+            if isinstance(content, bytes):
+                content = content.decode("utf-8", errors="replace")
+            return str(content).lstrip("﻿")
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return raw
+
+
+# ─────────────────────────────────────────────
 # MULTI MCP MANAGER — infrastructure only
 # ─────────────────────────────────────────────
 
@@ -249,7 +275,10 @@ class MultiMCP:
                         parts.append(json.dumps(c.json, indent=2))
                     else:
                         parts.append(str(c))
-                return "\n".join(parts)
+                output = "\n".join(parts)
+                if tool == "get-iflow":
+                    output = _unwrap_getiflow_response(output)
+                return output
             except Exception as e:
                 if attempt == MAX_RETRIES - 1:
                     return f"ERROR: {e}"

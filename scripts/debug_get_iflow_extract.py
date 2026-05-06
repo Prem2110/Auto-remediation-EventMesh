@@ -38,12 +38,15 @@ async def _main(iflow_id: str) -> int:
     client = Client(transport=transport)
 
     try:
-        print("calling get-iflow ...")
+        print("calling get-iflow ...", flush=True)
         async with client:
             res = await asyncio.wait_for(
                 client.call_tool("get-iflow", {"id": iflow_id}),
                 timeout=90.0,
             )
+    except asyncio.TimeoutError as exc:
+        print(f"tool_success=False tool_error=TimeoutError({exc})", flush=True)
+        return 1
     except Exception as exc:
         print(f"tool_success=False tool_error={exc!r}")
         return 1
@@ -81,7 +84,17 @@ async def _main(iflow_id: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("iflow_id")
+    ap.add_argument("--input", help="Path to a saved get-iflow tool output string to parse (skips MCP call).")
     args = ap.parse_args()
+    if args.input:
+        raw = open(args.input, "rb").read()
+        out_str = raw.decode("utf-8", errors="replace")
+        fp, xml = _extract_iflow_file(out_str, iflow_id=args.iflow_id)
+        print(f"input_len={len(out_str)}")
+        print(f"extracted_filepath={fp!r} extracted_len={len(xml)} startswith_xml={xml.lstrip().startswith('<?xml')}")
+        if xml:
+            print(f"xml_preview={xml[:200]!r}")
+        return 0
     return asyncio.run(_main(args.iflow_id))
 
 

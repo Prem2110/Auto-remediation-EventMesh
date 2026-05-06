@@ -607,16 +607,23 @@ def _extract_update_filepath(messages: List[Any]) -> str:
 
 def _extract_getiflow_filepaths(messages: List[Any]) -> List[str]:
     """
-    Scan tool-response messages (ToolMessage content) for filepath values
-    returned by get-iflow.  Matches any "filepath": "..." in the response JSON.
+    Scan tool-response messages for filepath values returned by get-iflow.
+    Handles both JSON {"filepath":"..."} format and the ---begin-of-file---
+    format where the filepath appears on the line immediately before the marker.
     """
     filepaths: List[str] = []
     for msg in messages:
         content = getattr(msg, "content", None)
         if not content or not isinstance(content, str):
             continue
+        # JSON "filepath": "..." format (legacy)
         for match in re.finditer(r'"filepath"\s*:\s*"([^"]+)"', content):
             fp = match.group(1)
+            if fp and fp not in filepaths:
+                filepaths.append(fp)
+        # ---begin-of-file--- format: filepath is the line immediately before the marker
+        for match in re.finditer(r'([^\r\n]+)\r?\n---begin-of-file---', content):
+            fp = match.group(1).strip().replace("\\", "/")
             if fp and fp not in filepaths:
                 filepaths.append(fp)
     return filepaths

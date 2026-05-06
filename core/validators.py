@@ -130,6 +130,16 @@ def _iter_concatenated_package_files(snapshot_str: str) -> Iterator[Tuple[str, s
     if not text:
         return
 
+    # Unwrap {"type":"success","iflowContent":"..."} envelope returned by get-iflow MCP tool.
+    # The iflowContent value holds the actual concatenated file listing with ---begin/end-of-file--- markers.
+    if text.lstrip().startswith("{"):
+        try:
+            _parsed = json.loads(text)
+            if isinstance(_parsed, dict) and "iflowContent" in _parsed:
+                text = _safe_str(_parsed["iflowContent"])
+        except (json.JSONDecodeError, ValueError):
+            pass
+
     begin = "---begin-of-file---"
     end = "---end-of-file---"
 
