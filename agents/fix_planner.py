@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from agents.fix_context import FixContext
@@ -81,6 +81,39 @@ class FixPlanner:
         Returns (FixStrategy, sliced_xml) where sliced_xml is a focused XML
         snippet centred on the affected component, or "" if unavailable.
         """
+        # If original_xml is a concatenated integration package string, extract only
+        # the main iFlow XML under src/main/resources/scenarioflows/integrationflow/.
+        if ctx.original_xml and "---begin-of-file---" in ctx.original_xml:
+            try:
+                from core.validators import _extract_iflow_file  # noqa: PLC0415
+
+                fp, xml = _extract_iflow_file(ctx.original_xml, iflow_id=ctx.iflow_id)
+                xml = (xml or "").lstrip("\ufeff").lstrip()
+                if xml:
+                    if not xml.startswith("<?xml"):
+                        raise RuntimeError(
+                            "IFlow Extraction Error: extracted integrationflow .iflw content does not start with '<?xml'. "
+                            f"filepath='{fp or ''}' preview='{xml[:80]}'"
+                        )
+                    ctx = replace(
+                        ctx,
+                        original_xml=xml,
+                        original_filepath=fp or ctx.original_filepath,
+                    )
+                else:
+                    raise RuntimeError(
+                        "IFlow Extraction Error: concatenated package did not contain a non-empty "
+                        f"src/main/resources/scenarioflows/integrationflow/{ctx.iflow_id}.iflw"
+                    )
+            except Exception as exc:
+                logger.error("[FixPlanner] %s", exc)
+                raise
+
+        if not (ctx.original_xml or "").strip():
+            raise RuntimeError(
+                "IFlow Extraction Error: original_xml is empty â€” cannot plan a fix without iFlow XML."
+            )
+
         sliced_xml = self._slice_xml(ctx.original_xml, ctx.affected_component)
 
         # ── Direct patch — RCA gave exact component + property + value(s) ─────
@@ -214,6 +247,17 @@ class FixPlanner:
         """
         if not fixes:
             return None
+        # ── Guard: reject None, empty, or bytes input before parsing ─────────
+        if not xml:
+            logger.warning("[DirectPatch] xml is empty/None — cannot patch.")
+            return None
+        if isinstance(xml, bytes):
+            xml = xml.decode("utf-8", errors="replace")
+        xml = xml.lstrip("\ufeff")
+        if not xml.strip():
+            logger.warning("[DirectPatch] xml is blank after BOM strip — cannot patch.")
+            return None
+        # ─────────────────────────────────────────────────────────────────────
         try:
             root = ET.fromstring(xml)
         except Exception as exc:
@@ -323,6 +367,20 @@ class FixPlanner:
             if not ac or ac.lower() == "unknown":
                 return ""
 
+            # ── Guard: reject None, empty, or bytes input before parsing ─────
+            if not original_xml:
+                logger.debug(
+                    "[FixPlanner] _slice_xml: original_xml is empty/None — skipping."
+                )
+                return ""
+            if isinstance(original_xml, bytes):
+                original_xml = original_xml.decode("utf-8", errors="replace")
+            # Strip UTF-8 BOM if present
+            original_xml = original_xml.lstrip("\ufeff")
+            if not original_xml.strip():
+                return ""
+            # ─────────────────────────────────────────────────────────────────
+
             root = ET.fromstring(original_xml)
 
             # ── Header summary from first two <bpmn2:participant> elements ──
@@ -366,7 +424,7 @@ class FixPlanner:
                 if target is not None:
                     break
 
-            if target is None:
+            if target is None or target_parent is None:
                 return ""
 
             siblings = list(target_parent)

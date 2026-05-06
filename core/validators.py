@@ -17,7 +17,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -107,34 +107,180 @@ def _find_gateways_without_default(xml_str: str) -> set:
         return set()
 
 
-def _extract_iflow_file(snapshot_str: str) -> tuple[str, str]:
+def _iter_concatenated_package_files(snapshot_str: str) -> Iterator[Tuple[str, str]]:
+    """
+    Yield (filepath, content) tuples from a concatenated integration package response.
+
+    The integration_suite `get-iflow` tool may return the entire integration package
+    as a single concatenated string with blocks delimited by:
+      ---begin-of-file--- ... ---end-of-file---
+
+    The *main* iFlow XML lives under:
+      src/main/resources/scenarioflows/integrationflow/<iflow_id>.iflw
+    """
+
+    def _safe_str(value) -> str:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str):
+            return value.lstrip("\ufeff")
+        return str(value) if value is not None else ""
+
+    text = _safe_str(snapshot_str)
+    if not text:
+        return
+
+    begin = "---begin-of-file---"
+    end = "---end-of-file---"
+    idx = 0
+    while True:
+        b = text.find(begin, idx)
+        if b == -1:
+            break
+        block_start = b + len(begin)
+        e = text.find(end, block_start)
+        if e == -1:
+            break
+
+        raw_block = text[block_start:e]
+
+        # Try to detect the filepath from either:
+        #  1) the first non-empty line (common format), or
+        #  2) a regex scan over the block header.
+        lines = raw_block.splitlines()
+        while lines and not lines[0].strip():
+            lines.pop(0)
+
+        filepath = ""
+        if lines:
+            first = lines[0].strip().replace("\\", "/")
+            if first.startswith("src/main/resources/"):
+                filepath = first
+                lines = lines[1:]
+
+        if not filepath:
+            header_probe = raw_block[:800]
+            m = re.search(r"(src/main/resources/[^\r\n]+)", header_probe)
+            filepath = (m.group(1).strip() if m else "").replace("\\", "/")
+
+        content = "\n".join(lines).strip("\r\n")
+        if filepath:
+            yield filepath, content
+
+        idx = e + len(end)
+
+
+def _extract_iflow_file(snapshot_str: str, iflow_id: str = "") -> tuple[str, str]:
     """
     Parse a get-iflow response string and return (filepath, xml_content)
     for the .iflw file. Returns ("", "") if not found.
+
+    Always returns the XML content as a clean UTF-8 str (never bytes).
     """
+    def _safe_str(value) -> str:
+        """Decode bytes → UTF-8 and strip BOM; pass str through unchanged."""
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str):
+            return value.lstrip("\ufeff")
+        return str(value) if value is not None else ""
+
+    # Preferred: concatenated integration package response (BEGIN/END markers)
+    try:
+        candidates: List[Tuple[str, str]] = []
+        for fp, content in _iter_concatenated_package_files(snapshot_str):
+            if fp.startswith("src/main/resources/scenarioflows/integrationflow/") and fp.endswith(".iflw"):
+                candidates.append((fp, content))
+
+        if candidates:
+            if iflow_id:
+                expected = f"src/main/resources/scenarioflows/integrationflow/{iflow_id}.iflw"
+                for fp, content in candidates:
+                    if fp.replace("\\", "/") == expected:
+                        logger.debug(
+                            "[ValidatorCtx] _extract_iflow_file: extracted .iflw from concatenated package, filepath=%s",
+                            fp,
+                        )
+                        return fp, _safe_str(content)
+
+            if len(candidates) == 1:
+                fp, content = candidates[0]
+                logger.debug(
+                    "[ValidatorCtx] _extract_iflow_file: extracted sole integrationflow .iflw from concatenated package, filepath=%s",
+                    fp,
+                )
+                return fp, _safe_str(content)
+
+            for fp, content in candidates:
+                if (content or "").strip():
+                    logger.debug(
+                        "[ValidatorCtx] _extract_iflow_file: extracted first non-empty integrationflow .iflw from concatenated package, filepath=%s",
+                        fp,
+                    )
+                    return fp, _safe_str(content)
+    except Exception as exc:
+        logger.debug("[ValidatorCtx] _extract_iflow_file concatenated parse failed: %s", exc)
+
     try:
         data  = json.loads(snapshot_str) if isinstance(snapshot_str, str) else snapshot_str
         files = data.get("files", []) if isinstance(data, dict) else []
+        any_iflw: List[Tuple[str, str]] = []
         for f in files:
             fp = f.get("filepath", "")
-            if fp.endswith(".iflw"):
-                logger.debug("[ValidatorCtx] _extract_iflow_file: found .iflw via JSON parse, filepath=%s", fp)
-                return fp, f.get("content", "")
+            fp_norm = (fp or "").replace("\\", "/")
+            if fp_norm.endswith(".iflw"):
+                # Prefer canonical iFlow location and specific iFlow ID when known.
+                if fp_norm.startswith("src/main/resources/scenarioflows/integrationflow/"):
+                    if (not iflow_id) or fp_norm.endswith(f"/{iflow_id}.iflw"):
+                        logger.debug(
+                            "[ValidatorCtx] _extract_iflow_file: found integrationflow .iflw via JSON parse, filepath=%s",
+                            fp_norm,
+                        )
+                        return fp_norm, _safe_str(f.get("content", ""))
+                any_iflw.append((fp_norm, _safe_str(f.get("content", ""))))
+
+        if any_iflw:
+            if iflow_id:
+                for fp_norm, content in any_iflw:
+                    if fp_norm.endswith(f"/{iflow_id}.iflw") or fp_norm.endswith(f"{iflow_id}.iflw"):
+                        logger.debug(
+                            "[ValidatorCtx] _extract_iflow_file: found .iflw via JSON parse (non-canonical path), filepath=%s",
+                            fp_norm,
+                        )
+                        return fp_norm, content
+            fp_norm, content = any_iflw[0]
+            logger.debug(
+                "[ValidatorCtx] _extract_iflow_file: found first .iflw via JSON parse (non-canonical path), filepath=%s",
+                fp_norm,
+            )
+            return fp_norm, content
     except Exception as exc:
         logger.debug("[ValidatorCtx] _extract_iflow_file JSON parse failed: %s", exc)
     # Fallback: regex scan for filepath key in raw text
     try:
-        m = re.search(r'"filepath"\s*:\s*"([^"]+\.iflw)"', snapshot_str or "")
-        if m:
+        m = re.search(
+            r'"filepath"\s*:\s*"(src/main/resources/scenarioflows/integrationflow/[^"]+\.iflw)"',
+            snapshot_str or "",
+        )
+        if m and ((not iflow_id) or m.group(1).replace("\\", "/").endswith(f"/{iflow_id}.iflw")):
             logger.debug(
                 "[ValidatorCtx] _extract_iflow_file: found .iflw via regex fallback, filepath=%s",
                 m.group(1),
             )
-            return m.group(1), ""
+            return m.group(1).replace("\\", "/"), ""
+
+        # Broader regex fallback (legacy tool outputs) if canonical path was not present.
+        m2 = re.search(r'"filepath"\s*:\s*"([^"]+\.iflw)"', snapshot_str or "")
+        if m2 and ((not iflow_id) or m2.group(1).replace("\\", "/").endswith(f"{iflow_id}.iflw")):
+            logger.debug(
+                "[ValidatorCtx] _extract_iflow_file: found .iflw via broad regex fallback, filepath=%s",
+                m2.group(1),
+            )
+            return m2.group(1).replace("\\", "/"), ""
     except Exception as exc:
         logger.debug("[ValidatorCtx] _extract_iflow_file regex fallback failed: %s", exc)
     # Last resort: if the response itself is raw iFlow XML (starts with <), use it directly.
-    stripped = (snapshot_str or "").strip()
+    stripped = _safe_str(snapshot_str).strip()
     if stripped.startswith("<") and "bpmn" in stripped.lower():
         logger.debug("[ValidatorCtx] _extract_iflow_file: treating raw XML response as iFlow content")
         return "", stripped

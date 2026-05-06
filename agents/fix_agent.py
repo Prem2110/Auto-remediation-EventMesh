@@ -398,17 +398,63 @@ class FixAgent:
             _get_result = await self._mcp.execute_integration_tool("get-iflow", {"id": iflow_id})
             if _get_result.get("success"):
                 _out     = _get_result.get("output", "")
+                # Decode bytes → UTF-8 string at the earliest possible point so all
+                # downstream consumers (FixPlanner, XMLAnalyst, validators) receive str.
+                if isinstance(_out, bytes):
+                    _out = _out.decode("utf-8", errors="replace")
                 _out_str = _out if isinstance(_out, str) else json.dumps(_out)
-                _fp, _xml = _extract_iflow_file(_out_str)
+                _fp, _xml = _extract_iflow_file(_out_str, iflow_id=iflow_id)
                 if _fp and _xml:
+                    # Ensure the extracted XML content is also a clean UTF-8 string.
+                    if isinstance(_xml, bytes):
+                        _xml = _xml.decode("utf-8", errors="replace")
+                    _xml = _xml.lstrip("\ufeff")  # strip UTF-8 BOM if present
                     _original_filepath = _fp
                     _original_xml      = _xml
                     # Store by iFlow ID so validate_iflow_xml can find it from any asyncio task.
                     _fix_ctx_set(iflow_id, _fp, _xml)
                     logger.debug("[FIX_DEPLOY] Snapshot captured: iflow=%s filepath=%s xml_len=%d",
                                  iflow_id, _fp, len(_xml))
-                elif _out_str:
-                    _original_xml = _out_str
+                elif _fp and not _xml:
+                    logger.warning(
+                        "[FIX_DEPLOY] _extract_iflow_file found filepath=%r but xml content is "
+                        "empty for iflow=%s — FixPlanner will receive empty original_xml. "
+                        "Raw output preview (first 200 chars): %r",
+                        _fp, iflow_id, _out_str[:200],
+                    )
+                elif not _fp and not _xml:
+                    logger.warning(
+                        "[FIX_DEPLOY] _extract_iflow_file could not locate any .iflw file for "
+                        "iflow=%s — original_xml will be empty or raw JSON. "
+                        "Raw output preview (first 200 chars): %r",
+                        iflow_id, _out_str[:200],
+                    )
+                # Do NOT fall back to the full concatenated package string as XML.
+                # If the .iflw extraction fails, abort early with a clear error to avoid
+                # downstream agent timeouts on invalid/non-XML input.
+                if not (_fp and (_xml or "").strip()):
+                    logger.error(
+                        "[FIX_DEPLOY] IFlow Extraction Failure: could not extract non-empty "
+                        "src/main/resources/scenarioflows/integrationflow/%s.iflw from get-iflow output. "
+                        "Output preview (first 200 chars): %r",
+                        iflow_id, _out_str[:200],
+                    )
+                    return {
+                        "success": False,
+                        "fix_applied": False,
+                        "deploy_success": False,
+                        "failed_stage": "get",
+                        "technical_details": (
+                            "IFlow Extraction Failure: the get-iflow tool response did not contain a "
+                            "non-empty .iflw file at "
+                            f"'src/main/resources/scenarioflows/integrationflow/{iflow_id}.iflw'."
+                        ),
+                        "summary": (
+                            "IFlow Extraction Failure â€” unable to extract the main iFlow XML from "
+                            "the integration package response."
+                        ),
+                        "steps": [],
+                    }
         except Exception as _pre_exc:
             logger.debug("[FIX_DEPLOY] Pre-fetch failed (non-fatal): %s", _pre_exc)
 
@@ -892,10 +938,16 @@ class FixAgent:
             from db.database import update_incident as _update  # noqa: PLC0415
             _update(incident_id, {"iflow_snapshot_before": snapshot_str})
             logger.info("[FIX] iFlow snapshot captured for %s (%d chars)", iflow_id, len(snapshot_str))
-            orig_fp, orig_xml = _extract_iflow_file(snapshot_str)
-            if orig_fp:
+            orig_fp, orig_xml = _extract_iflow_file(snapshot_str, iflow_id=iflow_id)
+            if orig_fp and (orig_xml or "").strip():
                 _fix_ctx_set(iflow_id, orig_fp, orig_xml)
                 logger.info("[VALIDATOR] Fix context set: filepath='%s' xml_len=%d", orig_fp, len(orig_xml))
+            elif orig_fp and not (orig_xml or "").strip():
+                logger.warning(
+                    "[VALIDATOR] Snapshot parse found filepath='%s' but extracted xml is empty for iflow=%s",
+                    orig_fp,
+                    iflow_id,
+                )
         except Exception as exc:
             logger.warning("[FIX] Could not capture iFlow snapshot for %s: %s", iflow_id, exc)
 

@@ -53,12 +53,21 @@ class XMLAnalyst:
         focused_component is highlighted first if given.
         Returns "" on parse failure.
         """
-        if not xml_str:
+        # ── Guard: decode bytes, strip BOM, reject empty input ───────────────
+        if isinstance(xml_str, bytes):
+            xml_str = xml_str.decode("utf-8", errors="replace")
+        if xml_str:
+            xml_str = xml_str.lstrip("\ufeff")
+        if not xml_str or not xml_str.strip():
             return ""
+        # ─────────────────────────────────────────────────────────────────────
         try:
             root = ET.fromstring(xml_str)
         except ET.ParseError as exc:
             logger.warning("[XMLAnalyst] XML parse failed: %s", exc)
+            return ""
+        except Exception as exc:
+            logger.warning("[XMLAnalyst] Unexpected XML error: %s", exc)
             return ""
 
         component_map = self._build_map(root)
@@ -105,7 +114,17 @@ class XMLAnalyst:
                 k_el = prop.find(f"{{{_IFL}}}key") or prop.find("key")
                 v_el = prop.find(f"{{{_IFL}}}value") or prop.find("value")
                 if k_el is not None and v_el is not None:
-                    component_map[comp_id].properties[k_el.text or ""] = (v_el.text or "")[:120]
+                    raw_val = (v_el.text or "")
+                    # Safe-truncate: never cut mid XML-entity (e.g. &amp;) or
+                    # mid XQuery declare-namespace prolog — back off to last
+                    # safe boundary so the summary string stays well-formed.
+                    if len(raw_val) > 120:
+                        truncated = raw_val[:120]
+                        last_amp = truncated.rfind("&")
+                        if last_amp != -1 and ";" not in truncated[last_amp:]:
+                            truncated = truncated[:last_amp]
+                        raw_val = truncated + "…"
+                    component_map[comp_id].properties[k_el.text or ""] = raw_val
 
         return component_map
 

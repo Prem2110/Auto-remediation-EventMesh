@@ -187,9 +187,13 @@ async def _run_cpi_monitor() -> None:
             if messages:
                 logger.info("[CPI_MONITOR] Found %d failed messages", len(messages))
                 await publish_failed_messages(messages)
+            await asyncio.sleep(_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            logger.info("[CPI_MONITOR] Poller cancelled - stopping.")
+            raise
         except Exception as exc:
             logger.error("[CPI_MONITOR] Unhandled poller error: %s", exc)
-        await asyncio.sleep(_POLL_INTERVAL)
+            await asyncio.sleep(_POLL_INTERVAL)
 
 
 async def _run_pending_deploy_sweeper() -> None:
@@ -199,7 +203,11 @@ async def _run_pending_deploy_sweeper() -> None:
     """
     _SWEEP_INTERVAL = int(os.getenv("PENDING_DEPLOY_SWEEP_INTERVAL_SECONDS", "300"))
     while True:
-        await asyncio.sleep(_SWEEP_INTERVAL)
+        try:
+            await asyncio.sleep(_SWEEP_INTERVAL)
+        except asyncio.CancelledError:
+            logger.info("[SWEEPER] Cancelled - stopping.")
+            raise
         try:
             pending = get_all_incidents(status="FIX_APPLIED_PENDING_VERIFICATION", limit=10)
             if not pending:
@@ -223,6 +231,9 @@ async def _run_pending_deploy_sweeper() -> None:
                         logger.warning("[SWEEPER] iflow=%s deploy still failing", iflow_id)
                 except Exception as _exc:
                     logger.warning("[SWEEPER] iflow=%s sweep error: %s", iflow_id, _exc)
+        except asyncio.CancelledError:
+            logger.info("[SWEEPER] Cancelled - stopping.")
+            raise
         except Exception as exc:
             logger.error("[SWEEPER] Unhandled sweeper error: %s", exc)
 
@@ -284,6 +295,9 @@ async def lifespan(app: FastAPI):
             )
             await orchestrator.build_agent(observer=observer)  # depends on all above being ready
             logger.info("[Startup] All specialist agents built — orchestrator ready to process messages.")
+        except asyncio.CancelledError:
+            logger.info("[Startup] Background initialisation cancelled - stopping.")
+            raise
         except Exception as exc:
             logger.error("[Startup] Agent initialisation failed: %s", exc)
         finally:
@@ -296,13 +310,20 @@ async def lifespan(app: FastAPI):
                 tool_count,
             )
 
-    asyncio.create_task(_init_background())
-    asyncio.create_task(_run_cpi_monitor())
-    asyncio.create_task(_run_pending_deploy_sweeper())
+    _bg_tasks = [
+        asyncio.create_task(_init_background(), name="init_background"),
+        asyncio.create_task(_run_cpi_monitor(), name="cpi_monitor"),
+        asyncio.create_task(_run_pending_deploy_sweeper(), name="pending_deploy_sweeper"),
+    ]
     logger.info("[CPI_MONITOR] Poller started, interval=%ds", int(os.getenv("CPI_POLL_INTERVAL_SECONDS", "600")))
     logger.info("[Startup] FastAPI ready — agents initialising in background.")
     logger.info("[Startup] Event-driven mode active — waiting for SAP Event Mesh webhooks")
     yield
+
+    # Shutdown: cancel background loops so Ctrl+C exits promptly (esp. on Windows).
+    for t in _bg_tasks:
+        t.cancel()
+    await asyncio.gather(*_bg_tasks, return_exceptions=True)
 
 
 # ─────────────────────────────────────────────
