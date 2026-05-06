@@ -132,6 +132,32 @@ def _iter_concatenated_package_files(snapshot_str: str) -> Iterator[Tuple[str, s
 
     begin = "---begin-of-file---"
     end = "---end-of-file---"
+
+    # Common tool format: a filepath line immediately precedes the begin marker:
+    #   /home/vcap/app/temp/<...>/src/main/resources/.../Foo.iflw
+    #   ---begin-of-file---
+    #   <file content...>
+    #   ---end-of-file---
+    # Use a regex so paths with spaces/special chars are handled correctly.
+    try:
+        pattern = re.compile(
+            r"(?ms)(?P<path>[^\r\n]+)\r?\n"
+            + re.escape(begin)
+            + r"\r?\n(?P<content>.*?)\r?\n"
+            + re.escape(end),
+        )
+        matched_any = False
+        for m in pattern.finditer(text):
+            matched_any = True
+            fp = (m.group("path") or "").strip().replace("\\", "/")
+            content = (m.group("content") or "").strip("\r\n")
+            if fp:
+                yield fp, content
+        if matched_any:
+            return
+    except Exception:
+        # Fall through to the legacy scanner below.
+        pass
     idx = 0
     while True:
         b = text.find(begin, idx)
@@ -145,7 +171,7 @@ def _iter_concatenated_package_files(snapshot_str: str) -> Iterator[Tuple[str, s
         raw_block = text[block_start:e]
 
         # Try to detect the filepath from either:
-        #  1) the first non-empty line (common format), or
+        #  1) the first non-empty line (common format; may include prefixes like /home/... or paths with spaces), or
         #  2) a regex scan over the block header.
         lines = raw_block.splitlines()
         while lines and not lines[0].strip():
@@ -154,13 +180,27 @@ def _iter_concatenated_package_files(snapshot_str: str) -> Iterator[Tuple[str, s
         filepath = ""
         if lines:
             first = lines[0].strip().replace("\\", "/")
-            if first.startswith("src/main/resources/"):
+            # Treat the first line as a path if it looks like one (most tool outputs use this).
+            # Do NOT split on spaces: paths may contain spaces/special characters.
+            looks_like_path = (
+                first.startswith(("src/", "/")) or
+                re.match(r"^[A-Za-z]:/", first) or
+                (".iflw" in first.lower()) or
+                ("scenarioflows/" in first.lower()) or
+                ("src/main/resources/" in first.lower())
+            )
+            if looks_like_path:
                 filepath = first
                 lines = lines[1:]
 
         if not filepath:
             header_probe = raw_block[:800]
-            m = re.search(r"(src/main/resources/[^\r\n]+)", header_probe)
+            # Fallback: any single-line path containing scenarioflows/... or src/main/resources/...
+            m = re.search(
+                r"([^\r\n]*?(?:scenarioflows/integrationflow|src/main/resources)[^\r\n]*)",
+                header_probe,
+                flags=re.IGNORECASE,
+            )
             filepath = (m.group(1).strip() if m else "").replace("\\", "/")
 
         content = "\n".join(lines).strip("\r\n")
@@ -187,21 +227,51 @@ def _extract_iflow_file(snapshot_str: str, iflow_id: str = "") -> tuple[str, str
 
     # Preferred: concatenated integration package response (BEGIN/END markers)
     try:
+        found_paths: List[str] = []
         candidates: List[Tuple[str, str]] = []
+        want_suffix = f"{iflow_id}.iflw".lower() if iflow_id else ""
+        want_tail = f"scenarioflows/integrationflow/{iflow_id}.iflw".lower() if iflow_id else ""
+
         for fp, content in _iter_concatenated_package_files(snapshot_str):
-            if fp.startswith("src/main/resources/scenarioflows/integrationflow/") and fp.endswith(".iflw"):
-                candidates.append((fp, content))
+            fp_norm = (fp or "").strip().replace("\\", "/")
+            if fp_norm:
+                found_paths.append(fp_norm)
+
+            fp_low = fp_norm.lower()
+            if fp_low.endswith(".iflw") and ("scenarioflows/integrationflow/" in fp_low):
+                candidates.append((fp_norm, content))
 
         if candidates:
             if iflow_id:
-                expected = f"src/main/resources/scenarioflows/integrationflow/{iflow_id}.iflw"
                 for fp, content in candidates:
-                    if fp.replace("\\", "/") == expected:
+                    # Don't require an exact root prefix; just match the filename suffix.
+                    fp_l = fp.lower()
+                    if want_tail and fp_l.endswith(want_tail):
+                        extracted = _safe_str(content).lstrip("\ufeff").strip()
+                        if not extracted.startswith("<?xml"):
+                            logger.warning(
+                                "[ValidatorCtx] _extract_iflow_file: matched path but extracted content does not start "
+                                "with '<?xml' (filepath=%s, preview=%r)",
+                                fp,
+                                extracted[:120],
+                            )
+                            return fp, ""
+                        return fp, extracted
+                    if fp_l.endswith("/" + want_suffix) or fp_l.endswith("\\" + want_suffix) or fp_l.endswith(want_suffix):
                         logger.debug(
                             "[ValidatorCtx] _extract_iflow_file: extracted .iflw from concatenated package, filepath=%s",
                             fp,
                         )
-                        return fp, _safe_str(content)
+                        extracted = _safe_str(content).lstrip("\ufeff").strip()
+                        if not extracted.startswith("<?xml"):
+                            logger.warning(
+                                "[ValidatorCtx] _extract_iflow_file: extracted .iflw does not start with '<?xml' "
+                                "(filepath=%s, preview=%r)",
+                                fp,
+                                extracted[:120],
+                            )
+                            return fp, ""
+                        return fp, extracted
 
             if len(candidates) == 1:
                 fp, content = candidates[0]
@@ -209,7 +279,16 @@ def _extract_iflow_file(snapshot_str: str, iflow_id: str = "") -> tuple[str, str
                     "[ValidatorCtx] _extract_iflow_file: extracted sole integrationflow .iflw from concatenated package, filepath=%s",
                     fp,
                 )
-                return fp, _safe_str(content)
+                extracted = _safe_str(content).lstrip("\ufeff").strip()
+                if not extracted.startswith("<?xml"):
+                    logger.warning(
+                        "[ValidatorCtx] _extract_iflow_file: extracted sole integrationflow .iflw does not start with '<?xml' "
+                        "(filepath=%s, preview=%r)",
+                        fp,
+                        extracted[:120],
+                    )
+                    return fp, ""
+                return fp, extracted
 
             for fp, content in candidates:
                 if (content or "").strip():
@@ -217,7 +296,24 @@ def _extract_iflow_file(snapshot_str: str, iflow_id: str = "") -> tuple[str, str
                         "[ValidatorCtx] _extract_iflow_file: extracted first non-empty integrationflow .iflw from concatenated package, filepath=%s",
                         fp,
                     )
-                    return fp, _safe_str(content)
+                    extracted = _safe_str(content).lstrip("\ufeff").strip()
+                    if not extracted.startswith("<?xml"):
+                        logger.warning(
+                            "[ValidatorCtx] _extract_iflow_file: extracted integrationflow .iflw does not start with '<?xml' "
+                            "(filepath=%s, preview=%r)",
+                            fp,
+                            extracted[:120],
+                        )
+                        return fp, ""
+                    return fp, extracted
+
+        # If markers exist but we couldn't match, print the discovered filepaths to aid debugging.
+        if ("---begin-of-file---" in (snapshot_str or "")) and found_paths:
+            logger.debug(
+                "[ValidatorCtx] _extract_iflow_file: concatenated package paths discovered (%d): %s",
+                len(found_paths),
+                found_paths,
+            )
     except Exception as exc:
         logger.debug("[ValidatorCtx] _extract_iflow_file concatenated parse failed: %s", exc)
 
@@ -230,13 +326,23 @@ def _extract_iflow_file(snapshot_str: str, iflow_id: str = "") -> tuple[str, str
             fp_norm = (fp or "").replace("\\", "/")
             if fp_norm.endswith(".iflw"):
                 # Prefer canonical iFlow location and specific iFlow ID when known.
-                if fp_norm.startswith("src/main/resources/scenarioflows/integrationflow/"):
-                    if (not iflow_id) or fp_norm.endswith(f"/{iflow_id}.iflw"):
+                fp_low = fp_norm.lower()
+                if "scenarioflows/integrationflow/" in fp_low:
+                    if (not iflow_id) or fp_low.endswith(want_tail or f"/{iflow_id}.iflw".lower()):
                         logger.debug(
                             "[ValidatorCtx] _extract_iflow_file: found integrationflow .iflw via JSON parse, filepath=%s",
                             fp_norm,
                         )
-                        return fp_norm, _safe_str(f.get("content", ""))
+                        extracted = _safe_str(f.get("content", "")).lstrip("\ufeff").strip()
+                        if not extracted.startswith("<?xml"):
+                            logger.warning(
+                                "[ValidatorCtx] _extract_iflow_file: JSON .iflw content does not start with '<?xml' "
+                                "(filepath=%s, preview=%r)",
+                                fp_norm,
+                                extracted[:120],
+                            )
+                            return fp_norm, ""
+                        return fp_norm, extracted
                 any_iflw.append((fp_norm, _safe_str(f.get("content", ""))))
 
         if any_iflw:
