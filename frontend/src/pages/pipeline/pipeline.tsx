@@ -5,8 +5,6 @@ import {
   startPipeline,
   stopPipeline,
   fetchPipelineTrace,
-  fetchAutoFixStatus,
-  toggleAutoFix,
 } from "../../services/api.ts";
 import SvgIcon, { type IconName } from "../../components/icons/SvgIcon.tsx";
 import _styles from "./pipeline.module.css";
@@ -41,7 +39,6 @@ interface TraceIncident {
 export default function Pipeline() {
   const qc = useQueryClient();
   const [toggling, setToggling] = useState(false);
-  const [togglingAutoFix, setTogglingAutoFix] = useState(false);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: pipelineData } = useQuery({
@@ -49,13 +46,6 @@ export default function Pipeline() {
     queryFn: fetchPipelineStatus,
     refetchInterval: 15_000,
   });
-
-  const { data: autoFixData, refetch: refetchAutoFix } = useQuery({
-    queryKey: ["auto-fix-status"],
-    queryFn: fetchAutoFixStatus,
-    staleTime: 0,
-  });
-
 
   const { data: traceData } = useQuery({
     queryKey: ["pipeline-trace"],
@@ -78,19 +68,6 @@ export default function Pipeline() {
     }
   }
 
-  async function handleToggleAutoFix() {
-    setTogglingAutoFix(true);
-    try {
-      await toggleAutoFix();
-      await refetchAutoFix();
-    } finally {
-      setTogglingAutoFix(false);
-    }
-  }
-
-  const autoFixOn = autoFixData?.auto_fix_enabled ?? true;
-
-
   const running = pipelineData?.pipeline_running ?? false;
   const agentStatuses = pipelineData?.agents ?? {};
   const incidents: TraceIncident[] = (traceData?.incidents ?? []) as TraceIncident[];
@@ -110,29 +87,6 @@ export default function Pipeline() {
           </p>
         </div>
         <div className={styles.headerRight}>
-          <span
-            className={`${styles.statusBadge} ${running ? styles.statusBadgeOn : styles.statusBadgeOff} tooltip-below`}
-            data-tip={running ? "Pipeline is actively monitoring SAP CPI for failures" : "Pipeline is stopped — no new incidents will be detected"}
-          >
-            {running ? "● Running" : "○ Stopped"}
-          </span>
-          {running && (
-            <span className={`${styles.aemBadge} tooltip-below`} data-tip="5-agent specialist mode — each agent has a curated, minimal tool set for safety and efficiency">Specialist</span>
-          )}
-          <div
-            className={`${styles.autoFixToggle} ${autoFixOn ? styles.autoFixToggleOn : styles.autoFixToggleOff} tooltip-below`}
-            onClick={togglingAutoFix ? undefined : handleToggleAutoFix}
-            data-tip={autoFixOn
-              ? "Auto-Fix ON — AI applies fixes automatically when confidence is high. Click to require manual approval for all fixes."
-              : "Auto-Fix OFF — All fixes require manual approval via Apply Fix. Click to re-enable autonomous fixing."}
-          >
-            <span className={styles.autoFixTrack}>
-              <span className={styles.autoFixThumb} />
-            </span>
-            <span className={styles.autoFixLabel}>
-              {togglingAutoFix ? "…" : autoFixOn ? "Auto-Fix" : "Manual"}
-            </span>
-          </div>
           <button
             className={`${styles.toggleBtn} ${running ? styles.toggleBtnStop : styles.toggleBtnStart} tooltip-below`}
             onClick={handleToggle}
@@ -159,7 +113,7 @@ export default function Pipeline() {
             <div key={key} className={styles.flowItem}>
               <div
                 className={`${styles.agentCard} ${isRunning ? styles.agentCardActive : ""}`}
-                style={{ borderColor: isRunning ? meta.accent : "transparent" }}
+                style={{ borderColor: isRunning ? meta.accent : "#e5e7eb" }}
               >
                 <div className={styles.agentBanner} style={{ background: meta.gradient }}>
                   <span className={styles.agentEmoji}><SvgIcon name={meta.icon} size={22} style={{ color: meta.accent }} /></span>

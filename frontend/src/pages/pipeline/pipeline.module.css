@@ -67,8 +67,8 @@
 }
 .toggleBtn:hover:not(:disabled) { opacity: 0.85; transform: scale(0.97); }
 .toggleBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-.toggleBtnStart { background: linear-gradient(135deg,#064e3b 0%,#059669 100%); color: #fff; }
-.toggleBtnStop  { background: linear-gradient(135deg,#7f1d1d 0%,#dc2626 100%); color: #fff; }
+.toggleBtnStart { background: #1e2640; color: #fff; border-radius: 0.625rem; }
+.toggleBtnStop  { background: #1e2640; color: #fff; border-radius: 0.625rem; }
 
 /* ── Section label ───────────────────────────────────────────────────────── */
 .sectionLabelGroup {
@@ -145,7 +145,11 @@
   align-items: stretch;
   gap: 0;
   overflow-x: auto;
-  padding-bottom: 0.25rem;
+  padding: 1.5rem 1rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  border-style: dashed;
 }
 
 .flowItem {

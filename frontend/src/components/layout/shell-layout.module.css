@@ -291,7 +291,7 @@
 .main {
   flex: 1;
   overflow-y: auto;
-  background: var(--orbit-gray-100, #f3f4f6);
+  background: #f5f4ff;
 
   /* Prevent wide content (tables/charts) from forcing layout overflow */
   min-width: 0;

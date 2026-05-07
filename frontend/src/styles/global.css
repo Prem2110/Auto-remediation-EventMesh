@@ -42,7 +42,7 @@ html, body, #root {
   height: 100%;
   font-family: "Inter", "72", Arial, Helvetica, sans-serif;
   font-size: 0.875rem;
-  background: var(--orbit-gray-100);
+  background: #f5f4ff;
   color: var(--orbit-gray-900);
 }
 

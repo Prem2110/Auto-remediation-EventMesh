@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  LineChart, Line,
+  AreaChart, Area,
 } from "recharts";
 import {
   fetchDashboardAll,
@@ -74,47 +74,54 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ── KPI card ──────────────────────────────────────────────────────────────────
-function KpiCard({ header, subheader, value, unit, indicator, valueColor, tooltip, icon }: {
-  header: string; subheader?: string; value: unknown;
-  unit?: string; indicator?: "Up" | "Down"; valueColor?: "Good" | "Critical"; tooltip?: string; icon?: string;
-}) {
-  const colorClass =
-    valueColor === "Good"     ? styles.valueGood :
-    valueColor === "Critical" ? styles.valueCritical : "";
-  const arrow = indicator === "Up" ? " ↑" : indicator === "Down" ? " ↓" : "";
-
-  return (
-    <div className={styles.kpiCard} {...(tooltip ? { "data-tip": tooltip } : {})}>
-      <div className={styles.kpiCardTop}>
-        <div className={styles.kpiHeader}>{header}</div>
-        {icon && <span className={styles.kpiIcon}>{icon}</span>}
-      </div>
-      {subheader && <div className={styles.kpiSub}>{subheader}</div>}
-      <div className={`${styles.kpiValue} ${colorClass}`}>
-        {String(value ?? "-")}{unit ? ` ${unit}` : ""}{arrow}
-      </div>
-    </div>
-  );
+// ── Hero stats banner ─────────────────────────────────────────────────────────
+interface HeroStat {
+  value: unknown; label: string; icon?: string; tooltip?: string;
+  valueStyle?: React.CSSProperties;
 }
 
-// ── Split KPI card (Fix Failed | Auto Fixed) ──────────────────────────────────
-function SplitKpiCard({ fixFailed, autoFixed, tooltip }: {
-  fixFailed: unknown; autoFixed: unknown; tooltip?: string;
-}) {
+function HeroStatsBanner({ stats, loading }: { stats: HeroStat[]; loading: boolean }) {
+  const row1 = stats.slice(0, 4);
+  const row2 = stats.slice(4, 8);
   return (
-    <div className={`${styles.kpiCard} ${styles.kpiCardSplit}`} {...(tooltip ? { "data-tip": tooltip } : {})}>
-      <div className={styles.kpiSplitLeft}>
-        <div className={styles.kpiHeader} style={{ color: "#dc2626" }}>FIX FAILED</div>
-        <div className={`${styles.kpiValue} ${styles.valueCritical}`}>
-          {String(fixFailed ?? "-")} <span className={styles.kpiArrowDown}>↓</span>
-        </div>
+    <div className={styles.heroBanner}>
+      <div className={styles.heroBannerLeft}>
+        <div className={styles.heroBannerHeading}>Heading</div>
+        <div className={styles.heroBannerSub}>one line description about this section</div>
       </div>
-      <div className={styles.kpiSplitDivider} />
-      <div className={styles.kpiSplitRight}>
-        <div className={styles.kpiHeader} style={{ color: "#16a34a" }}>AUTO FIXED</div>
-        <div className={`${styles.kpiValue} ${styles.valueGood}`}>
-          {String(autoFixed ?? "-")} <span className={styles.kpiArrowUp}>↑</span>
+      <div className={styles.heroBannerStats}>
+        <div className={styles.heroStatsRow}>
+          {row1.map((s, i) => (
+            <div key={i} className={styles.heroStat} {...(s.tooltip ? { "data-tip": s.tooltip } : {})}>
+              {i > 0 && <div className={styles.heroStatDivider} />}
+              <div className={styles.heroStatInner}>
+                <div className={styles.heroStatValue} style={s.valueStyle}>
+                  {loading ? "—" : String(s.value ?? "—")}
+                </div>
+                <div className={styles.heroStatLabel}>
+                  {s.icon && <span className={styles.heroStatIcon}>{s.icon}</span>}
+                  {s.label}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className={styles.heroStatsDividerH} />
+        <div className={styles.heroStatsRow}>
+          {row2.map((s, i) => (
+            <div key={i} className={styles.heroStat} {...(s.tooltip ? { "data-tip": s.tooltip } : {})}>
+              {i > 0 && <div className={styles.heroStatDivider} />}
+              <div className={styles.heroStatInner}>
+                <div className={styles.heroStatValue} style={s.valueStyle}>
+                  {loading ? "—" : String(s.value ?? "—")}
+                </div>
+                <div className={styles.heroStatLabel}>
+                  {s.icon && <span className={styles.heroStatIcon}>{s.icon}</span>}
+                  {s.label}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -297,28 +304,20 @@ export default function Dashboard() {
       {/* ══ OVERVIEW TAB ══ */}
       <div style={{ display: activeTab === "overview" ? "contents" : "none" }}>
 
-      {/* ── KPI Cards ── */}
-      <div className={styles.kpiRow}>
-        {dashLoading ? (
-          Array.from({ length: 9 }).map((_, i) => (
-            <div key={i} className={styles.kpiCard}>
-              <div className={`${styles.skeleton}`} style={{ height: "0.75rem", width: "70%" }} />
-              <div className={`${styles.skeleton} ${styles.skeletonKpiValue}`} />
-            </div>
-          ))
-        ) : (
-          <>
-            <KpiCard header="In Progress" value={kpi.in_progress} tooltip="Incidents currently being analyzed or fixed by pipeline agents" icon="⟳" />
-            <KpiCard header="Total Incidents" value={kpi.total_incidents} tooltip="All incidents tracked by the auto-remediation pipeline, including resolved and active" icon="⚠" />
-            <KpiCard header="Pending Approval" value={kpi.pending_approval} tooltip="Fixes generated but awaiting manual approval before deployment to production" icon="📋" />
-            <SplitKpiCard fixFailed={kpi.fix_failed} autoFixed={kpi.auto_fixed} tooltip="Fix Failed vs Auto Fixed counts" />
-            <KpiCard header="Failed Messages" subheader="Live" value={kpi.total_failed_messages} tooltip="SAP CPI messages currently in FAILED state, polled live from the message processing log" icon="✉" />
-            <KpiCard header="Auto Fix Rate" value={kpi.auto_fix_rate} unit="%" tooltip="Percentage of incidents resolved automatically vs all closed incidents" icon="⚙" />
-            <KpiCard header="Avg Resolution Time" subheader="Min" value={kpi.avg_resolution_time_minutes} unit="Min" tooltip="Mean time from incident detection to terminal state (auto-fixed or failed)" icon="⏱" />
-            <KpiCard header="RCA Coverage" value={kpi.rca_coverage_percent} tooltip="Percentage of incidents that received AI-powered root cause analysis" icon="📊" />
-          </>
-        )}
-      </div>
+      {/* ── Hero Stats Banner ── */}
+      <HeroStatsBanner
+        loading={dashLoading}
+        stats={[
+          { value: kpi.in_progress,          label: "In Progress",        icon: "⟳",  tooltip: "Incidents currently being analyzed or fixed by pipeline agents" },
+          { value: kpi.total_incidents,       label: "Total Incidents",    icon: "⚠",  tooltip: "All incidents tracked by the auto-remediation pipeline" },
+          { value: kpi.pending_approval,      label: "Pending Approval",   icon: "📋", tooltip: "Fixes awaiting manual approval before deployment" },
+          { value: kpi.fix_failed,            label: "FIX FAILED",         icon: "↓",  tooltip: "Fix attempts that failed", valueStyle: { color: "#fca5a5" } },
+          { value: kpi.total_failed_messages, label: "Failed Messages",    icon: "✉",  tooltip: "SAP CPI messages currently in FAILED state" },
+          { value: kpi.auto_fix_rate != null ? `${kpi.auto_fix_rate}%` : "—",                                label: "Auto Fix Rate",       icon: "⚙",  tooltip: "Percentage of incidents resolved automatically" },
+          { value: kpi.avg_resolution_time_minutes != null ? `${kpi.avg_resolution_time_minutes}` : "—",    label: "Avg Resolution Time", icon: "⏱",  tooltip: "Mean time from detection to terminal state" },
+          { value: kpi.rca_coverage_percent != null ? `${kpi.rca_coverage_percent}` : "0", label: "RCA Coverage",       icon: "📊", tooltip: "Percentage of incidents that received AI root cause analysis" },
+        ]}
+      />
 
       {/* ── Status Breakdown + Error Distribution (side by side) ── */}
       <div className={styles.chartsRow}>
@@ -391,13 +390,19 @@ export default function Dashboard() {
         <SectionTitle title="Failure Over Time" />
         {dashLoading ? <SkeletonChart /> : (
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={timelineData} margin={{ left: 10, right: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" />
+            <AreaChart data={timelineData} margin={{ left: 10, right: 10 }}>
+              <defs>
+                <linearGradient id="failureAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f97316" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#f97316" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-              <YAxis />
+              <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Line type="monotone" dataKey="count" name="Failures" stroke="#c084fc" strokeWidth={2.5} dot={false} />
-            </LineChart>
+              <Area type="monotone" dataKey="count" name="Failures" stroke="#f97316" strokeWidth={2} fill="url(#failureAreaGrad)" dot={false} />
+            </AreaChart>
           </ResponsiveContainer>
         )}
       </div>
@@ -481,7 +486,7 @@ export default function Dashboard() {
               <tr>
                 <th title="Auto-generated UUID for this remediation incident">Incident ID</th>
                 <th title="SAP CPI message processing log identifier">Message GUID</th>
-                <th title="Integration flow associated with this incident">iFlow</th>
+                <th title="Integration flow associated with this incident">Integration Scenario</th>
                 <th title="Classified error category (e.g. MAPPING_ERROR, CONNECTION_ERROR)">Error Type</th>
                 <th title="Current pipeline stage for this incident">Status</th>
                 <th title="When this incident was first detected">Created At</th>
