@@ -1725,6 +1725,126 @@ async def cpi_monitor_trigger():
 
 
 # ─────────────────────────────────────────────
+# ITSM INTEGRATION
+# ─────────────────────────────────────────────
+
+@app.get("/itsm/status")
+async def itsm_status():
+    """
+    Show ITSM-Sierra destination config and in-process cache state.
+    Use this first to confirm env vars and VCAP_SERVICES are set correctly.
+    No real API call is made.
+    """
+    from integrations.itsm_client import _itsm_cache, _DESTINATION_NAME, _TICKETS_ENDPOINT
+    from db.database import get_open_itsm_tickets
+
+    open_tickets = []
+    try:
+        open_tickets = get_open_itsm_tickets()
+    except Exception:
+        pass
+
+    import time
+    cache_expires_in = max(0, round(_itsm_cache["expires_at"] - time.monotonic()))
+
+    return {
+        "destination_name":     _DESTINATION_NAME,
+        "tickets_endpoint":     _TICKETS_ENDPOINT,
+        "poll_interval_secs":   int(os.getenv("ITSM_POLL_INTERVAL", "300")),
+        "requester_id_set":     bool(os.getenv("ITSM_REQUESTER_ID")),
+        "vcap_services_present": bool(os.getenv("VCAP_SERVICES")),
+        "token_cache": {
+            "token_present":    bool(_itsm_cache.get("token")),
+            "base_url":         _itsm_cache.get("base_url") or "not resolved yet",
+            "expires_in_secs":  cache_expires_in if _itsm_cache.get("token") else None,
+        },
+        "open_itsm_tickets": len(open_tickets),
+    }
+
+
+@app.get("/itsm/verify")
+async def itsm_verify():
+    """
+    Verify the ITSM-Sierra SAP Destination end-to-end.
+    Step 1: resolve the destination (fetch token + base URL via Destination service).
+    Step 2: GET /odata/v4/ticket/Tickets?$top=1 to confirm the ITSM API is reachable.
+    Returns success/failure detail so you can diagnose connectivity issues.
+    """
+    import httpx
+    from integrations.itsm_client import _resolve_itsm_destination, _TICKETS_ENDPOINT
+
+    result: Dict[str, Any] = {
+        "destination_resolved": False,
+        "base_url":             None,
+        "itsm_api_reachable":   False,
+        "itsm_http_status":     None,
+        "error":                None,
+    }
+
+    try:
+        dest = await _resolve_itsm_destination()
+        if not dest:
+            result["error"] = "Destination resolution failed — check VCAP_SERVICES and SAP Destination binding"
+            return result
+
+        result["destination_resolved"] = True
+        result["base_url"]             = dest["base_url"]
+
+        # Ping the Tickets collection with $top=1 to confirm the ITSM API responds
+        url = f"{dest['base_url']}{_TICKETS_ENDPOINT}?$top=1"
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {dest['token']}",
+                    "Accept":        "application/json",
+                },
+            )
+        result["itsm_http_status"] = resp.status_code
+        result["itsm_api_reachable"] = resp.status_code < 400
+
+        if not result["itsm_api_reachable"]:
+            result["error"] = f"ITSM API returned HTTP {resp.status_code}: {resp.text[:200]}"
+
+    except Exception as exc:
+        result["error"] = str(exc)
+        logger.error("[ITSM] /itsm/verify error: %s", exc)
+
+    return result
+
+
+@app.post("/itsm/poll")
+async def itsm_poll_now():
+    """
+    Manually trigger one ITSM poll cycle immediately.
+    Checks all open tickets against ITSM and syncs any that have been resolved.
+    Use this to verify the poller logic without waiting for the 5-minute interval.
+    """
+    from jobs.itsm_poller import poll_itsm_tickets_once
+    from db.database import get_open_itsm_tickets
+
+    before = get_open_itsm_tickets()
+    errors: list = []
+
+    try:
+        clf = orchestrator._classifier if orchestrator else None
+        await poll_itsm_tickets_once(classifier=clf)
+    except Exception as exc:
+        errors.append(str(exc))
+        logger.error("[ITSM] /itsm/poll error: %s", exc)
+
+    after = get_open_itsm_tickets()
+    resolved_count = max(0, len(before) - len(after))
+
+    return {
+        "open_before":    len(before),
+        "open_after":     len(after),
+        "resolved_count": resolved_count,
+        "errors":         errors,
+    }
+
+
+# ─────────────────────────────────────────────
 # ENTRYPOINT
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
