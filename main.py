@@ -2001,6 +2001,52 @@ async def itsm_get_tickets(top: int = 20, status: Optional[str] = None):
         raise HTTPException(status_code=502, detail=str(exc))
 
 
+@app.post("/itsm/test-ticket")
+async def itsm_create_test_ticket():
+    """
+    Create a single test ticket directly in OhZone ITSM — bypasses the full pipeline.
+    Use this to confirm ticket creation works end-to-end without triggering RCA or fix agents.
+    The ticket is clearly marked as a test in its title and description.
+    Delete it from OhZone manually after confirming.
+    """
+    from integrations.itsm_client import create_itsm_ticket
+
+    test_payload = {
+        "title":           "[TEST] Orbit ITSM Integration Verification",
+        "description":     "This is a test ticket created by the Orbit Monitor app to verify the ITSM-sierra SAP Destination integration. Safe to delete.",
+        "iflow_id":        "TEST-IFLOW",
+        "error_type":      "TEST",
+        "priority":        "low",
+        "severity_code":   "low",
+        "impact_code":     "low",
+        "urgency_code":    "low",
+        "category":        "Integration",
+        "subcategory":     "Test",
+        "tags":            "orbit-test,sap-cpi,integration-verification",
+        "businessService": "SAP Integration",
+        "application":     "SAP CPI",
+        "component":       "Orbit Monitor",
+        "environment":     os.getenv("CPI_ENVIRONMENT", "production"),
+        "configItem":      "TEST-IFLOW",
+        "hostName":        "",
+        "errorCode":       "TEST",
+        "requester_id":    os.getenv("ITSM_REQUESTER_ID", ""),
+    }
+
+    itsm_id = await create_itsm_ticket(test_payload)
+    if itsm_id:
+        return {
+            "success":   True,
+            "itsm_id":   itsm_id,
+            "message":   f"Test ticket created in OhZone. ID={itsm_id}. Delete it manually after verifying.",
+        }
+    return {
+        "success": False,
+        "itsm_id": None,
+        "message": "create_itsm_ticket() returned None — check app logs for the error detail.",
+    }
+
+
 @app.post("/itsm/poll")
 async def itsm_poll_now():
     """
