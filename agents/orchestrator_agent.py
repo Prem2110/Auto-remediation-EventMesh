@@ -1154,9 +1154,9 @@ Rules:
                     timestamp=get_hana_timestamp(),
                 )
             else:
-                # Use 5 steps to match the 5 visual stages:
-                # 0=Submit 1=Get iFlow 2=Validate 3=Patch 4=Deploy
-                _PROGRESS_TOTAL = 5
+                # Use 6 steps to match the 6 visual stages:
+                # 0=Submit 1=Get iFlow 2=Validate 3=Patch 4=Deploy 5=Started
+                _PROGRESS_TOTAL = 6
                 self._set_progress(incident_id, "Agent: planning fix strategy…", 1, _PROGRESS_TOTAL)
 
                 _LABEL_TO_SLOT: dict = {
@@ -1172,6 +1172,8 @@ Rules:
                     "deploying iflow":           4,  # deploy-iflow
                     "deploy_iflow":              4,
                     "checking deployment":       4,
+                    "waiting for iflow":         5,  # post-deploy polling
+                    "iflow started":             5,  # STARTED confirmed
                 }
                 # Tracks the highest slot reached so correction/retry passes never
                 # visually regress the stage rail (e.g. get-iflow in pass 2 stays at 3+)

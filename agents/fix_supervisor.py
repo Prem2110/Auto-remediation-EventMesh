@@ -33,7 +33,7 @@ _MAX_ATTEMPTS    = 3
 _STRATEGY_ORDER  = ["direct_patch", "component_replace", "structured", "free_xml"]
 
 # Failure stages that are not recoverable by trying another strategy
-_NON_RECOVERABLE = {"locked", "timeout", "agent", "no_tool_calls", "validation_blocked"}
+_NON_RECOVERABLE = {"locked", "timeout", "agent", "no_tool_calls", "validation_blocked", "deploy_timeout"}
 
 
 @dataclass
@@ -200,7 +200,7 @@ class FixSupervisor:
                     new_issues=[],
                 )
 
-            result = await self._applier.apply(ctx, patch, vresult)
+            result = await self._applier.apply(ctx, patch, vresult, progress_fn=progress_fn)
 
             last_result = SuperviseResult(
                 success=result.success,

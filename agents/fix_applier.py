@@ -9,10 +9,11 @@ Exports:
   FixApplier   — async apply(ctx, patch, validate_result) -> ApplyResult
 """
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agents.fix_context import FixContext
 from agents.fix_generator import PatchSpec
@@ -59,6 +60,7 @@ class FixApplier:
         ctx: FixContext,
         patch: PatchSpec,
         validate_result: PreValidateResult,
+        progress_fn: Optional[Callable] = None,
     ) -> ApplyResult:
         # Pre-validation gate
         if not validate_result.passed:
@@ -77,9 +79,16 @@ class FixApplier:
             )
 
         if patch.mode == "structured":
-            return await self._apply_structured(ctx, patch, validate_result)
+            result = await self._apply_structured(ctx, patch, validate_result)
+        else:
+            result = self._evaluate_free_xml(patch)
 
-        return self._evaluate_free_xml(patch)
+        # After any deploy claimed success, poll SAP until iFlow reaches STARTED state.
+        # SAP CPI deploys asynchronously — 202 accepted ≠ iFlow running.
+        if result.deploy_success:
+            result = await self._poll_for_started(ctx, result, progress_fn=progress_fn)
+
+        return result
 
     # ── structured mode ───────────────────────────────────────────────────────
 
@@ -448,7 +457,148 @@ class FixApplier:
             "failed_steps": [],
         }
 
+    # ── post-deploy polling ───────────────────────────────────────────────────
+
+    async def _poll_for_started(
+        self,
+        ctx: FixContext,
+        result: ApplyResult,
+        progress_fn: Optional[Callable] = None,
+        max_polls: int = 18,
+        poll_interval: int = 10,
+        initial_wait: int = 5,
+    ) -> ApplyResult:
+        """
+        Poll get-iflow every poll_interval seconds (up to max_polls times) after
+        deploy-iflow returns 202.  Returns a new ApplyResult reflecting whether
+        SAP CPI actually reached STARTED state before the deadline.
+        """
+        await asyncio.sleep(initial_wait)
+
+        for poll_num in range(max_polls):
+            elapsed = initial_wait + poll_num * poll_interval
+            if progress_fn:
+                try:
+                    progress_fn(f"Agent: waiting for iFlow to start… ({elapsed}s)")
+                except Exception:
+                    pass
+
+            dstatus = "pending"
+            try:
+                sr = await self._mcp.execute_integration_tool(
+                    "get-iflow", {"id": ctx.iflow_id}
+                )
+                status_out = str(sr.get("output", ""))
+                dstatus = self._parse_deploy_status(status_out)
+                logger.info(
+                    "[FixApplier] deploy poll %d/%d iflow=%s status=%s out=%.120s",
+                    poll_num + 1, max_polls, ctx.iflow_id, dstatus, status_out[:120],
+                )
+            except Exception as poll_exc:
+                logger.debug(
+                    "[FixApplier] deploy poll %d/%d get-iflow error (non-fatal): iflow=%s: %s",
+                    poll_num + 1, max_polls, ctx.iflow_id, poll_exc,
+                )
+
+            if dstatus == "started":
+                logger.info(
+                    "[FixApplier] iFlow reached STARTED after ~%ds: iflow=%s",
+                    elapsed, ctx.iflow_id,
+                )
+                if progress_fn:
+                    try:
+                        progress_fn("Agent: iFlow started successfully")
+                    except Exception:
+                        pass
+                return ApplyResult(
+                    success=True,
+                    fix_applied=result.fix_applied,
+                    deploy_success=True,
+                    failed_stage=None,
+                    summary=result.summary,
+                    technical_details=result.technical_details,
+                    steps=result.steps,
+                )
+
+            if dstatus == "failed":
+                deploy_error = await self._fetch_deploy_error(ctx.iflow_id)
+                logger.warning(
+                    "[FixApplier] iFlow deploy FAILED during poll: iflow=%s error=%.200s",
+                    ctx.iflow_id, (deploy_error or "(none)")[:200],
+                )
+                return ApplyResult(
+                    success=False,
+                    fix_applied=result.fix_applied,
+                    deploy_success=False,
+                    failed_stage="deploy",
+                    summary=f"iFlow deployment failed: {(deploy_error or 'SAP CPI deploy error')[:300]}",
+                    technical_details=deploy_error or "",
+                    steps=result.steps,
+                )
+
+            if poll_num < max_polls - 1:
+                await asyncio.sleep(poll_interval)
+
+        # Timeout — SAP never reached STARTED within the window.
+        timeout_secs = initial_wait + max_polls * poll_interval
+        logger.warning(
+            "[FixApplier] Deploy poll timed out after ~%ds: iflow=%s",
+            timeout_secs, ctx.iflow_id,
+        )
+        return ApplyResult(
+            success=False,
+            fix_applied=result.fix_applied,
+            deploy_success=False,
+            failed_stage="deploy_timeout",
+            summary=(
+                f"iFlow '{ctx.iflow_id}' deployment did not reach STARTED within "
+                f"{timeout_secs}s. SAP CPI may still be processing — manual check required."
+            ),
+            technical_details=f"Poll timeout after {max_polls} × {poll_interval}s",
+            steps=result.steps,
+        )
+
+    async def _fetch_deploy_error(self, iflow_id: str) -> str:
+        try:
+            r = await self._mcp.execute_integration_tool(
+                "get-deploy-error", {"id": iflow_id}
+            )
+            return str(r.get("output", "")).strip()
+        except Exception:
+            return ""
+
     # ── static helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_deploy_status(output: str) -> str:
+        """Returns 'started', 'failed', or 'pending' based on a get-iflow response."""
+        lo = output.lower()
+        _STARTED = (
+            '"runtimestatus":"started"',  '"runtimestatus": "started"',
+            '"status":"started"',         '"status": "started"',
+            '"deploystatus":"started"',   '"deploystatus": "started"',
+            '"deploystatus":"deployed"',  '"deploystatus": "deployed"',
+            '"deploymentstatus":"deployed"', '"deploymentstatus": "deployed"',
+            '"deploymentstatus":"success"',  '"deploymentstatus": "success"',
+            '"deploystate":"started"',    '"deploystate": "started"',
+            '"deploystate":"success"',    '"deploystate": "success"',
+            'runtimestatus=started', 'runtimestatus=deployed',
+        )
+        _FAILED = (
+            '"runtimestatus":"error"',  '"runtimestatus": "error"',
+            '"deploystatus":"error"',   '"deploystatus": "error"',
+            '"deploystatus":"failed"',  '"deploystatus": "failed"',
+            '"deploymentstatus":"error"',  '"deploymentstatus": "error"',
+            '"deploymentstatus":"failed"', '"deploymentstatus": "failed"',
+            '"deploystate":"failed"',   '"deploystate": "failed"',
+            '"deploystate":"error"',    '"deploystate": "error"',
+            'runtimestatus=error', 'runtimestatus=failed',
+        )
+        if any(s in lo for s in _STARTED):
+            return "started"
+        if any(s in lo for s in _FAILED):
+            return "failed"
+        return "pending"
 
     @staticmethod
     def _update_succeeded(output: str) -> bool:
