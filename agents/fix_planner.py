@@ -468,7 +468,7 @@ class FixPlanner:
                     {"messages": [{"role": "user", "content": prompt}]},
                     config={"recursion_limit": 6},
                 ),
-                timeout=240.0,
+                timeout=float(os.getenv("FIX_PLANNER_TIMEOUT", "360.0")),
             )
             final_msg = result["messages"][-1]
             answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
