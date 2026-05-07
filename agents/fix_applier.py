@@ -151,7 +151,15 @@ class FixApplier:
                 deploy_result = await self._mcp.execute_integration_tool(
                     "deploy-iflow", {"id": ctx.iflow_id}
                 )
-                deploy_ok = self._deploy_succeeded(str(deploy_result.get("output", "")))
+                _cr_deploy_out = str(deploy_result.get("output", ""))
+                deploy_ok = self._deploy_succeeded(_cr_deploy_out)
+                # SAP CPI returns HTTP 202 with empty body for async deploys
+                if not deploy_ok and not _cr_deploy_out.strip() and not _cr_deploy_out.startswith("ERROR"):
+                    logger.info(
+                        "[FixApplier] component-replace deploy-iflow empty body — treating as 202 async success: iflow=%s",
+                        ctx.iflow_id,
+                    )
+                    deploy_ok = True
                 return ApplyResult(
                     success=deploy_ok,
                     fix_applied=True,
@@ -213,6 +221,13 @@ class FixApplier:
         )
         deploy_out = str(deploy_result.get("output", ""))
         deploy_ok  = self._deploy_succeeded(deploy_out)
+        # SAP CPI returns HTTP 202 with empty body for async deploys
+        if not deploy_ok and not deploy_out.strip() and not deploy_out.startswith("ERROR"):
+            logger.info(
+                "[FixApplier] deploy-iflow empty body — treating as 202 async success: iflow=%s",
+                ctx.iflow_id,
+            )
+            deploy_ok = True
         logger.info(
             "[FixApplier] structured deploy result: iflow=%s deploy_ok=%s output=%.300s",
             ctx.iflow_id, deploy_ok, deploy_out,
@@ -374,6 +389,12 @@ class FixApplier:
             elif "deploy_iflow" in tool_name or "deploy-iflow" in tool_name:
                 deploy_output = output
                 deploy_ok     = self._deploy_succeeded(output)
+                # SAP CPI returns HTTP 202 with empty body for async deploys
+                if not deploy_ok and not output.strip() and not output.startswith("ERROR"):
+                    logger.info(
+                        "[FixApplier] deploy-iflow empty body in free_xml steps — treating as 202 async success"
+                    )
+                    deploy_ok = True
 
         logger.info(
             "[FixApplier] evaluate_fix_result summary: update_ok=%s deploy_ok=%s "

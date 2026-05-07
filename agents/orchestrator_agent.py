@@ -991,6 +991,7 @@ Rules:
                 "current_value":      rca.get("current_value") or "",
                 "correct_value":      rca.get("correct_value") or "",
             })
+            self._set_progress(incident_id, "Agent: classifying error type…", 1, total)
 
         # ── Unfixable detection ───────────────────────────────────────────────
         # Clear-cut structural signals: these always require changes that cannot be
@@ -1156,11 +1157,15 @@ Rules:
                 # Use 5 steps to match the 5 visual stages:
                 # 0=Submit 1=Get iFlow 2=Validate 3=Patch 4=Deploy
                 _PROGRESS_TOTAL = 5
-                self._set_progress(incident_id, "Applying fix and deploying iFlow…", 1, _PROGRESS_TOTAL)
+                self._set_progress(incident_id, "Agent: planning fix strategy…", 1, _PROGRESS_TOTAL)
 
                 _LABEL_TO_SLOT: dict = {
                     "reading current iflow":     1,  # get-iflow
                     "get_iflow":                 1,
+                    "planning fix strategy":     1,  # pre-patch planning
+                    "generating xml patch":      2,  # LLM patch generation
+                    "retrying patch generation": 2,
+                    "validating patched xml":    2,  # post-patch XML check
                     "validate":                  2,  # validate_iflow_xml
                     "uploading fixed iflow":     3,  # update-iflow
                     "update_iflow":              3,

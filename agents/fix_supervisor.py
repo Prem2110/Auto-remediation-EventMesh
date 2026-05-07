@@ -125,7 +125,20 @@ class FixSupervisor:
                             attempt, _restore_exc,
                         )
 
+            if progress_fn:
+                try:
+                    label = "Agent: retrying patch generation…" if attempt > 1 else "Agent: generating XML patch…"
+                    progress_fn(label)
+                except Exception:
+                    pass
+
             patch   = await self._generator.generate(ctx, strategy, progress_fn=progress_fn)
+
+            if progress_fn and patch.raw_answer != "__VALIDATION_BLOCKED__":
+                try:
+                    progress_fn("Agent: validating patched XML…")
+                except Exception:
+                    pass
 
             # Structural validation block — agent cannot self-correct; stop immediately.
             if patch.raw_answer == "__VALIDATION_BLOCKED__":
