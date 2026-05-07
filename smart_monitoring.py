@@ -1040,6 +1040,8 @@ async def list_messages_paginated(
             "incident_status": inc_status,
         })
 
+    filtered_messages.sort(key=lambda m: m.get("log_end") or "", reverse=True)
+
     total_count = len(filtered_messages)
     total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
 

@@ -784,6 +784,8 @@ async def get_incidents_paginated(
             and (status is None or str(inc.get("status")).upper() == status.upper())
         ]
         
+        filtered_incidents.sort(key=lambda inc: inc.get("created_at") or "", reverse=True)
+
         total_count = len(filtered_incidents)
         total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
         
