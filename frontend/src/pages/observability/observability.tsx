@@ -526,7 +526,7 @@ function ErrorExplanationCard({ exp }: { exp: IErrorExplanation }) {
    ════════════════════════════════════════════════════════════════════════ */
 export default function Observability() {
   // Main tab state
-  const [mainTab, setMainTab] = useState<MainTabKey>("errortypeguide");
+  const [mainTab, setMainTab] = useState<MainTabKey>("messages");
   const [filters, setFilters] = useState<IFilterState>(INITIAL_FILTERS);
   const [selectedGuid, setSelectedGuid] = useState<string | null>(null);
   const [selectedMsg, setSelectedMsg] = useState<IMonitorMessage | null>(null);
