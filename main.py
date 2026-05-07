@@ -1906,9 +1906,24 @@ async def itsm_verify():
         diag["step6_error"] = "authTokens array is empty — check the destination's OAuth config in SAP BTP"
         return diag
 
-    itsm_token = auth_tokens[0].get("value", "")
+    # Expose the full authTokens[0] entry (minus the token value itself) so the
+    # Destination service's own error message is visible in the response.
+    first_token = auth_tokens[0] if auth_tokens else {}
+    diag["step6_auth_token_meta"] = {
+        "type":             first_token.get("type"),
+        "error":            first_token.get("error"),
+        "errorDescription": first_token.get("errorDescription"),
+        "http_status":      first_token.get("http"),
+        "value_empty":      not bool(first_token.get("value", "")),
+    }
+
+    itsm_token = first_token.get("value", "")
     if not itsm_token:
-        diag["step6_error"] = "authTokens[0].value is empty"
+        token_err = first_token.get("error") or first_token.get("errorDescription") or "unknown"
+        diag["step6_error"] = (
+            f"authTokens[0].value is empty — Destination service could not fetch the ITSM OAuth token. "
+            f"Destination service error: {token_err}"
+        )
         return diag
 
     # ── Step 7: Ping ITSM Tickets endpoint ───────────────────────────────────
