@@ -373,7 +373,15 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         _groovy_rules_ctx = CPI_IFLOW_GROOVY_RULES if _et in _groovy_relevant else ""
         _xml_patterns_ctx = CPI_IFLOW_XML_PATTERNS if _et in _struct_relevant else ""
 
-        prompt = FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
+        # When the XML is already in this prompt, tell the agent to skip the get-iflow
+        # call (STEP 1 in the system prompt). That call costs 30-90s and 2 recursion
+        # steps before the fix work starts, causing "timed out before update-iflow" errors.
+        _skip_note = (
+            "IMPORTANT — SKIP STEP 1: The iFlow XML is pre-fetched and provided at the end of "
+            "this message. Do NOT call get-iflow. Proceed directly to STEP 2.\n\n"
+        ) if (ctx.original_xml or ctx.sliced_xml) else ""
+
+        prompt = _skip_note + FIX_AND_DEPLOY_PROMPT_TEMPLATE.format(
             iflow_id=ctx.iflow_id,
             error_type=ctx.error_type or "UNKNOWN",
             error_message=(ctx.error_message or "")[:3000],
