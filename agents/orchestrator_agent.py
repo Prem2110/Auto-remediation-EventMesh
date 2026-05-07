@@ -1233,6 +1233,36 @@ Rules:
                     human_approved=human_approved,
                 )
 
+            if final_status in {"FIX_FAILED", "FIX_FAILED_DEPLOY", "FIX_FAILED_UPDATE"}:
+                try:
+                    ticket_data = {
+                        "iflow_id":    iflow_id,
+                        "incident_id": incident_id,
+                        "error_type":  rca.get("error_type", "UNKNOWN"),
+                        "title":       f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
+                        "description": (
+                            f"Auto-remediation exhausted all fix attempts for iFlow '{iflow_id}'.\n"
+                            f"Last failed stage: {fix_result.get('failed_stage', 'unknown')}.\n"
+                            f"Root cause: {rca.get('root_cause', 'N/A')}\n"
+                            f"Proposed fix: {rca.get('proposed_fix', 'N/A')}\n"
+                            f"Fix summary: {fix_summary}"
+                        ),
+                        "priority":    "HIGH",
+                        "status":      "OPEN",
+                        "assigned_to": _TICKET_ASSIGNEE or None,
+                    }
+                    ticket_id = create_escalation_ticket(ticket_data)
+                    logger.info(
+                        "[FIX] Fix failed for incident=%s iflow=%s — escalation ticket created: %s",
+                        incident_id, iflow_id, ticket_id,
+                    )
+                    final_status = "TICKET_CREATED"
+                except Exception as _ticket_exc:
+                    logger.error(
+                        "[FIX] Failed to create escalation ticket for incident=%s: %s",
+                        incident_id, _ticket_exc,
+                    )
+
             technical_details = fix_result.get("technical_details", "")
             if technical_details and not fix_result.get("success"):
                 fix_summary = (
@@ -1318,6 +1348,7 @@ Rules:
                 "[FIX] Unhandled exception in execute_incident_fix for incident=%s iflow=%s: %s",
                 incident_id, iflow_id, _fix_exc,
             )
+            _exc_status = "FIX_FAILED"
             try:
                 update_incident(incident_id, {
                     "status":            "FIX_FAILED",
@@ -1326,10 +1357,37 @@ Rules:
                 })
             except Exception:
                 pass
+            try:
+                _exc_ticket_data = {
+                    "iflow_id":    iflow_id,
+                    "incident_id": incident_id,
+                    "error_type":  "UNKNOWN",
+                    "title":       f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
+                    "description": (
+                        f"Auto-remediation raised an unhandled exception for iFlow '{iflow_id}'.\n"
+                        f"Last failed stage: agent.\n"
+                        f"Error: {str(_fix_exc)[:800]}"
+                    ),
+                    "priority":    "HIGH",
+                    "status":      "OPEN",
+                    "assigned_to": _TICKET_ASSIGNEE or None,
+                }
+                _exc_ticket_id = create_escalation_ticket(_exc_ticket_data)
+                logger.info(
+                    "[FIX] Fix failed for incident=%s iflow=%s — escalation ticket created: %s",
+                    incident_id, iflow_id, _exc_ticket_id,
+                )
+                _exc_status = "TICKET_CREATED"
+                update_incident(incident_id, {"status": "TICKET_CREATED"})
+            except Exception as _ticket_exc:
+                logger.error(
+                    "[FIX] Failed to create escalation ticket for incident=%s: %s",
+                    incident_id, _ticket_exc,
+                )
             return {
                 "incident_id":    incident_id,
                 "iflow_id":       iflow_id,
-                "status":         "FIX_FAILED",
+                "status":         _exc_status,
                 "success":        False,
                 "fix_applied":    False,
                 "deploy_success": False,
