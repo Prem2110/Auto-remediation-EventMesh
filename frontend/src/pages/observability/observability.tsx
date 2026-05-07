@@ -341,7 +341,7 @@ function FixPlanSteps({ steps }: { steps: IFixPlanStep[] }) {
 }
 
 /* ── Pipeline stage rail (shown during fix execution) ───────────────── */
-const FIX_STAGES = ["Submit", "Get iFlow", "Validate", "Patch", "Deploy"] as const;
+const FIX_STAGES = ["Submit", "Get iFlow", "Validate", "Patch", "Deploy", "Started"] as const;
 
 function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: number; totalSteps: number; currentStep?: string }) {
   const slots = FIX_STAGES.length;
@@ -349,7 +349,7 @@ function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: 
   const active = allDone
     ? slots  // beyond last slot — all are "done"
     : totalSteps >= slots
-      // Direct 1:1 mapping: backend emits step indices 0–4 matching the 5 visual slots
+      // Direct 1:1 mapping: backend emits step indices 0–5 matching the 6 visual slots
       ? Math.min(stepIndex, slots - 1)
       // Legacy proportional mapping for older backends
       : Math.min(
@@ -857,7 +857,7 @@ export default function Observability() {
     const isForce = true;
     setFixState("loading");
     setFixResult("");
-    setFixProgress({ currentStep: "Submitting fix request…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
+    setFixProgress({ currentStep: "Submitting fix request…", stepIndex: 0, totalSteps: 6, stepsDone: [] });
     pollAbortRef.current.cancelled = false;
     try {
       const proposedFix =
@@ -906,7 +906,7 @@ export default function Observability() {
         const incidentId = detail?.incident_id || "";
         if (incidentId) {
           setFixResult("");
-          setFixProgress({ currentStep: "Fix already in progress — connecting…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
+          setFixProgress({ currentStep: "Fix already in progress — connecting…", stepIndex: 0, totalSteps: 6, stepsDone: [] });
           await startFixPolling(incidentId);
         } else {
           setFixState("error");
@@ -927,7 +927,7 @@ export default function Observability() {
     if (!incidentId) return;
     setFixState("loading");
     setFixResult("");
-    setFixProgress({ currentStep: "Reconnecting to fix pipeline…", stepIndex: 0, totalSteps: 5, stepsDone: [] });
+    setFixProgress({ currentStep: "Reconnecting to fix pipeline…", stepIndex: 0, totalSteps: 6, stepsDone: [] });
     pollAbortRef.current.cancelled = false;
     await startFixPolling(incidentId);
   }, [detail, startFixPolling]);
@@ -947,7 +947,7 @@ export default function Observability() {
         st === "FIX_APPLIED_PENDING_VERIFICATION"  ? "Verifying fix…" :
                                                      "Fix in progress…";
       setFixState("loading");
-      setFixProgress({ currentStep: stepLabel, stepIndex: 0, totalSteps: 5, stepsDone: [] });
+      setFixProgress({ currentStep: stepLabel, stepIndex: 0, totalSteps: 6, stepsDone: [] });
       if (incidentId) {
         // Full live polling
         pollAbortRef.current.cancelled = false;
