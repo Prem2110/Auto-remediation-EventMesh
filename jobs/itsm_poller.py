@@ -40,9 +40,8 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = int(os.getenv("ITSM_POLL_INTERVAL", "300"))  # default 5 min
 
-# Confirmed from ITSM GET response — update if your ITSM uses different values.
-# Current observed value: "assigned". Add the closed/resolved value once confirmed.
-_RESOLVED_STATUSES = {"resolved", "closed", "done", "completed", "cancelled"}
+# Confirmed status values from OhZone ITSM: New, Assigned, Pending, Resolved, Cancelled
+_RESOLVED_STATUSES = {"resolved", "cancelled"}
 
 
 def _now_iso() -> str:

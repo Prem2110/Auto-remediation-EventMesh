@@ -1953,6 +1953,54 @@ async def itsm_verify():
     return diag
 
 
+@app.get("/itsm/tickets")
+async def itsm_get_tickets(top: int = 20, status: Optional[str] = None):
+    """
+    Fetch tickets directly from the OhZone ITSM API (not local DB).
+    Use this to confirm what tickets exist in ITSM and their current status.
+
+    Query params:
+      top    — max tickets to return (default 20)
+      status — filter by status e.g. ?status=Assigned (optional)
+    """
+    import httpx
+    from integrations.itsm_client import _resolve_itsm_destination, _TICKETS_ENDPOINT
+
+    dest = await _resolve_itsm_destination()
+    if not dest:
+        raise HTTPException(status_code=503, detail="ITSM-sierra destination could not be resolved")
+
+    try:
+        params = f"?$top={top}&$orderby=createdAt desc"
+        if status:
+            params += f"&$filter=status eq '{status}'"
+
+        url = f"{dest['base_url']}{_TICKETS_ENDPOINT}{params}"
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {dest['token']}",
+                    "Accept":        "application/json",
+                },
+            )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # OData v4 returns either a top-level list or {"value": [...]}
+        tickets = data if isinstance(data, list) else data.get("value", data)
+
+        return {
+            "source":       "ITSM OhZone (live)",
+            "total_returned": len(tickets) if isinstance(tickets, list) else 1,
+            "filter_status": status or "all",
+            "tickets":      tickets,
+        }
+    except Exception as exc:
+        logger.error("[ITSM] /itsm/tickets fetch error: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 @app.post("/itsm/poll")
 async def itsm_poll_now():
     """
