@@ -21,6 +21,14 @@ _TICKETS_ENDPOINT = "/odata/v4/ticket/Tickets"
 _itsm_cache: Dict[str, Any] = {"token": None, "base_url": None, "expires_at": 0.0}
 
 
+def _invalidate_cache() -> None:
+    """Clear cached token so the next call forces a fresh Destination resolution."""
+    _itsm_cache["token"]      = None
+    _itsm_cache["base_url"]   = None
+    _itsm_cache["expires_at"] = 0.0
+    logger.warning("[ITSM] Token cache invalidated — will re-resolve on next request")
+
+
 async def _resolve_itsm_destination() -> Optional[Dict[str, str]]:
     """
     Resolve the ITSM-Sierra SAP Destination.
@@ -151,6 +159,8 @@ async def create_itsm_ticket(ticket: Dict) -> Optional[str]:
                     "Accept":        "application/json",
                 },
             )
+        if resp.status_code in (401, 403):
+            _invalidate_cache()
         resp.raise_for_status()
         data = resp.json()
         # "ID" confirmed as the field name from the real ITSM POST response
@@ -184,6 +194,8 @@ async def get_itsm_ticket(itsm_ticket_id: str) -> Optional[Dict]:
                     "Accept":        "application/json",
                 },
             )
+        if resp.status_code in (401, 403):
+            _invalidate_cache()
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:
