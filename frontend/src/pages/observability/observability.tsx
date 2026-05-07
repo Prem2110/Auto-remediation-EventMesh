@@ -988,12 +988,6 @@ export default function Observability() {
       {/* ── Main Tab Navigation ── */}
       <div className={styles.mainTabBar}>
         <button
-          className={`${styles.mainTab} ${mainTab === "errortypeguide" ? styles.mainTabActive : ""}`}
-          onClick={() => setMainTab("errortypeguide")}
-        >
-          Error Type Guide
-        </button>
-        <button
           className={`${styles.mainTab} ${mainTab === "messages" ? styles.mainTabActive : ""}`}
           onClick={() => setMainTab("messages")}
         >
@@ -1010,6 +1004,12 @@ export default function Observability() {
           onClick={() => setMainTab("approvals")}
         >
           Approvals
+        </button>
+        <button
+          className={`${styles.mainTab} ${mainTab === "errortypeguide" ? styles.mainTabActive : ""}`}
+          onClick={() => setMainTab("errortypeguide")}
+        >
+          Error Type Guide
         </button>
       </div>
 
