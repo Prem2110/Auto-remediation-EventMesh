@@ -14,7 +14,7 @@ from cpi_monitor.cpi_poller import get_destination_service_creds
 
 logger = logging.getLogger(__name__)
 
-_DESTINATION_NAME = "ITSM-Sierra"
+_DESTINATION_NAME = "ITSM-sierra"
 _TICKETS_ENDPOINT = "/odata/v4/ticket/Tickets"
 
 # Token + base URL cache (same pattern as _em_cache in error_publisher.py)

@@ -1765,52 +1765,177 @@ async def itsm_status():
 @app.get("/itsm/verify")
 async def itsm_verify():
     """
-    Verify the ITSM-Sierra SAP Destination end-to-end.
-    Step 1: resolve the destination (fetch token + base URL via Destination service).
-    Step 2: GET /odata/v4/ticket/Tickets?$top=1 to confirm the ITSM API is reachable.
-    Returns success/failure detail so you can diagnose connectivity issues.
-    """
-    import httpx
-    from integrations.itsm_client import _resolve_itsm_destination, _TICKETS_ENDPOINT
+    Step-by-step diagnostic for the ITSM-Sierra SAP Destination.
+    Each step is reported independently so you can see exactly where resolution breaks.
 
-    result: Dict[str, Any] = {
-        "destination_resolved": False,
-        "base_url":             None,
-        "itsm_api_reachable":   False,
-        "itsm_http_status":     None,
-        "error":                None,
+    Steps:
+      1. VCAP_SERVICES present and parseable
+      2. Destination service binding found (key: "destination" or "destination-lite")
+      3. Credentials complete (uri, clientid, clientsecret all non-empty)
+      4. OAuth token fetch from Destination service token URL
+      5. Named destination "ITSM-Sierra" fetched from Destination API
+      6. base URL and authTokens extracted from destination response
+      7. GET /odata/v4/ticket/Tickets?$top=1 — ITSM API reachable
+    """
+    import json as _json
+    import httpx
+    from cpi_monitor.cpi_poller import get_destination_service_creds
+    from integrations.itsm_client import _DESTINATION_NAME, _TICKETS_ENDPOINT
+
+    diag: Dict[str, Any] = {
+        "step1_vcap_present":          False,
+        "step2_dest_binding_found":    False,
+        "step3_creds_complete":        False,
+        "step3_detail": {
+            "uri":          None,
+            "token_url":    None,
+            "client_id":    None,
+            "client_secret": None,
+        },
+        "step4_dest_token_ok":         False,
+        "step4_error":                 None,
+        "step5_named_dest_fetched":    False,
+        "step5_http_status":           None,
+        "step5_error":                 None,
+        "step6_base_url":              None,
+        "step6_auth_tokens_present":   False,
+        "step7_itsm_api_reachable":    False,
+        "step7_http_status":           None,
+        "step7_error":                 None,
+        "overall_ok":                  False,
     }
 
+    # ── Step 1: VCAP_SERVICES present ────────────────────────────────────────
+    vcap_raw = os.getenv("VCAP_SERVICES", "")
+    if not vcap_raw:
+        diag["step1_vcap_present"] = False
+        diag["step1_error"] = "VCAP_SERVICES env var is empty or not set"
+        return diag
     try:
-        dest = await _resolve_itsm_destination()
-        if not dest:
-            result["error"] = "Destination resolution failed — check VCAP_SERVICES and SAP Destination binding"
-            return result
+        vcap = _json.loads(vcap_raw)
+        diag["step1_vcap_present"] = True
+        diag["step1_keys"] = list(vcap.keys())
+    except Exception as exc:
+        diag["step1_error"] = f"VCAP_SERVICES is not valid JSON: {exc}"
+        return diag
 
-        result["destination_resolved"] = True
-        result["base_url"]             = dest["base_url"]
+    # ── Step 2: Destination service binding ──────────────────────────────────
+    creds = get_destination_service_creds()
+    if not creds:
+        diag["step2_dest_binding_found"] = False
+        diag["step2_error"] = (
+            "No 'destination' or 'destination-lite' key found in VCAP_SERVICES. "
+            f"Keys present: {list(vcap.keys())}"
+        )
+        return diag
+    diag["step2_dest_binding_found"] = True
 
-        # Ping the Tickets collection with $top=1 to confirm the ITSM API responds
-        url = f"{dest['base_url']}{_TICKETS_ENDPOINT}?$top=1"
+    # ── Step 3: Credentials complete ─────────────────────────────────────────
+    dest_uri   = creds.get("uri", "")
+    token_url  = creds.get("url", "").rstrip("/") + "/oauth/token"
+    client_id  = creds.get("clientid", "")
+    client_sec = creds.get("clientsecret", "")
+
+    diag["step3_detail"] = {
+        "uri":           dest_uri or "MISSING",
+        "token_url":     token_url if creds.get("url") else "MISSING (url field empty)",
+        "client_id":     "SET" if client_id else "MISSING",
+        "client_secret": "SET" if client_sec else "MISSING",
+    }
+
+    if not (dest_uri and client_id and client_sec):
+        diag["step3_creds_complete"] = False
+        diag["step3_error"] = "One or more required credential fields are empty — see step3_detail"
+        return diag
+    diag["step3_creds_complete"] = True
+
+    # ── Step 4: OAuth token from Destination service ──────────────────────────
+    dest_token = None
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            tok_resp = await client.post(
+                token_url,
+                data={
+                    "grant_type":    "client_credentials",
+                    "client_id":     client_id,
+                    "client_secret": client_sec,
+                },
+            )
+        tok_resp.raise_for_status()
+        dest_token = tok_resp.json().get("access_token", "")
+        diag["step4_dest_token_ok"] = bool(dest_token)
+        if not dest_token:
+            diag["step4_error"] = "Token response did not contain access_token"
+            return diag
+    except Exception as exc:
+        diag["step4_error"] = str(exc)
+        return diag
+
+    # ── Step 5: Fetch named destination "ITSM-Sierra" ────────────────────────
+    dest_data = None
+    try:
+        dest_api_url = f"{dest_uri.rstrip('/')}/destination-configuration/v1/destinations/{_DESTINATION_NAME}"
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                url,
+            dest_resp = await client.get(
+                dest_api_url,
+                headers={"Authorization": f"Bearer {dest_token}"},
+            )
+        diag["step5_http_status"] = dest_resp.status_code
+        dest_resp.raise_for_status()
+        dest_data = dest_resp.json()
+        diag["step5_named_dest_fetched"] = True
+        diag["step5_dest_keys"] = list(dest_data.keys()) if dest_data else []
+    except Exception as exc:
+        diag["step5_error"] = str(exc)
+        if dest_resp is not None:
+            diag["step5_response_body"] = dest_resp.text[:300]
+        return diag
+
+    # ── Step 6: Extract base URL and authTokens ───────────────────────────────
+    base_url    = dest_data.get("destinationConfiguration", {}).get("URL", "").rstrip("/")
+    auth_tokens = dest_data.get("authTokens", [])
+
+    diag["step6_base_url"]            = base_url or "MISSING — URL field empty in destinationConfiguration"
+    diag["step6_auth_tokens_present"] = bool(auth_tokens)
+    diag["step6_auth_token_count"]    = len(auth_tokens)
+
+    if not base_url:
+        diag["step6_error"] = "destinationConfiguration.URL is empty"
+        return diag
+    if not auth_tokens:
+        diag["step6_error"] = "authTokens array is empty — check the destination's OAuth config in SAP BTP"
+        return diag
+
+    itsm_token = auth_tokens[0].get("value", "")
+    if not itsm_token:
+        diag["step6_error"] = "authTokens[0].value is empty"
+        return diag
+
+    # ── Step 7: Ping ITSM Tickets endpoint ───────────────────────────────────
+    try:
+        ping_url = f"{base_url}{_TICKETS_ENDPOINT}?$top=1"
+        async with httpx.AsyncClient(timeout=10) as client:
+            ping_resp = await client.get(
+                ping_url,
                 headers={
-                    "Authorization": f"Bearer {dest['token']}",
+                    "Authorization": f"Bearer {itsm_token}",
                     "Accept":        "application/json",
                 },
             )
-        result["itsm_http_status"] = resp.status_code
-        result["itsm_api_reachable"] = resp.status_code < 400
-
-        if not result["itsm_api_reachable"]:
-            result["error"] = f"ITSM API returned HTTP {resp.status_code}: {resp.text[:200]}"
-
+        diag["step7_http_status"]      = ping_resp.status_code
+        diag["step7_itsm_api_reachable"] = ping_resp.status_code < 400
+        if not diag["step7_itsm_api_reachable"]:
+            diag["step7_error"] = f"HTTP {ping_resp.status_code}: {ping_resp.text[:300]}"
     except Exception as exc:
-        result["error"] = str(exc)
-        logger.error("[ITSM] /itsm/verify error: %s", exc)
+        diag["step7_error"] = str(exc)
 
-    return result
+    diag["overall_ok"] = (
+        diag["step4_dest_token_ok"]
+        and diag["step5_named_dest_fetched"]
+        and diag["step6_auth_tokens_present"]
+        and diag["step7_itsm_api_reachable"]
+    )
+    return diag
 
 
 @app.post("/itsm/poll")
