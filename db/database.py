@@ -161,22 +161,50 @@ def _migrate_fix_patterns_table(conn) -> None:
     Each ALTER executes in its own try/except so a "column already exists"
     error from HANA is silently ignored while any real error is debug-logged.
     """
-    _MIGRATIONS = [
-        f'ALTER TABLE "{_FIX_TABLE}" ADD ("success_count" INTEGER DEFAULT 0)',
-        f'ALTER TABLE "{_FIX_TABLE}" ADD ("replay_success_count" INTEGER DEFAULT 0)',
-        f'ALTER TABLE "{_FIX_TABLE}" ADD ("key_steps" NVARCHAR(2000))',
-        f'ALTER TABLE "{_FIX_TABLE}" ADD ("supervisor_strategy" NVARCHAR(50))',
+    _NEEDED = [
+        ("SUCCESS_COUNT",        "success_count",        "INTEGER DEFAULT 0"),
+        ("REPLAY_SUCCESS_COUNT", "replay_success_count", "INTEGER DEFAULT 0"),
+        ("KEY_STEPS",            "key_steps",            "NVARCHAR(2000)"),
+        ("SUPERVISOR_STRATEGY",  "supervisor_strategy",  "NVARCHAR(50)"),
     ]
+    schema_q = os.getenv("HANA_SCHEMA", "")
     cur = conn.cursor()
-    for sql in _MIGRATIONS:
-        try:
-            cur.execute(sql)
-            # Extract column name from ALTER statement for the log message
-            col = sql.split('"')[3] if sql.count('"') >= 4 else sql
-            logger.info("[DB] Migration applied: ADD %s to %s", col, _FIX_TABLE)
-        except Exception as col_err:
-            # HANA raises an error when the column already exists — this is expected
-            logger.debug("[DB] _migrate_fix_patterns_table skipped (likely exists): %s", col_err)
+
+    try:
+        if schema_q:
+            cur.execute(
+                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS "
+                "WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
+                (_FIX_TABLE.upper(), schema_q),
+            )
+        else:
+            cur.execute(
+                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?",
+                (_FIX_TABLE.upper(),),
+            )
+        existing = {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        logger.warning("[DB] Could not query SYS.TABLE_COLUMNS for %s: %s", _FIX_TABLE, e)
+        existing = set()
+
+    for col_upper, col_lower, col_type in _NEEDED:
+        if col_upper in existing:
+            continue
+        if col_lower in existing:
+            try:
+                # SAP HANA syntax: ALTER TABLE <t> DROP (<col>)
+                # (DROP COLUMN is not supported and yields "incorrect syntax near COLUMN")
+                cur.execute(f'ALTER TABLE "{_FIX_TABLE}" DROP ("{col_lower}")')
+                cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ({col_upper} {col_type})')
+                logger.info("[DB] Recreated column %s as %s in %s", col_lower, col_upper, _FIX_TABLE)
+            except Exception as e:
+                logger.warning("[DB] Could not recreate %s in %s: %s", col_lower, _FIX_TABLE, e)
+        else:
+            try:
+                cur.execute(f'ALTER TABLE "{_FIX_TABLE}" ADD ({col_upper} {col_type})')
+                logger.info("[DB] Added column %s to %s", col_upper, _FIX_TABLE)
+            except Exception as e:
+                logger.debug("[DB] Could not add %s to %s: %s", col_upper, _FIX_TABLE, e)
 
 
 def ensure_fix_patterns_schema():
@@ -189,6 +217,72 @@ def ensure_fix_patterns_schema():
     except Exception as e:
         logger.warning(f"ensure_fix_patterns_schema: {e}")
 
+
+
+def _migrate_escalation_tickets_table(conn) -> None:
+    """
+    Ensure EM_ESCALATION_TICKETS has all required columns stored as uppercase
+    identifiers (matching unquoted SQL throughout the codebase).
+
+    HANA stores unquoted identifiers as uppercase and quoted identifiers
+    case-sensitively. Earlier migrations used quoted column names (lowercase),
+    which makes them invisible to unquoted INSERT/SELECT statements. This
+    function corrects that by:
+      - Renaming any existing lowercase-quoted column to its uppercase form
+      - Adding any column that is completely missing (unquoted → uppercase)
+    """
+    _NEEDED = [
+        ("TICKET_SOURCE",    "ticket_source",    "NVARCHAR(50)"),
+        ("ITSM_TICKET_ID",   "itsm_ticket_id",   "NVARCHAR(200)"),
+        ("MESSAGE_GUID",     "message_guid",      "NVARCHAR(200)"),
+        ("HUMAN_FIX_SUMMARY","human_fix_summary", "NCLOB"),
+        ("HUMAN_FIX_STEPS",  "human_fix_steps",   "NCLOB"),
+        ("HUMAN_RESOLVED_AT","human_resolved_at", "NVARCHAR(64)"),
+        ("PATTERN_STORED",   "pattern_stored",    "INTEGER DEFAULT 0"),
+    ]
+    schema_q = os.getenv("HANA_SCHEMA", "")
+    cur = conn.cursor()
+
+    # Query actual column names from HANA catalog
+    try:
+        if schema_q:
+            cur.execute(
+                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS "
+                "WHERE TABLE_NAME=? AND SCHEMA_NAME=?",
+                (_TICKETS_TABLE.upper(), schema_q),
+            )
+        else:
+            cur.execute(
+                "SELECT COLUMN_NAME FROM SYS.TABLE_COLUMNS WHERE TABLE_NAME=?",
+                (_TICKETS_TABLE.upper(),),
+            )
+        existing = {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        logger.warning("[DB] Could not query SYS.TABLE_COLUMNS for %s: %s", _TICKETS_TABLE, e)
+        existing = set()
+
+    for col_upper, col_lower, col_type in _NEEDED:
+        if col_upper in existing:
+            continue  # already correct
+        if col_lower in existing:
+            # Exists as lowercase (added by old quoted ALTER) — rename to uppercase
+            try:
+                # SAP HANA syntax: ALTER TABLE <t> DROP (<col>)
+                # (DROP COLUMN is not supported and yields "incorrect syntax near COLUMN")
+                cur.execute(f'ALTER TABLE "{_TICKETS_TABLE}" DROP ("{col_lower}")')
+                cur.execute(f'ALTER TABLE "{_TICKETS_TABLE}" ADD ({col_upper} {col_type})')
+                logger.info("[DB] Recreated column %s as %s in %s", col_lower, col_upper, _TICKETS_TABLE)
+            except Exception as e:
+                logger.warning("[DB] Could not recreate %s in %s: %s", col_lower, _TICKETS_TABLE, e)
+        else:
+            # Column is completely absent — add it (unquoted → stored as uppercase)
+            try:
+                cur.execute(
+                    f'ALTER TABLE "{_TICKETS_TABLE}" ADD ({col_upper} {col_type})'
+                )
+                logger.info("[DB] Added column %s to %s", col_upper, _TICKETS_TABLE)
+            except Exception as e:
+                logger.debug("[DB] Could not add %s to %s: %s", col_upper, _TICKETS_TABLE, e)
 
 
 def ensure_em_schema():
@@ -273,21 +367,29 @@ def ensure_em_schema():
         cur.execute(check, (_TICKETS_TABLE.upper(), schema_q) if schema_q else (_TICKETS_TABLE.upper(),))
         if int(cur.fetchone()[0]) == 0:
             cur.execute(f"""CREATE TABLE "{_TICKETS_TABLE}" (
-                ticket_id         NVARCHAR(100) PRIMARY KEY,
-                incident_id       NVARCHAR(100),
-                iflow_id          NVARCHAR(200),
-                error_type        NVARCHAR(100),
-                title             NVARCHAR(500),
-                description       NCLOB,
-                priority          NVARCHAR(20),
-                status            NVARCHAR(20) DEFAULT 'OPEN',
-                assigned_to       NVARCHAR(200),
-                resolution_notes  NCLOB,
-                created_at        NVARCHAR(64),
-                updated_at        NVARCHAR(64),
-                resolved_at       NVARCHAR(64)
+                ticket_id           NVARCHAR(100) PRIMARY KEY,
+                incident_id         NVARCHAR(100),
+                iflow_id            NVARCHAR(200),
+                error_type          NVARCHAR(100),
+                title               NVARCHAR(500),
+                description         NCLOB,
+                priority            NVARCHAR(20),
+                status              NVARCHAR(20) DEFAULT 'OPEN',
+                assigned_to         NVARCHAR(200),
+                resolution_notes    NCLOB,
+                created_at          NVARCHAR(64),
+                updated_at          NVARCHAR(64),
+                resolved_at         NVARCHAR(64),
+                ticket_source       NVARCHAR(50),
+                itsm_ticket_id      NVARCHAR(200),
+                message_guid        NVARCHAR(200),
+                human_fix_summary   NCLOB,
+                human_fix_steps     NCLOB,
+                human_resolved_at   NVARCHAR(64),
+                pattern_stored      INTEGER DEFAULT 0
             )""")
             logger.info("[DB] Created table %s", _TICKETS_TABLE)
+        _migrate_escalation_tickets_table(conn)
 
         conn.commit()
         conn.close()
@@ -1005,8 +1107,9 @@ def create_escalation_ticket(data: Dict) -> str:
             f"""INSERT INTO "{_TICKETS_TABLE}"
                (ticket_id, incident_id, iflow_id, error_type, title,
                 description, priority, status, assigned_to,
-                resolution_notes, created_at, updated_at, resolved_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                resolution_notes, created_at, updated_at, resolved_at,
+                ticket_source, itsm_ticket_id, message_guid, pattern_stored)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 ticket_id,
                 data.get("incident_id"),
@@ -1021,6 +1124,10 @@ def create_escalation_ticket(data: Dict) -> str:
                 data.get("created_at", now),
                 now,
                 data.get("resolved_at"),
+                data.get("ticket_source"),
+                data.get("itsm_ticket_id"),
+                data.get("message_guid"),
+                0,
             ),
         )
         conn.commit()
@@ -1093,6 +1200,25 @@ def update_escalation_ticket(ticket_id: str, updates: Dict):
         conn.close()
     except Exception as e:
         logger.error(f"update_escalation_ticket: {e}")
+
+
+def get_open_itsm_tickets() -> List[Dict]:
+    """Return tickets with status='OPEN' that have an itsm_ticket_id (for polling)."""
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            f"""SELECT * FROM "{_TICKETS_TABLE}"
+               WHERE status = 'OPEN'
+                 AND itsm_ticket_id IS NOT NULL
+                 AND itsm_ticket_id != ''""",
+        )
+        rows = _rows_to_dicts(cur)
+        conn.close()
+        return rows
+    except Exception as e:
+        logger.error(f"get_open_itsm_tickets: {e}")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

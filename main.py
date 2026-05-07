@@ -310,10 +310,12 @@ async def lifespan(app: FastAPI):
                 tool_count,
             )
 
+    from jobs.itsm_poller import run_itsm_poller
     _bg_tasks = [
         asyncio.create_task(_init_background(), name="init_background"),
         asyncio.create_task(_run_cpi_monitor(), name="cpi_monitor"),
         asyncio.create_task(_run_pending_deploy_sweeper(), name="pending_deploy_sweeper"),
+        asyncio.create_task(run_itsm_poller(classifier=orchestrator._classifier), name="itsm_poller"),
     ]
     logger.info("[CPI_MONITOR] Poller started, interval=%ds", int(os.getenv("CPI_POLL_INTERVAL_SECONDS", "600")))
     logger.info("[Startup] FastAPI ready — agents initialising in background.")

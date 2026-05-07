@@ -67,9 +67,11 @@ from db.database import (
     get_recent_incident_by_group_key,
     get_similar_patterns,
     increment_incident_occurrence,
+    update_escalation_ticket,
     update_incident,
     upsert_fix_pattern,
 )
+from integrations.itsm_client import create_itsm_ticket
 from utils.utils import get_hana_timestamp
 
 logger = logging.getLogger(__name__)
@@ -334,40 +336,137 @@ Rules:
     # TICKET CREATION
     # ────────────────────────────────────────────
 
+    async def _enrich_ticket_with_llm(self, incident: Dict, rca: Dict) -> Dict:
+        """
+        Ask the LLM to analyse the incident and return enriched ITSM ticket fields.
+        Falls back to safe defaults if LLM call fails — ticket creation is never blocked.
+        """
+        if self._agent is None:
+            logger.debug("[ITSM] LLM agent not ready — using default enrichment fields")
+        else:
+            try:
+                prompt = (
+                    "You are an SAP CPI incident triage assistant.\n"
+                    "Analyse the following SAP CPI integration incident and return ONLY a valid JSON object "
+                    "with these exact fields. No explanation, no markdown, no extra text.\n\n"
+                    f"iFlow ID:      {incident.get('iflow_id', '')}\n"
+                    f"Error type:    {incident.get('error_type', '')}\n"
+                    f"Error message: {incident.get('error_message', '')[:600]}\n"
+                    f"Root cause:    {rca.get('root_cause', '')}\n"
+                    f"Proposed fix:  {rca.get('proposed_fix', '')}\n"
+                    f"Sender:        {incident.get('sender', '')}\n"
+                    f"Receiver:      {incident.get('receiver', '')}\n"
+                    f"Occurrences:   {incident.get('occurrence_count', 1)}\n"
+                    f"RCA confidence:{rca.get('confidence', 0.0)}\n\n"
+                    "Return JSON:\n"
+                    "{\n"
+                    '  "priority":        "critical|high|medium|low",\n'
+                    '  "severity_code":   "critical|high|medium|low",\n'
+                    '  "impact_code":     "critical|high|medium|low",\n'
+                    '  "urgency_code":    "critical|high|medium|low",\n'
+                    '  "category":        "<integration category>",\n'
+                    '  "subcategory":     "<specific sub-area>",\n'
+                    '  "tags":            "<comma-separated tags>",\n'
+                    '  "businessService": "<business process this iFlow serves>",\n'
+                    '  "application":     "<source or target application>",\n'
+                    '  "component":       "<specific iFlow step or adapter affected>",\n'
+                    '  "environment":     "production",\n'
+                    '  "configItem":      "<iFlow artifact ID or system identifier>",\n'
+                    '  "hostName":        "<CPI tenant or target system hostname>",\n'
+                    '  "errorCode":       "<error type code>"\n'
+                    "}"
+                )
+
+                result = await self._agent.ainvoke({"input": prompt})
+                output = result.get("output", "") if isinstance(result, dict) else str(result)
+
+                # Strip markdown fences if present
+                clean = re.sub(r"```(?:json)?|```", "", output).strip()
+                match = re.search(r"\{.*\}", clean, re.DOTALL)
+                if match:
+                    enriched = json.loads(match.group())
+                    logger.info("[ITSM] LLM enrichment succeeded for iflow=%s", incident.get("iflow_id"))
+                    return enriched
+
+            except Exception as exc:
+                logger.warning("[ITSM] LLM ticket enrichment failed — using defaults: %s", exc)
+
+        # Safe fallback — ticket still gets created with basic fields
+        occ = incident.get("occurrence_count", 1)
+        conf = rca.get("confidence", 0.0)
+        pri = "critical" if occ >= 5 or conf < 0.3 else "high" if occ >= 3 else "medium"
+        return {
+            "priority":        pri,
+            "severity_code":   pri,
+            "impact_code":     "medium",
+            "urgency_code":    "medium",
+            "category":        "Integration",
+            "subcategory":     incident.get("error_type", ""),
+            "tags":            f"sap-cpi,{incident.get('error_type', '').lower().replace('_', '-')}",
+            "businessService": "SAP Integration",
+            "application":     "SAP CPI",
+            "component":       incident.get("iflow_id", ""),
+            "environment":     os.getenv("CPI_ENVIRONMENT", "production"),
+            "configItem":      incident.get("iflow_id", ""),
+            "hostName":        os.getenv("CPI_TENANT_HOST", ""),
+            "errorCode":       incident.get("error_type", ""),
+        }
+
     async def _create_external_ticket(
-        self, incident: Dict, rca: Dict
+        self, incident: Dict, rca: Dict, ticket_source: str = "CLASSIFIER_ESCALATION"
     ) -> Optional[str]:
         try:
-            occurrence = incident.get("occurrence_count", 1)
-            confidence = rca.get("confidence", 0.0)
-            priority   = (
-                "CRITICAL" if occurrence >= 5 or confidence < 0.3
-                else "HIGH"   if occurrence >= 3 or confidence < 0.5
-                else "MEDIUM"
-            )
+            # 1. Ask LLM to enrich ticket fields
+            enriched = await self._enrich_ticket_with_llm(incident, rca)
+
             ticket_data = {
-                "incident_id": incident.get("incident_id"),
-                "iflow_id":    incident.get("iflow_id"),
-                "error_type":  incident.get("error_type"),
+                # Fixed fields — not LLM generated
+                "incident_id":   incident.get("incident_id"),
+                "iflow_id":      incident.get("iflow_id"),
+                "error_type":    incident.get("error_type"),
+                "message_guid":  incident.get("message_guid"),
+                "ticket_source": ticket_source,
+                "status":        "OPEN",
+                "assigned_to":   _TICKET_ASSIGNEE or None,
+                "requester_id":  os.getenv("ITSM_REQUESTER_ID", ""),
+
+                # Title — iFlow + error type
                 "title": (
-                    f"[SAP CPI] Auto-remediation escalation: "
-                    f"{incident.get('iflow_id', 'unknown')} — "
+                    f"[SAP CPI] {incident.get('iflow_id', 'unknown')} — "
                     f"{incident.get('error_type', 'UNKNOWN_ERROR')}"
                 ),
-                "description": (
-                    f"iFlow: {incident.get('iflow_id')}\n"
-                    f"Error: {incident.get('error_message', '')[:500]}\n"
-                    f"Root cause: {rca.get('root_cause', '')}\n"
-                    f"Proposed fix: {rca.get('proposed_fix', '')}\n"
-                    f"Incident ID: {incident.get('incident_id')}\n"
-                    f"Occurrence count: {occurrence}\n"
-                    f"RCA confidence: {confidence}"
-                ),
-                "priority":    priority,
-                "status":      "OPEN",
-                "assigned_to": _TICKET_ASSIGNEE or None,
+
+                # Description — full error message
+                "description": incident.get("error_message", "")[:1000],
+
+                # LLM-generated fields
+                "priority":        enriched.get("priority",        "medium"),
+                "severity_code":   enriched.get("severity_code",   "medium"),
+                "impact_code":     enriched.get("impact_code",     "medium"),
+                "urgency_code":    enriched.get("urgency_code",    "medium"),
+                "category":        enriched.get("category",        ""),
+                "subcategory":     enriched.get("subcategory",     ""),
+                "tags":            enriched.get("tags",            ""),
+                "businessService": enriched.get("businessService", ""),
+                "application":     enriched.get("application",     "SAP CPI"),
+                "component":       enriched.get("component",       ""),
+                "environment":     enriched.get("environment",     "production"),
+                "configItem":      enriched.get("configItem",      ""),
+                "hostName":        enriched.get("hostName",        ""),
+                "errorCode":       enriched.get("errorCode",       ""),
             }
+
+            # 2. Save to local HANA
             ticket_id = create_escalation_ticket(ticket_data)
+
+            # 3. Push to ITSM via SAP Destination "ITSM-Sierra"
+            itsm_id = await create_itsm_ticket({**ticket_data, "ticket_id": ticket_id})
+            if itsm_id:
+                update_escalation_ticket(ticket_id, {"itsm_ticket_id": itsm_id})
+                logger.info("[ITSM] Ticket pushed to ITSM: %s → itsm_id=%s", ticket_id, itsm_id)
+            else:
+                logger.warning("[ITSM] ITSM push failed — local ticket still saved: %s", ticket_id)
+
             logger.info(
                 "[EscalationTicket] Ticket %s created for incident %s",
                 ticket_id, incident.get("incident_id"),
@@ -1236,10 +1335,10 @@ Rules:
             if final_status in {"FIX_FAILED", "FIX_FAILED_DEPLOY", "FIX_FAILED_UPDATE"}:
                 try:
                     ticket_data = {
-                        "iflow_id":    iflow_id,
-                        "incident_id": incident_id,
-                        "error_type":  rca.get("error_type", "UNKNOWN"),
-                        "title":       f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
+                        "iflow_id":      iflow_id,
+                        "incident_id":   incident_id,
+                        "error_type":    rca.get("error_type", "UNKNOWN"),
+                        "title":         f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
                         "description": (
                             f"Auto-remediation exhausted all fix attempts for iFlow '{iflow_id}'.\n"
                             f"Last failed stage: {fix_result.get('failed_stage', 'unknown')}.\n"
@@ -1247,11 +1346,27 @@ Rules:
                             f"Proposed fix: {rca.get('proposed_fix', 'N/A')}\n"
                             f"Fix summary: {fix_summary}"
                         ),
-                        "priority":    "HIGH",
-                        "status":      "OPEN",
-                        "assigned_to": _TICKET_ASSIGNEE or None,
+                        "priority":      "HIGH",
+                        "status":        "OPEN",
+                        "assigned_to":   _TICKET_ASSIGNEE or None,
+                        "ticket_source": "FIX_FAILED_ESCALATION",
+                        "message_guid":  working_incident.get("message_guid"),
+                        "requester_id":  os.getenv("ITSM_REQUESTER_ID", ""),
+                        "environment":   os.getenv("CPI_ENVIRONMENT", "production"),
                     }
                     ticket_id = create_escalation_ticket(ticket_data)
+                    itsm_id = await create_itsm_ticket({**ticket_data, "ticket_id": ticket_id})
+                    if itsm_id:
+                        update_escalation_ticket(ticket_id, {"itsm_ticket_id": itsm_id})
+                        logger.info(
+                            "[FIX] ITSM ticket created: %s for incident: %s",
+                            itsm_id, incident_id,
+                        )
+                    else:
+                        logger.warning(
+                            "[FIX] ITSM ticket creation failed — local record saved as ticket_id: %s",
+                            ticket_id,
+                        )
                     logger.info(
                         "[FIX] Fix failed for incident=%s iflow=%s — escalation ticket created: %s",
                         incident_id, iflow_id, ticket_id,
@@ -1359,20 +1474,36 @@ Rules:
                 pass
             try:
                 _exc_ticket_data = {
-                    "iflow_id":    iflow_id,
-                    "incident_id": incident_id,
-                    "error_type":  "UNKNOWN",
-                    "title":       f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
+                    "iflow_id":      iflow_id,
+                    "incident_id":   incident_id,
+                    "error_type":    "UNKNOWN",
+                    "title":         f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
                     "description": (
                         f"Auto-remediation raised an unhandled exception for iFlow '{iflow_id}'.\n"
                         f"Last failed stage: agent.\n"
                         f"Error: {str(_fix_exc)[:800]}"
                     ),
-                    "priority":    "HIGH",
-                    "status":      "OPEN",
-                    "assigned_to": _TICKET_ASSIGNEE or None,
+                    "priority":      "HIGH",
+                    "status":        "OPEN",
+                    "assigned_to":   _TICKET_ASSIGNEE or None,
+                    "ticket_source": "FIX_FAILED_ESCALATION",
+                    "message_guid":  working_incident.get("message_guid") if "working_incident" in dir() else None,
+                    "requester_id":  os.getenv("ITSM_REQUESTER_ID", ""),
+                    "environment":   os.getenv("CPI_ENVIRONMENT", "production"),
                 }
                 _exc_ticket_id = create_escalation_ticket(_exc_ticket_data)
+                _exc_itsm_id = await create_itsm_ticket({**_exc_ticket_data, "ticket_id": _exc_ticket_id})
+                if _exc_itsm_id:
+                    update_escalation_ticket(_exc_ticket_id, {"itsm_ticket_id": _exc_itsm_id})
+                    logger.info(
+                        "[FIX] ITSM ticket created: %s for incident: %s",
+                        _exc_itsm_id, incident_id,
+                    )
+                else:
+                    logger.warning(
+                        "[FIX] ITSM ticket creation failed — local record saved as ticket_id: %s",
+                        _exc_ticket_id,
+                    )
                 logger.info(
                     "[FIX] Fix failed for incident=%s iflow=%s — escalation ticket created: %s",
                     incident_id, iflow_id, _exc_ticket_id,
