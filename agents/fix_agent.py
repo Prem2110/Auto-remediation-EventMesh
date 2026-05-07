@@ -569,7 +569,7 @@ class FixAgent:
                     TestExecutionTracker(user_id, f"fix:{iflow_id}:val_retry", timestamp),
                     progress_fn=progress_fn,
                 )
-                _original_messages = [{"role": "user", "content": patch.raw_answer.split("\n\n__TOOLS_INVOKED__")[0]}]
+                _original_messages = [{"role": "user", "content": answer.split("\n\n__TOOLS_INVOKED__")[0]}]
                 try:
                     _result_val = await asyncio.wait_for(
                         agent.ainvoke(
