@@ -81,49 +81,31 @@ interface HeroStat {
 }
 
 function HeroStatsBanner({ stats, loading }: { stats: HeroStat[]; loading: boolean }) {
-  const row1 = stats.slice(0, 4);
-  const row2 = stats.slice(4, 8);
+  const row1 = stats.slice(0, 5);
+  const row2 = stats.slice(5, 9);
+
+  function renderRow(row: HeroStat[]) {
+    return row.map((s, i) => (
+      <div key={i} className={styles.heroStat} {...(s.tooltip ? { "data-tip": s.tooltip } : {})}>
+        {i > 0 && <div className={styles.heroStatDivider} />}
+        <div className={styles.heroStatInner}>
+          <div className={styles.heroStatValue} style={s.valueStyle}>
+            {loading ? "—" : String(s.value ?? "—")}
+          </div>
+          <div className={styles.heroStatLabel}>
+            {s.icon && <span className={styles.heroStatIcon}>{s.icon}</span>}
+            {s.label}
+          </div>
+        </div>
+      </div>
+    ));
+  }
+
   return (
     <div className={styles.heroBanner}>
-      <div className={styles.heroBannerLeft}>
-        <div className={styles.heroBannerHeading}>Heading</div>
-        <div className={styles.heroBannerSub}>one line description about this section</div>
-      </div>
-      <div className={styles.heroBannerStats}>
-        <div className={styles.heroStatsRow}>
-          {row1.map((s, i) => (
-            <div key={i} className={styles.heroStat} {...(s.tooltip ? { "data-tip": s.tooltip } : {})}>
-              {i > 0 && <div className={styles.heroStatDivider} />}
-              <div className={styles.heroStatInner}>
-                <div className={styles.heroStatValue} style={s.valueStyle}>
-                  {loading ? "—" : String(s.value ?? "—")}
-                </div>
-                <div className={styles.heroStatLabel}>
-                  {s.icon && <span className={styles.heroStatIcon}>{s.icon}</span>}
-                  {s.label}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className={styles.heroStatsDividerH} />
-        <div className={styles.heroStatsRow}>
-          {row2.map((s, i) => (
-            <div key={i} className={styles.heroStat} {...(s.tooltip ? { "data-tip": s.tooltip } : {})}>
-              {i > 0 && <div className={styles.heroStatDivider} />}
-              <div className={styles.heroStatInner}>
-                <div className={styles.heroStatValue} style={s.valueStyle}>
-                  {loading ? "—" : String(s.value ?? "—")}
-                </div>
-                <div className={styles.heroStatLabel}>
-                  {s.icon && <span className={styles.heroStatIcon}>{s.icon}</span>}
-                  {s.label}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <div className={styles.heroStatsRow}>{renderRow(row1)}</div>
+      <div className={styles.heroStatsDividerH} />
+      <div className={styles.heroStatsRow}>{renderRow(row2)}</div>
     </div>
   );
 }
@@ -308,14 +290,17 @@ export default function Dashboard() {
       <HeroStatsBanner
         loading={dashLoading}
         stats={[
-          { value: kpi.in_progress,          label: "In Progress",        icon: "⟳",  tooltip: "Incidents currently being analyzed or fixed by pipeline agents" },
-          { value: kpi.total_incidents,       label: "Total Incidents",    icon: "⚠",  tooltip: "All incidents tracked by the auto-remediation pipeline" },
-          { value: kpi.pending_approval,      label: "Pending Approval",   icon: "📋", tooltip: "Fixes awaiting manual approval before deployment" },
-          { value: kpi.fix_failed,            label: "FIX FAILED",         icon: "↓",  tooltip: "Fix attempts that failed", valueStyle: { color: "#fca5a5" } },
-          { value: kpi.total_failed_messages, label: "Failed Messages",    icon: "✉",  tooltip: "SAP CPI messages currently in FAILED state" },
-          { value: kpi.auto_fix_rate != null ? `${kpi.auto_fix_rate}%` : "—",                                label: "Auto Fix Rate",       icon: "⚙",  tooltip: "Percentage of incidents resolved automatically" },
-          { value: kpi.avg_resolution_time_minutes != null ? `${kpi.avg_resolution_time_minutes}` : "—",    label: "Avg Resolution Time", icon: "⏱",  tooltip: "Mean time from detection to terminal state" },
-          { value: kpi.rca_coverage_percent != null ? `${kpi.rca_coverage_percent}` : "0", label: "RCA Coverage",       icon: "📊", tooltip: "Percentage of incidents that received AI root cause analysis" },
+          /* row 1 — 5 stats */
+          { value: kpi.in_progress,     label: "In Progress",    tooltip: "Incidents currently being analyzed or fixed by pipeline agents" },
+          { value: kpi.total_incidents, label: "Total Incidents", tooltip: "All incidents tracked by the auto-remediation pipeline" },
+          { value: kpi.pending_approval,label: "Pending Approval",tooltip: "Fixes awaiting manual approval before deployment" },
+          { value: kpi.fix_failed,      label: "FIX FAILED",     tooltip: "Fix attempts that failed",       valueStyle: { color: "#fca5a5" } },
+          { value: kpi.auto_fixed,      label: "AUTO FIXED",     tooltip: "Incidents fixed automatically",  valueStyle: { color: "#86efac" } },
+          /* row 2 — 4 stats */
+          { value: kpi.total_failed_messages, label: "Failed Messages",    tooltip: "SAP CPI messages currently in FAILED state" },
+          { value: kpi.auto_fix_rate != null ? `${kpi.auto_fix_rate}%` : "—",                             label: "Auto Fix Rate",       tooltip: "Percentage of incidents resolved automatically" },
+          { value: kpi.avg_resolution_time_minutes != null ? `${kpi.avg_resolution_time_minutes}` : "—", label: "Avg Resolution Time", tooltip: "Mean time from detection to terminal state" },
+          { value: kpi.rca_coverage_percent != null ? `${kpi.rca_coverage_percent}` : "0",               label: "RCA Coverage",        tooltip: "Percentage of incidents that received AI root cause analysis" },
         ]}
       />
 
