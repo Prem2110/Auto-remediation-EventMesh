@@ -32,6 +32,58 @@ logger = logging.getLogger(__name__)
 
 _WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "false").lower() == "true"
 
+# Default property to inspect per error type when RCA returns fixes:[] but
+# affected_component is known.  Used by the post-RCA XML fill-in pass.
+_ERROR_TYPE_LIKELY_PROPERTIES: Dict[str, List[str]] = {
+    "BACKEND_ERROR":      ["Address", "address"],
+    "HTTP_CALL_FAILED":   ["Address", "address", "httpMethod"],
+    "CONNECTIVITY_ERROR": ["Address", "address"],
+    "AUTH_ERROR":         ["credentialName", "CredentialName"],
+    "AUTH_CONFIG_ERROR":  ["credentialName", "CredentialName"],
+    "SCRIPT_ERROR":       ["scriptRef", "script", "fileName"],
+    "MAPPING_ERROR":      ["mappingRef", "fileName"],
+}
+
+
+def _extract_prop_from_xml(xml_raw: str, component_id: str, prop_name: str) -> str:
+    """
+    Extract a single ifl:property value from raw get-iflow output.
+    Handles both concatenated-package format (with ---begin-of-file--- markers)
+    and plain XML.  Returns "" on any failure.
+    """
+    if not xml_raw or not component_id or not prop_name:
+        return ""
+    import xml.etree.ElementTree as _ET  # noqa: PLC0415
+
+    xml_str = xml_raw
+    if "---begin-of-file---" in xml_raw:
+        m = re.search(
+            r"integrationflow/[^\n]+\n---begin-of-file---\n(.*?)---end-of-file---",
+            xml_raw, re.DOTALL,
+        )
+        if m:
+            xml_str = m.group(1).lstrip("﻿")
+
+    try:
+        root = _ET.fromstring(xml_str.strip().lstrip("﻿"))
+        target = None
+        for elem in root.iter():
+            if elem.get("id") == component_id:
+                target = elem
+                break
+        if target is None:
+            return ""
+        prop_lower = prop_name.lower()
+        for prop in target.iter():
+            key_elem = prop.find("key") or prop.find("{*}key")
+            val_elem = prop.find("value") or prop.find("{*}value")
+            if key_elem is not None and val_elem is not None:
+                if (key_elem.text or "").lower() == prop_lower:
+                    return (val_elem.text or "").strip()
+    except Exception:
+        pass
+    return ""
+
 
 @dataclass
 class FixStep:
@@ -258,6 +310,20 @@ Example — two simultaneous property changes on the same component:
     {{"component_id": "ReceiverHTTP_1", "property_to_change": "httpShouldSendBody", "current_value": "false", "correct_value": "true"}},
     {{"component_id": "ReceiverHTTP_1", "property_to_change": "isDefault",          "current_value": "false", "correct_value": "true"}}
   ]
+
+CRITICAL — always populate `current_value` in every fixes entry:
+- Copy the exact value verbatim from the iFlow XML returned by get-iflow.
+- Even if you are uncertain about `correct_value`, you MUST still set `current_value`.
+- The fix engine uses `current_value` to locate the XML element for surgical patching.
+- An empty `current_value` forces a slower, riskier full-XML LLM rewrite that can
+  accidentally remove routing rules or other structural elements.
+
+Per error type — primary property to extract from get-iflow output:
+  BACKEND_ERROR / HTTP_CALL_FAILED   → Address property on the failing HTTP receiver adapter
+  CONNECTIVITY_ERROR                 → Address property; also check timeout properties
+  AUTH_ERROR / AUTH_CONFIG_ERROR     → credentialName property on the receiver adapter
+  SCRIPT_ERROR                       → scriptRef or fileName property on the Script step
+  MAPPING_ERROR                      → mappingRef or fileName property on the Message Mapping step
 """
         self._agent = await _mcp.build_agent(
             tools=all_tools,
@@ -629,6 +695,65 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                 )
                 # Cap confidence so the mismatched fixes don't auto-deploy without LLM review.
                 final_confidence = min(final_confidence, 0.75)
+
+        # ── Post-RCA fill-in pass ─────────────────────────────────────────────
+        # When the LLM left current_value blank, try to extract it directly from
+        # the iFlow XML the agent already fetched — no extra network call needed.
+        if _iflow_xml_raw and all_fixes:
+            filled = []
+            for fix in all_fixes:
+                cv = fix.current_value if hasattr(fix, "current_value") else fix.get("current_value", "")
+                if not cv and fix.component_id and fix.property_to_change:
+                    extracted = _extract_prop_from_xml(_iflow_xml_raw, fix.component_id, fix.property_to_change)
+                    if extracted:
+                        logger.info(
+                            "[RCA] Auto-filled current_value for %s.%s=%r",
+                            fix.component_id, fix.property_to_change, extracted,
+                        )
+                        fix = FixStep(
+                            component_id=fix.component_id,
+                            property_to_change=fix.property_to_change,
+                            current_value=extracted,
+                            correct_value=fix.correct_value,
+                        )
+                filled.append(fix)
+            all_fixes = filled
+
+        # When fixes is empty but affected_component is known, infer the most
+        # likely property from the error type and seed a partial FixStep so the
+        # fix agent has a concrete XML target to work with.
+        if not all_fixes and _iflow_xml_raw:
+            ac = rca.get("affected_component", "").strip()
+            if ac and ac.lower() not in ("unknown", ""):
+                for prop in _ERROR_TYPE_LIKELY_PROPERTIES.get(final_error_type, []):
+                    extracted = _extract_prop_from_xml(_iflow_xml_raw, ac, prop)
+                    if extracted:
+                        logger.info(
+                            "[RCA] Inferred fix target: error_type=%s component=%s property=%s current=%r",
+                            final_error_type, ac, prop, extracted,
+                        )
+                        all_fixes = [FixStep(
+                            component_id=ac,
+                            property_to_change=prop,
+                            current_value=extracted,
+                            correct_value="",
+                        )]
+                        break
+
+        # Re-run the confidence boost check now that fill-in may have completed entries.
+        if all_fixes and all(
+            (f.current_value if hasattr(f, "current_value") else f.get("current_value", ""))
+            and (f.correct_value if hasattr(f, "correct_value") else f.get("correct_value", ""))
+            for f in all_fixes
+        ):
+            _boosted2 = min(final_confidence + 0.10, 0.95)
+            if _boosted2 > final_confidence:
+                logger.info(
+                    "[RCA] Post-fill confidence boost %.2f → %.2f — all %d fix entr%s complete",
+                    final_confidence, _boosted2, len(all_fixes),
+                    "y" if len(all_fixes) == 1 else "ies",
+                )
+                final_confidence = _boosted2
 
         logger.info(
             "[RCA_RESULT] iflow=%s error_type=%s confidence=%.2f affected=%s | "
