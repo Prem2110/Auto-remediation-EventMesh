@@ -515,7 +515,8 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         logger_cb = StepLogger(tracker, progress_fn=progress_fn)
 
         _xml_len   = len(ctx.original_xml or "")
-        _default   = "300.0" if _xml_len < 30_000 else "600.0"
+        # Lower threshold: 20 KB already takes 300+ s on SAP AI Core for complex fixes.
+        _default   = "300.0" if _xml_len < 20_000 else "600.0"
         _timeout   = float(os.getenv("FIX_AGENT_TIMEOUT", _default))
         logger.info(
             "[FixGenerator] Strategy=free_xml | timeout=%.0fs | xml_len=%d | "

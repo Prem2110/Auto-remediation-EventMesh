@@ -562,6 +562,25 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                     if [p for p in ns_uses if p not in declared]:
                         orig_xpath_issues.add((k_el.text or "", v))
 
+    # Namespace prefixes declared at collaboration level via namespaceMapping.
+    # SAP CPI supports this as an alternative to inline 'declare namespace' in XPath values.
+    # e.g. namespaceMapping value = "d=http://schemas.microsoft.com/ado/...,ns1=http://..."
+    _collab_ns_prefixes: set = set()
+    _mod_collab = mod_root.find(f"{{{_BPMN2}}}collaboration")
+    if _mod_collab is not None:
+        _mod_collab_ext = _mod_collab.find(f"{{{_BPMN2}}}extensionElements")
+        if _mod_collab_ext is not None:
+            for _p in _mod_collab_ext.iter():
+                _k = _p.find(f"{{{_IFL}}}key") or _p.find("key")
+                _v = _p.find(f"{{{_IFL}}}value") or _p.find("value")
+                if _k is None or _v is None:
+                    continue
+                if (_k.text or "").lower() == "namespacemapping":
+                    for _entry in (_v.text or "").split(","):
+                        _entry = _entry.strip()
+                        if "=" in _entry:
+                            _collab_ns_prefixes.add(_entry.split("=")[0].strip())
+
     for el in mod_root.iter():
         key_el = el.find(f"{{{_IFL}}}key") or el.find("key")
         val_el = el.find(f"{{{_IFL}}}value") or el.find("value")
@@ -576,6 +595,16 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                 declared = re.findall(r'declare\s+namespace\s+([a-zA-Z][a-zA-Z0-9_]*)\s*=', val)
                 missing  = [p for p in ns_uses if p not in declared]
                 if missing:
+                    # Prefixes covered by collaboration-level namespaceMapping are valid —
+                    # SAP CPI resolves them at runtime without inline declarations.
+                    truly_missing = [p for p in missing if p not in _collab_ns_prefixes]
+                    if not truly_missing:
+                        logger.info(
+                            "[Validator] XPath prefix(es) %s covered by collaboration "
+                            "namespaceMapping — not an error for property '%s'",
+                            missing, key_el.text,
+                        )
+                        continue
                     fingerprint = (key_el.text or "", val)
                     if fingerprint in orig_xpath_issues:
                         logger.info(
@@ -585,9 +614,11 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                         continue
                     errors.append(
                         f"NEW: XPath expression in property '{key_el.text}' uses namespace prefix(es) "
-                        f"{missing} but no 'declare namespace' directive found. "
-                        f"Add inline declarations before the path, e.g.: "
-                        f"declare namespace {missing[0]}='http://...'; //{missing[0]}:element"
+                        f"{truly_missing} but no 'declare namespace' directive found and no "
+                        f"matching namespaceMapping entry at collaboration level. "
+                        f"Either add inline declarations: "
+                        f"declare namespace {truly_missing[0]}='http://...'; //{truly_missing[0]}:element "
+                        f"or add the prefix to the iFlow's namespaceMapping property."
                     )
 
     # ── Check 5 — Content Modifier: dynamic-looking values must NOT use srcType="Constant" ──
