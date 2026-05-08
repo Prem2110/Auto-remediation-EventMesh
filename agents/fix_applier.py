@@ -490,7 +490,7 @@ class FixApplier:
 
             deploy_error = await self._fetch_deploy_error(ctx.iflow_id)
             logger.info(
-                "[FixApplier] deploy poll %d/%d iflow=%s deploy_error_len=%d error=%.150s",
+                "[FixApplier] deploy poll %d/%d iflow=%s deploy_error_len=%d error=%r",
                 poll_num + 1, max_polls, ctx.iflow_id, len(deploy_error), deploy_error[:150],
             )
 
@@ -606,7 +606,13 @@ class FixApplier:
             r = await self._mcp.execute_integration_tool(
                 "get-deploy-error", {"id": iflow_id}
             )
-            return str(r.get("output", "")).strip()
+            raw = str(r.get("output", "")).strip()
+            logger.debug("[FixApplier] get-deploy-error raw=%r iflow=%s", raw, iflow_id)
+            # SAP MCP tool returns "{}" or "[]" when there is no deployment error.
+            # Treat these empty JSON sentinels the same as an empty string.
+            if raw in ("{}", "[]", "null", "None", "none"):
+                return ""
+            return raw
         except Exception:
             return ""
 
