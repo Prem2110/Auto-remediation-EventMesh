@@ -191,7 +191,7 @@ class FixGenerator:
             "\nUse ONLY confirmed values from the search — never apply a guessed value.\n"
         ) if _WEB_SEARCH_ENABLED else ""
 
-        system_prompt = f"""You are the FixAgent in a SAP CPI self-healing pipeline.
+        system_prompt = """You are the FixAgent in a SAP CPI self-healing pipeline.
 Your ONLY job is to fix and deploy broken SAP CPI iFlows.
 
 === MANDATORY TOOL CALLS — EXECUTE IN ORDER, NO SKIPPING ===
@@ -218,7 +218,7 @@ Examples of what you might change:
 - A script file reference
 
 The SAP CPI iFlow XML structure is standard — you already know how to read it. Trust the RCA output.
-{_web_search_step}
+__WEB_SEARCH_STEP__
 STEP 3: Call validate_iflow_xml with the modified XML.
   - If ERRORS returned → fix the XML issues and re-validate.
   - Do NOT call update-iflow until validate_iflow_xml returns "VALID".
@@ -327,7 +327,7 @@ After completing all steps, return EXACTLY this JSON — no markdown, no extra t
  "deploy_response": "<short summary>", "summary": "<2 sentences: what changed and deploy outcome>",
  "failed_stage": null}
 If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" | "validation"
-"""
+""".replace("__WEB_SEARCH_STEP__", _web_search_step)
         self._agent = await self._mcp.build_agent(
             tools=all_tools,
             system_prompt=system_prompt,
