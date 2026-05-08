@@ -27,7 +27,7 @@ from utils.utils import clean_error_message
 
 logger = logging.getLogger(__name__)
 
-_PUBLISH_TOPIC       = "default/sierra.automation/1/autofix/in"
+_PUBLISH_TOPIC       = os.getenv("AEM_INGEST_TOPIC", "")
 _EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
 _AEM_REST_URL        = os.getenv("AEM_REST_URL", "")
 _DEDUP_TTL           = 30 * 60  # 30 minutes in seconds

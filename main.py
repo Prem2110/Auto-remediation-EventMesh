@@ -1079,7 +1079,7 @@ async def inject_test_incident(background_tasks: BackgroundTasks):
 @app.get("/aem/status")
 async def event_mesh_status():
     """Return SAP Event Mesh connectivity info and pipeline stage counts."""
-    queue_name = os.getenv("EVENT_MESH_QUEUE", "default/sierra.automation/1/autofix/orbit/orchestrator")
+    queue_name = os.getenv("EVENT_MESH_QUEUE", "")
 
     total_incidents      = count_all_incidents()
     stage_counts         = get_stage_counts()

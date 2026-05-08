@@ -208,7 +208,8 @@ class AEMEventBus:
 
     def make_topic(self, stage: str, incident_id: str = "") -> str:
         """Build the canonical topic string for a pipeline stage."""
-        base = f"default/sierra.automation/1/autofix/orbit/{stage}"
+        prefix = os.getenv("AEM_QUEUE_PREFIX", "default/sierra.automation/1/autofix/orbit")
+        base = f"{prefix}/{stage}"
         return f"{base}/{incident_id}" if incident_id else base
 
     async def publish_to_next(self, topic: str, payload: Dict[str, Any]) -> None:

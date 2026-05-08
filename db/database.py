@@ -987,6 +987,7 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
 def get_recent_incident_by_group_key(group_key: str, within_seconds: int = 60) -> Optional[Dict]:
     """Return the most recent non-terminal incident with this group_key created within `within_seconds`."""
     terminal = (
+        "AUTO_FIXED", "HUMAN_FIXED", "FIX_DEPLOYED",
         "FIX_VERIFIED", "HUMAN_INITIATED_FIX", "RETRIED",
         "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME",
         "REJECTED", "TICKET_CREATED", "ARTIFACT_MISSING", "VERIFICATION_UNAVAILABLE",
