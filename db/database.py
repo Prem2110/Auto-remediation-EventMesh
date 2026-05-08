@@ -830,9 +830,10 @@ def get_incident_by_message_guid(message_guid: str) -> Optional[Dict]:
 
 def get_open_incident_by_signature(iflow_id: str, error_type: str) -> Optional[Dict]:
     terminal_statuses = (
+        "AUTO_FIXED", "HUMAN_FIXED", "FIX_DEPLOYED",
         "FIX_VERIFIED", "HUMAN_INITIATED_FIX", "RETRIED",
         "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME",
-        "REJECTED", "ARTIFACT_MISSING", "VERIFICATION_UNAVAILABLE",
+        "REJECTED", "TICKET_CREATED", "ARTIFACT_MISSING", "VERIFICATION_UNAVAILABLE",
     )
     placeholders = ",".join("?" for _ in terminal_statuses)
     try:
