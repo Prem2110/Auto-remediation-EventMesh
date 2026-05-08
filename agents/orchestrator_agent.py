@@ -1028,6 +1028,22 @@ Rules:
         elif force and iflow_id:
             logger.info("[FIX] force=True — skipping health pre-flight check for %s", iflow_id)
 
+        # Pre-emptive unlock — if the iFlow is left checked-out from a previous crashed run,
+        # a reactive unlock wastes one full fix attempt (get→update→fail→detect lock→retry).
+        # Calling unlock here costs nothing when not locked and saves one attempt when it is.
+        if iflow_id:
+            try:
+                _ul = await self._fix.unlock_iflow(iflow_id)
+                if _ul.get("success"):
+                    logger.info("[FIX] Pre-emptive unlock succeeded for iflow=%s", iflow_id)
+                else:
+                    logger.debug(
+                        "[FIX] Pre-emptive unlock no-op for iflow=%s: %s",
+                        iflow_id, _ul.get("message", "no lock found"),
+                    )
+            except Exception as _ul_exc:
+                logger.debug("[FIX] Pre-emptive unlock failed (non-fatal): %s", _ul_exc)
+
         rca = {
             "root_cause":         working_incident.get("root_cause", ""),
             "proposed_fix":       working_incident.get("proposed_fix", ""),

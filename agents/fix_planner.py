@@ -271,55 +271,78 @@ class FixPlanner:
             if eid:
                 elem_by_id[eid] = elem
 
-        applied  = 0
-        skipped  = 0
+        # Pre-build value → [(key_el, val_el)] for O(1) value-search fallback.
+        # Covers every ifl:property element anywhere in the document.
+        value_to_props: Dict[str, List[Tuple[Optional[ET.Element], ET.Element]]] = {}
+        for prop in root.iter():
+            _tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
+            if _tag != "property":
+                continue
+            _key_el = prop.find(".//{*}key") or prop.find("key")
+            _val_el = prop.find(".//{*}value") or prop.find("value")
+            if _val_el is None:
+                continue
+            _vt = (_val_el.text or "").strip()
+            if _vt:
+                value_to_props.setdefault(_vt, []).append((_key_el, _val_el))
+
+        applied = 0
+        skipped = 0
 
         for fix in fixes:
             component_id  = _fget(fix, "component_id")
             property_name = _fget(fix, "property_to_change")
             new_value     = _fget(fix, "correct_value")
+            old_value     = _fget(fix, "current_value")
 
-            if not (component_id and property_name and new_value is not None):
-                logger.warning("[DirectPatch] Skipping incomplete fix entry: %s", fix)
+            # Need a destination value and at least one search anchor
+            if not new_value:
+                logger.warning("[DirectPatch] Skipping fix — correct_value is empty: %s", fix)
                 skipped += 1
                 continue
-
-            target = elem_by_id.get(component_id)
-            if target is None:
+            if not component_id and not old_value:
                 logger.warning(
-                    "[DirectPatch] Component id=%s not found — patch target missing",
-                    component_id,
+                    "[DirectPatch] Skipping fix — no component_id or current_value to search: %s",
+                    fix,
                 )
                 skipped += 1
                 continue
 
             prop_found = False
 
-            # Primary: ifl:property child element with matching key
-            for prop in target.iter():
-                tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
-                if tag == "property":
+            # ── Strategy 1: element-by-id + property-key search ──────────────
+            target = elem_by_id.get(component_id) if component_id else None
+            if component_id and target is None:
+                logger.warning(
+                    "[DirectPatch] Component id=%r not found. Available IDs (first 20): %s",
+                    component_id,
+                    sorted(elem_by_id)[:20],
+                )
+
+            if target is not None:
+                for prop in target.iter():
+                    tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
+                    if tag != "property":
+                        continue
                     key_elem = prop.find(".//{*}key") or prop.find("key")
                     val_elem = prop.find(".//{*}value") or prop.find("value")
-                    if key_elem is not None and val_elem is not None:
-                        _key_text = (key_elem.text or "").strip()
-                        # Case-insensitive match first, then normalised (strip underscores/hyphens)
-                        _pname_norm = property_name.lower().replace("_", "").replace("-", "")
-                        _key_norm   = _key_text.lower().replace("_", "").replace("-", "")
-                        if _key_text.lower() == property_name.lower() or _key_norm == _pname_norm:
-                            old_val = val_elem.text
-                            val_elem.text = new_value
-                            prop_found = True
-                            applied += 1
-                            logger.info(
-                                "[DirectPatch] %s.%s: %r → %r",
-                                component_id, property_name, old_val, new_value,
-                            )
-                            break
+                    if key_elem is None or val_elem is None:
+                        continue
+                    _key_text   = (key_elem.text or "").strip()
+                    _pname_norm = property_name.lower().replace("_", "").replace("-", "")
+                    _key_norm   = _key_text.lower().replace("_", "").replace("-", "")
+                    if _key_text.lower() == property_name.lower() or _key_norm == _pname_norm:
+                        old_val = val_elem.text
+                        val_elem.text = new_value
+                        prop_found = True
+                        applied += 1
+                        logger.info(
+                            "[DirectPatch] id-search: %s.%s: %r → %r",
+                            component_id, property_name, old_val, new_value,
+                        )
+                        break
 
-            if not prop_found:
-                # Fallback: plain XML attribute on the element
-                if property_name in target.attrib:
+                if not prop_found and property_name in target.attrib:
                     old_val = target.get(property_name)
                     target.set(property_name, new_value)
                     prop_found = True
@@ -329,11 +352,63 @@ class FixPlanner:
                         component_id, property_name, old_val, new_value,
                     )
 
+            # ── Strategy 2: value-search fallback ────────────────────────────
+            # Finds the ifl:property whose <ifl:value> currently equals current_value.
+            # When multiple properties share the same value, narrows by key name.
+            if not prop_found and old_value and old_value.strip():
+                matches = value_to_props.get(old_value.strip(), [])
+
+                if len(matches) == 1:
+                    key_el, val_el = matches[0]
+                    old_val = val_el.text
+                    val_el.text = new_value
+                    prop_found = True
+                    applied += 1
+                    logger.info(
+                        "[DirectPatch] value-search: value=%r → %r (key=%s)",
+                        old_val, new_value,
+                        key_el.text if key_el is not None else "?",
+                    )
+                elif len(matches) > 1 and property_name:
+                    key_norm = property_name.lower().replace("_", "").replace("-", "")
+                    key_matches = [
+                        (ke, ve) for ke, ve in matches
+                        if ke is not None and (
+                            (ke.text or "").lower() == property_name.lower()
+                            or (ke.text or "").lower().replace("_", "").replace("-", "") == key_norm
+                        )
+                    ]
+                    if len(key_matches) == 1:
+                        key_el, val_el = key_matches[0]
+                        old_val = val_el.text
+                        val_el.text = new_value
+                        prop_found = True
+                        applied += 1
+                        logger.info(
+                            "[DirectPatch] value+key-search: key=%r value=%r → %r",
+                            key_el.text if key_el is not None else "?", old_val, new_value,
+                        )
+                    else:
+                        logger.warning(
+                            "[DirectPatch] Ambiguous: value=%r in %d elements, "
+                            "key=%r narrows to %d — skipping",
+                            old_value, len(matches), property_name, len(key_matches),
+                        )
+                        skipped += 1
+                elif not matches:
+                    logger.warning(
+                        "[DirectPatch] value=%r not found anywhere in XML — skipping",
+                        old_value,
+                    )
+                    skipped += 1
+
             if not prop_found:
-                logger.warning(
-                    "[DirectPatch] Property %s not found in component %s",
-                    property_name, component_id,
-                )
+                if not old_value:
+                    logger.warning(
+                        "[DirectPatch] Could not patch component=%r property=%r — "
+                        "populate current_value in RCA fixes[] to enable value-search fallback",
+                        component_id, property_name,
+                    )
                 skipped += 1
 
         if applied == 0:

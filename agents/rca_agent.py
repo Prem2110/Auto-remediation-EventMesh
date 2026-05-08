@@ -90,9 +90,11 @@ class RCAAgent:
     """
 
     def __init__(self, mcp):
-        self._mcp        = mcp
-        self._agent      = None   # set by build_agent()
-        self._classifier = ClassifierAgent()
+        self._mcp                  = mcp
+        self._agent                = None   # set by build_agent()
+        self._classifier           = ClassifierAgent()
+        self._current_error_type   = ""     # set by run_rca before agent invoke
+        self._current_iflow_id     = ""     # set by run_rca before agent invoke
 
     async def build_agent(self) -> None:
         """Build a filtered RCA agent with local @tool functions + targeted MCP tools."""
@@ -100,6 +102,7 @@ class RCAAgent:
 
         _classifier = self._classifier
         _mcp        = self._mcp
+        _agent_self = self   # captured for closure — run_rca sets _current_* before invoke
 
         @_tool
         async def get_vector_store_notes(error_description: str) -> str:
@@ -107,14 +110,14 @@ class RCAAgent:
             vs    = get_vector_store()
             notes = vs.retrieve_relevant_notes(
                 error_description,
-                error_type or "",   # pass classified error type for better embedding match
-                iflow_id   or "",   # pass iFlow ID for context
+                _agent_self._current_error_type or "",
+                _agent_self._current_iflow_id   or "",
                 limit=5,
             )
             result = vs.format_notes_for_prompt(notes)
             logger.info(
                 "[RCA] get_vector_store_notes tool returned %d note(s) for error_type=%s iflow=%s",
-                len(notes), error_type, iflow_id,
+                len(notes), _agent_self._current_error_type, _agent_self._current_iflow_id,
             )
             return result
 
@@ -200,7 +203,11 @@ Rules:
 - If no pre-fetched notes or patterns are provided, call get_vector_store_notes first.
 - Call get_cross_iflow_patterns to check for proven fixes from other iFlows.
 {_web_search_rule}- Call get-iflow ONCE to read the current iFlow configuration.
-- Call get_message_logs at MOST ONCE if a message GUID is provided.
+- For HTTP_CALL_FAILED and CONNECTIVITY_ERROR: call get_message_logs FIRST (before get-iflow)
+  when a message GUID is available. Read the actual outbound request URL from the log — it is
+  more accurate than the iFlow config value (which may contain expressions that resolve differently
+  at runtime). Use the logged URL to determine the exact fix (typo, missing path segment, wrong host).
+- For all other error types: call get_message_logs at MOST ONCE if a message GUID is provided.
 - Do NOT call update-iflow, deploy-iflow, or any write/modify tool.
 - Do NOT ask for human input.
 - Return ONLY valid JSON after your investigation — no markdown, no preamble.
@@ -272,6 +279,10 @@ Example — two simultaneous property changes on the same component:
         error_message = clean_error_message(incident.get("error_message", ""))
         message_guid  = incident.get("message_guid", "")
         error_type    = incident.get("error_type", "UNKNOWN")
+
+        # Expose per-run context to the get_vector_store_notes closure built in build_agent().
+        self._current_error_type = error_type or ""
+        self._current_iflow_id   = iflow_id   or ""
 
         # LLM second-pass reclassification for low-signal UNKNOWN_ERROR cases
         if error_type in ("UNKNOWN_ERROR", "", None):
@@ -561,6 +572,64 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
             root_cause = self._classifier.fallback_root_cause(final_error_type, error_message)
             logger.info("[RCA] Using fallback root cause for error type: %s", final_error_type)
 
+        all_fixes = get_all_fixes(rca)
+
+        # Boost confidence when RCA produced complete, actionable property-level fixes.
+        # A fully populated fixes entry (current_value + correct_value both non-empty)
+        # means DirectPatch + value-search can apply the change deterministically — the
+        # risk profile is much lower than a free-XML LLM rewrite, so the threshold is met.
+        if all_fixes and all(
+            (f.current_value if hasattr(f, "current_value") else (f.get("current_value") if isinstance(f, dict) else ""))
+            and (f.correct_value if hasattr(f, "correct_value") else (f.get("correct_value") if isinstance(f, dict) else ""))
+            for f in all_fixes
+        ):
+            _boosted = min(final_confidence + 0.10, 0.95)
+            if _boosted > final_confidence:
+                logger.info(
+                    "[RCA] Confidence boosted %.2f → %.2f — %d complete fix entr%s "
+                    "(direct patch eligible)",
+                    final_confidence, _boosted, len(all_fixes),
+                    "y" if len(all_fixes) == 1 else "ies",
+                )
+                final_confidence = _boosted
+
+        # Cross-check: verify each current_value from RCA actually exists in the iFlow XML
+        # that the agent fetched.  If RCA hallucinated a value, direct_patch will silently
+        # produce a no-op — the wrong iFlow gets redeployed and the error persists.
+        # Extract the raw get-iflow output from agent steps to run this check without a
+        # second network call.
+        _iflow_xml_raw = ""
+        for _step in logger_cb.steps:
+            _tool_name = str(_step.get("tool", ""))
+            if "get-iflow" in _tool_name or "get_iflow" in _tool_name:
+                _iflow_xml_raw = str(_step.get("output", ""))
+                break
+
+        if _iflow_xml_raw and all_fixes:
+            _mismatched = [
+                f for f in all_fixes
+                if (
+                    (f.current_value if hasattr(f, "current_value") else (f.get("current_value") if isinstance(f, dict) else ""))
+                    and (f.current_value if hasattr(f, "current_value") else f.get("current_value", ""))
+                    not in _iflow_xml_raw
+                )
+            ]
+            if _mismatched:
+                _mis_labels = [
+                    f"{(f.property_to_change if hasattr(f, 'property_to_change') else f.get('property_to_change', ''))}="
+                    f"{(f.current_value if hasattr(f, 'current_value') else f.get('current_value', ''))!r}"
+                    for f in _mismatched
+                ]
+                logger.warning(
+                    "[RCA] current_value mismatch for iflow=%s — %d fix(es) reference values "
+                    "not found in fetched iFlow XML (possible hallucination or stale value). "
+                    "Direct patch will likely be skipped; LLM path will attempt the fix. "
+                    "Mismatched: %s",
+                    iflow_id, len(_mismatched), "; ".join(_mis_labels),
+                )
+                # Cap confidence so the mismatched fixes don't auto-deploy without LLM review.
+                final_confidence = min(final_confidence, 0.75)
+
         logger.info(
             "[RCA_RESULT] iflow=%s error_type=%s confidence=%.2f affected=%s | "
             "root_cause=%.200s | proposed_fix=%.200s",
@@ -568,7 +637,6 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
             rca.get("affected_component", ""),
             root_cause, proposed_fix,
         )
-        all_fixes = get_all_fixes(rca)
         return {
             "root_cause":         root_cause,
             "proposed_fix":       proposed_fix,

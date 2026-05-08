@@ -174,6 +174,8 @@ _FIX_TOOL_PROGRESS_LABELS: Dict[str, str] = {
     "cancel_checkout":       "Agent: cancelling existing checkout…",
     "force_unlock":          "Agent: force-unlocking iFlow…",
     "get_message_logs":      "Agent: reading message processing logs…",
+    "web_search_sap_error":  "Agent: searching web for SAP CPI solution…",
+    "web_search_sap_fix":    "Agent: searching web for fix guidance…",
 }
 
 

@@ -29,6 +29,8 @@ from core.validators import _fix_ctx
 
 logger = logging.getLogger(__name__)
 
+_WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "false").lower() == "true"
+
 # Validation errors the free-XML agent cannot self-correct: structural regressions
 # it introduced itself (e.g. removed a CBR default route while rewriting routing).
 _STRUCTURAL_PATTERNS: tuple = (
@@ -144,9 +146,52 @@ class FixGenerator:
         if not mcp_tools:
             mcp_tools = [t for t in self._mcp.tools if t.server == "integration_suite"]
 
-        all_tools = [validate_iflow_xml, record_fix_outcome] + mcp_tools
+        local_tools = [validate_iflow_xml, record_fix_outcome]
 
-        system_prompt = """You are the FixAgent in a SAP CPI self-healing pipeline.
+        if _WEB_SEARCH_ENABLED:
+            @_tool
+            async def web_search_sap_fix(query: str) -> str:
+                """
+                Search the web for SAP CPI configuration, adapter setup, or API endpoint
+                guidance when the correct value or structure is uncertain.
+                Always include the component type and specific question, e.g.:
+                  'SAP CPI HTTP receiver adapter OAuth2 credential alias format'
+                  'SAP CPI OData sender address URL format S/4HANA cloud'
+                Use ONLY when the iFlow XML and RCA do not provide a confirmed correct value.
+                """
+                try:
+                    from duckduckgo_search import DDGS  # noqa: PLC0415
+                    loop = asyncio.get_running_loop()
+                    def _search():
+                        with DDGS() as ddgs:
+                            return list(ddgs.text(f"SAP CPI {query}", max_results=5))
+                    results = await loop.run_in_executor(None, _search)
+                    if not results:
+                        return "No web results found."
+                    lines = []
+                    for r in results:
+                        lines.append(f"Title: {r.get('title', '')}")
+                        lines.append(f"URL:   {r.get('href', '')}")
+                        lines.append(f"Body:  {r.get('body', '')[:300]}")
+                        lines.append("---")
+                    logger.info("[FixGenerator] Web search returned %d result(s) for: %s", len(results), query)
+                    return "\n".join(lines)
+                except Exception as exc:
+                    logger.warning("[FixGenerator] Web search failed: %s", exc)
+                    return f"Web search unavailable: {exc}"
+
+            local_tools.append(web_search_sap_fix)
+
+        all_tools = local_tools + mcp_tools
+
+        _web_search_step = (
+            "\nOPTIONAL — STEP 1.5: If the correct value for a URL, credential alias, or adapter"
+            "\nproperty is not confirmed by the iFlow XML or RCA, call web_search_sap_fix with a"
+            "\nspecific query (e.g. 'HTTP receiver adapter OAuth2 credential name format SAP CPI')."
+            "\nUse ONLY confirmed values from the search — never apply a guessed value.\n"
+        ) if _WEB_SEARCH_ENABLED else ""
+
+        system_prompt = f"""You are the FixAgent in a SAP CPI self-healing pipeline.
 Your ONLY job is to fix and deploy broken SAP CPI iFlows.
 
 === MANDATORY TOOL CALLS — EXECUTE IN ORDER, NO SKIPPING ===
@@ -173,7 +218,7 @@ Examples of what you might change:
 - A script file reference
 
 The SAP CPI iFlow XML structure is standard — you already know how to read it. Trust the RCA output.
-
+{_web_search_step}
 STEP 3: Call validate_iflow_xml with the modified XML.
   - If ERRORS returned → fix the XML issues and re-validate.
   - Do NOT call update-iflow until validate_iflow_xml returns "VALID".
@@ -191,16 +236,41 @@ CRITICAL: If validate_iflow_xml returns ERRORS:
     Do NOT call any more tools. Return JSON with failed_stage="validation_blocked".
     These are structural regressions you introduced — they cannot be self-corrected.
 
+=== USING REFERENCE COMPONENT EXAMPLES (AUTH_CONFIG_ERROR, HTTP_CALL_FAILED, adapter misconfig) ===
+When fixing an adapter configuration error (wrong credential alias, wrong auth type, wrong
+HTTP method/content-type, misconfigured receiver):
+
+BEFORE modifying the XML:
+  1. Call list-iflow-examples — returns a list of COMPONENT names
+     (e.g. "HTTP Receiver", "OData Sender", "SOAP Receiver", "Basic Authentication").
+  2. Pick the name that most closely matches the failing component type.
+  3. Call get-iflow-example with that name — returns the XML for that INDIVIDUAL COMPONENT
+     (the root element is the component itself, not a full iFlow).
+  4. Use the returned component XML as a structural reference for the correct property layout.
+     Copy only the relevant properties — do not replace the entire component verbatim.
+
+This is MANDATORY for AUTH_CONFIG_ERROR and strongly recommended for HTTP_CALL_FAILED.
+Skip this step only if list-iflow-examples returns empty or the error is clearly a simple
+value typo (e.g. URL path suffix) that requires no structural adapter changes.
+
 STEP 4: Call update-iflow with id, files, autoDeploy=true.
   - If response contains "artifact is locked": call cancel-checkout → retry ONCE.
     If still locked → STOP, return failed_stage="locked".
   - If any other failure → STOP, return failed_stage="update".
 
 === CRITICAL — FILEPATH FOR update-iflow ===
-CRITICAL: When calling update_iflow, the filepath MUST match the actual .iflw filename
-from the get-iflow output. Read the filepath from the get-iflow response carefully.
-NEVER use a hardcoded or guessed filepath.
-The filepath comes from the get-iflow response files list.
+CRITICAL: When calling update-iflow, the filepath MUST be a RELATIVE path starting with "src/".
+
+The get-iflow response returns ABSOLUTE container paths like:
+  /home/vcap/app/temp/<uuid>/src/main/resources/scenarioflows/integrationflow/<id>.iflw
+
+You MUST strip everything before "src/" and use only the relative portion:
+  CORRECT:  src/main/resources/scenarioflows/integrationflow/<id>.iflw
+  WRONG:    /home/vcap/app/temp/<uuid>/src/main/resources/scenarioflows/integrationflow/<id>.iflw
+
+Reason: the MCP server calls path.join(newTempFolder, filepath). When filepath is absolute,
+Node.js path.join ignores the base entirely — the patch is written to the deleted temp
+folder and silently lost. Always use the relative path starting from "src/".
 
 STEP 5: Call deploy-iflow with the iFlow ID.
   - If FAILS: call get-deploy-error to retrieve diagnostic details.
@@ -558,14 +628,20 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
         answer += f"\n\n__TOOLS_INVOKED__={','.join(invoked_tools)}"
         logger.info("[FixGenerator] Tools invoked: %s", invoked_tools)
 
-        # FIX 3: Validate filepath used in update-iflow against what get-iflow returned
-        _used_fp     = _extract_update_filepath(_result["messages"])
+        # Validate filepath used in update-iflow against what get-iflow returned.
+        # Normalize both sides because get-iflow returns absolute CF paths while the
+        # LLM should now use relative paths (src/...) per the updated system prompt.
+        _used_fp      = _extract_update_filepath(_result["messages"])
         _expected_fps = _extract_getiflow_filepaths(_result["messages"])
-        if _used_fp and _expected_fps and _used_fp not in _expected_fps:
-            logger.warning(
-                "[FixGenerator] WRONG FILEPATH detected: used=%s expected=%s",
-                _used_fp, _expected_fps,
-            )
+        if _used_fp and _expected_fps:
+            from core.validators import _normalize_iflow_filepath  # noqa: PLC0415
+            _used_fp_norm      = _normalize_iflow_filepath(_used_fp)
+            _expected_fps_norm = [_normalize_iflow_filepath(fp) for fp in _expected_fps]
+            if _used_fp_norm not in _expected_fps_norm:
+                logger.warning(
+                    "[FixGenerator] WRONG FILEPATH detected: used=%r (norm=%r) expected=%s",
+                    _used_fp, _used_fp_norm, _expected_fps_norm,
+                )
 
         # Extract patched XML from update-iflow tool call arguments
         raw_xml = _extract_patched_xml(_result["messages"])

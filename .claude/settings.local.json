@@ -15,7 +15,9 @@
       "Bash(python scripts/debug_get_iflow_extract.py \"Enricher-I-Flow_2_copy151156\")",
       "Bash(python3 -c ' *)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\" -Recurse -File)",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

@@ -27,7 +27,7 @@ from agents.fix_generator import FixGenerator
 from agents.fix_planner import FixPlanner
 from agents.fix_supervisor import FixSupervisor
 from agents.fix_validator import FixValidator
-from core.validators import _extract_iflow_file, _fix_ctx, _fix_ctx_set, _fix_ctx_clear
+from core.validators import _extract_iflow_file, _fix_ctx, _fix_ctx_set, _fix_ctx_clear, _normalize_iflow_filepath
 from db.database import get_similar_patterns
 from utils.utils import get_hana_timestamp
 from utils.vector_store import get_vector_store
@@ -409,6 +409,12 @@ class FixAgent:
                     if isinstance(_xml, bytes):
                         _xml = _xml.decode("utf-8", errors="replace")
                     _xml = _xml.lstrip("\ufeff")  # strip UTF-8 BOM if present
+                    # Normalize to relative path \u2014 get-iflow returns absolute CF container
+                    # paths (/home/vcap/app/temp/<uuid>/src/...) but update-iflow's
+                    # patchFile() does path.join(newTempFolder, filepath): an absolute
+                    # second arg makes Node.js ignore the base entirely, so the patch
+                    # writes to the old (now-deleted) temp folder and is silently lost.
+                    _fp                = _normalize_iflow_filepath(_fp)
                     _original_filepath = _fp
                     _original_xml      = _xml
                     # Store by iFlow ID so validate_iflow_xml can find it from any asyncio task.

@@ -404,6 +404,30 @@ def _extract_iflow_file(snapshot_str: str, iflow_id: str = "") -> tuple[str, str
     return "", ""
 
 
+def _normalize_iflow_filepath(filepath: str) -> str:
+    """
+    Convert an absolute CF container path to the relative path expected by update-iflow.
+
+    get-iflow returns absolute paths (parseFolder outputs full filesystem paths):
+      /home/vcap/app/temp/<uuid>/src/main/resources/scenarioflows/integrationflow/X.iflw
+
+    update-iflow's patchFile() does path.join(newTempFolder, filepath).
+    In Node.js, when filepath is absolute, path.join ignores the base and returns the
+    absolute path unchanged — which points to the OLD (now-deleted) temp folder.
+
+    We strip the prefix so update-iflow receives:
+      src/main/resources/scenarioflows/integrationflow/X.iflw
+    """
+    if not filepath:
+        return filepath
+    fp = filepath.replace("\\", "/")
+    for anchor in ("src/main/resources/", "src/", "resources/"):
+        idx = fp.find(anchor)
+        if idx >= 0:
+            return fp[idx:]
+    return fp
+
+
 def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
     """
     Structural checks on the modified iFlow XML.

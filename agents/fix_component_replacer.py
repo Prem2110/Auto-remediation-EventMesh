@@ -1,9 +1,12 @@
 """
 agents/fix_component_replacer.py
 =================================
-ComponentReplacer — fetches a reference component from S3 via MCP,
+ComponentReplacer — fetches a reference component configuration via MCP,
 merges valid property values from the broken component, applies the
 specific fix from RCA, and returns a ready-to-use patched XML.
+
+list-iflow-examples  → list of component names ("HTTP Receiver", "OData Sender", …)
+get-iflow-example    → XML for the individual component (root element IS the component)
 """
 
 import copy
@@ -54,11 +57,12 @@ class ComponentReplacer:
         self, error_type: str, affected_component: str
     ) -> Tuple[str, str]:
         """
-        Step 1: Call list-iflow-examples to get available examples.
-        Step 2: Find best matching example for this error_type + component.
-        Step 3: Call get-iflow-example to fetch the reference XML.
+        Step 1: Call list-iflow-examples → get list of component names.
+        Step 2: Pick best match for this error_type + component type.
+        Step 3: Call get-iflow-example → returns the component XML directly
+                (root element IS the component, not a full iFlow wrapper).
 
-        Returns (example_name, reference_xml) or ("", "") if not found.
+        Returns (component_name, component_xml) or ("", "") if not found.
         """
         list_result = await self._mcp.execute_integration_tool(
             "list-iflow-examples", {}
@@ -116,6 +120,9 @@ class ComponentReplacer:
         Layer 2: Copy ALL valid property values from broken component
         Layer 3: Apply ONLY the specific fix from proposed_fix
 
+        reference_xml is the component XML returned directly by get-iflow-example
+        (root element IS the component, not a full iFlow wrapper).
+
         Returns patched full XML or None if merge fails.
         """
         try:
@@ -146,18 +153,28 @@ class ComponentReplacer:
                 return None
 
             broken_tag = broken_elem.tag
-            ref_elem = None
-            for elem in ref_root.iter():
-                if elem.tag == broken_tag:
-                    ref_elem = elem
-                    break
+
+            # get-iflow-example now returns the component XML directly — the root element
+            # IS the component, so check root first before iterating into children.
+            if ref_root.tag == broken_tag:
+                ref_elem = ref_root
+            else:
+                # Fallback: component might be wrapped in a thin envelope — search subtree.
+                ref_elem = None
+                for elem in ref_root.iter():
+                    if elem.tag == broken_tag:
+                        ref_elem = elem
+                        break
 
             if ref_elem is None:
+                # Tag mismatch (component type differs from broken element): use root as a
+                # property donor anyway — its ifl:property children carry the correct config.
                 logger.info(
-                    "[ComponentReplacer] No matching element tag=%s in reference",
-                    broken_tag,
+                    "[ComponentReplacer] Tag mismatch (broken=%s ref=%s) — "
+                    "using reference root as property donor",
+                    broken_tag, ref_root.tag,
                 )
-                return None
+                ref_elem = ref_root
 
             # Layer 1: clone reference element structure
             merged = copy.deepcopy(ref_elem)
@@ -241,6 +258,11 @@ class ComponentReplacer:
     def _find_best_match(
         examples_output: str, error_type: str, affected_component: str
     ) -> Optional[str]:
+        """
+        Match against a list of component names returned by list-iflow-examples.
+        Names are component-type labels like "HTTP Receiver", "OData Sender",
+        "SOAP Receiver", "Basic Authentication", "OAuth2 Client Credentials", etc.
+        """
         names: list = []
         try:
             parsed = json.loads(examples_output)
@@ -249,31 +271,35 @@ class ComponentReplacer:
             elif isinstance(parsed, dict):
                 names = list(parsed.keys())
         except Exception:
-            names = re.findall(
-                r'[\w][\w\-_.]*(?:iflow|adapter|receiver|sender|http|sftp|soap|rest|script)',
-                examples_output, re.IGNORECASE,
-            )
-
-        if not names:
+            # Plain text list — one component name per line
             names = [
                 line.strip()
                 for line in examples_output.splitlines()
-                if line.strip() and not line.startswith("{")
+                if line.strip() and not line.startswith("{") and not line.startswith("[")
             ]
+            if not names:
+                # Last resort: extract word sequences that look like component names
+                names = re.findall(
+                    r'[\w][\w\-_ ]*(?:receiver|sender|adapter|auth|credential|script|mapping|http|soap|odata|sftp|rest)',
+                    examples_output, re.IGNORECASE,
+                )
 
         if not names:
             return None
 
+        # Keywords to prefer by error type — component names include these words
         adapter_keywords: dict = {
             "BACKEND_ERROR":      ["http", "rest", "odata", "receiver"],
-            "CONNECTIVITY_ERROR": ["http", "sftp", "soap", "receiver"],
-            "AUTH_ERROR":         ["oauth", "basic", "cert", "auth", "security"],
-            "AUTH_CONFIG_ERROR":  ["credential", "auth", "security"],
+            "CONNECTIVITY_ERROR": ["http", "sftp", "soap", "receiver", "sender"],
+            "AUTH_ERROR":         ["oauth", "basic", "cert", "auth", "security", "credential"],
+            "AUTH_CONFIG_ERROR":  ["credential", "auth", "security", "oauth", "basic"],
             "SCRIPT_ERROR":       ["groovy", "script"],
         }
         type_kws = adapter_keywords.get(error_type, [])
+
+        # Keywords extracted from the affected_component id (e.g. "ReceiverHTTP_1" → ["receiver", "http"])
         comp_kws = [
-            w.lower() for w in re.split(r'[_\-]', affected_component) if len(w) > 2
+            w.lower() for w in re.split(r'[_\-\s]', affected_component) if len(w) > 2
         ]
 
         scores: dict = {}
@@ -282,11 +308,25 @@ class ComponentReplacer:
             score = 0
             for kw in comp_kws:
                 if kw in nl:
-                    score += 3
+                    score += 3          # direct component-id word match — strongest signal
             for kw in type_kws:
                 if kw in nl:
-                    score += 2
+                    score += 2          # error-type adapter keyword match
             if score > 0:
                 scores[name] = score
 
-        return max(scores, key=scores.get) if scores else None
+        if scores:
+            best = max(scores, key=scores.get)
+            logger.debug(
+                "[ComponentReplacer] _find_best_match scores: %s → picked %r",
+                sorted(scores.items(), key=lambda x: -x[1])[:5], best,
+            )
+            return best
+
+        # No keyword match — return first name as a fallback rather than nothing
+        logger.info(
+            "[ComponentReplacer] No keyword match for error_type=%s component=%s — "
+            "using first available component: %r",
+            error_type, affected_component, names[0],
+        )
+        return names[0]

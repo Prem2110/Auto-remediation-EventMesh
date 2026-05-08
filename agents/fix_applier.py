@@ -506,13 +506,25 @@ class FixApplier:
                         progress_fn("Agent: iFlow started successfully")
                     except Exception:
                         pass
+
+                # Secondary verification: check original message log to confirm error
+                # signature is gone.  Non-blocking — skip if tool unavailable or no GUID.
+                _msg_note = await self._check_message_log_after_deploy(ctx)
+                if _msg_note:
+                    logger.warning(
+                        "[FixApplier] Post-deploy message log check: %s", _msg_note
+                    )
+
                 return ApplyResult(
                     success=True,
                     fix_applied=result.fix_applied,
                     deploy_success=True,
                     failed_stage=None,
                     summary=result.summary,
-                    technical_details=result.technical_details,
+                    technical_details=(
+                        f"{result.technical_details} | {_msg_note}"
+                        if _msg_note else result.technical_details
+                    ),
                     steps=result.steps,
                 )
 
@@ -550,6 +562,44 @@ class FixApplier:
             technical_details=f"Poll exhausted after {max_polls} × {poll_interval}s",
             steps=result.steps,
         )
+
+    async def _check_message_log_after_deploy(self, ctx: FixContext) -> str:
+        """
+        After a successful deploy, call get_message_logs for the original message GUID
+        to check whether the error signature is still present in the log.
+
+        Returns a non-empty advisory string when the original message still shows a
+        FAILED status (meaning a replay is needed to fully verify the fix), or "" when
+        the log shows success or the tool is unavailable.  Never raises.
+        """
+        if not ctx.message_guid:
+            return ""
+        try:
+            r = await self._mcp.execute_integration_tool(
+                "get_message_logs", {"message_guid": ctx.message_guid}
+            )
+            log_out = str(r.get("output", "")).strip()
+            if not log_out:
+                return ""
+            log_lower = log_out.lower()
+            if any(kw in log_lower for kw in ("failed", "error", "exception")):
+                return (
+                    f"Original message GUID {ctx.message_guid} still shows a failed status "
+                    "in the message log — the iFlow was redeployed successfully but the "
+                    "original message has not been replayed. Trigger a manual replay or wait "
+                    "for the next business message to confirm the fix is effective."
+                )
+            if any(kw in log_lower for kw in ("completed", "success", "delivered")):
+                logger.info(
+                    "[FixApplier] Post-deploy log check: message %s shows success status — "
+                    "fix verified via message log for iflow=%s",
+                    ctx.message_guid, ctx.iflow_id,
+                )
+        except Exception as exc:
+            logger.debug(
+                "[FixApplier] Post-deploy message log check unavailable (non-fatal): %s", exc
+            )
+        return ""
 
     async def _fetch_deploy_error(self, iflow_id: str) -> str:
         try:

@@ -575,12 +575,15 @@ You MUST follow these platform-specific rules:
 {iflow_xml_patterns}
 
 === OPTIONAL REFERENCE STEP (run before mandatory steps if helpful) ===
-STEP 0: If the fix requires structural changes (new adapter, mapping, channel, or script step),
-         use an example iFlow as a structural reference:
-         a. Call list-iflow-examples to see available examples.
-         b. Pick the example whose name most closely matches: "{error_type}" / "{affected_component}"
-         c. Call get-iflow-example with that name to retrieve the reference content.
-         d. Use the retrieved structure as a reference ONLY — do not copy it verbatim.
+STEP 0: If the fix involves an adapter configuration error or structural change, use a
+         reference component as a guide:
+         a. Call list-iflow-examples → returns a list of COMPONENT names
+            (e.g. "HTTP Receiver", "OData Sender", "SOAP Receiver", "Basic Authentication").
+         b. Pick the name that most closely matches: "{affected_component}" / "{error_type}".
+         c. Call get-iflow-example with that name → returns the XML for that INDIVIDUAL COMPONENT
+            (root element is the component itself, not a full iFlow).
+         d. Use the component XML as a structural reference — copy only relevant properties,
+            do not replace the entire component verbatim.
          Skip entirely if the fix is a simple value/config change with no structural modifications.
 
 === MANDATORY STEPS — EXECUTE IN ORDER, NO SKIPPING ===
