@@ -279,6 +279,16 @@ STEP 5: Call deploy-iflow with the iFlow ID.
 STEP 6: Call record_fix_outcome with iflow_id, error_type, root_cause, fix_applied summary,
   and outcome="SUCCESS" or "FAILED".
 
+=== CONTENT-BASED ROUTER (CBR) — DO NOT TOUCH ===
+Unless the proposed_fix EXPLICITLY mentions routing, ExclusiveGateway, or CBR:
+- NEVER add, remove, or reorder <bpmn2:ExclusiveGateway> elements.
+- NEVER remove or modify any <bpmn2:SequenceFlow> that has no conditionExpression
+  (that is the default route — SAP CPI requires exactly one per gateway).
+- NEVER modify <bpmn2:conditionExpression> elements.
+- NEVER reorder or restructure <bpmn2:SequenceFlow> elements around a gateway.
+If you are unsure whether a SequenceFlow is the default route, leave it untouched.
+Removing the default route causes validate_iflow_xml to return FATAL and blocks deploy.
+
 === GROOVY SCRIPT RULES ===
 - Physical file path in iFlow archive: src/main/resources/script/<Name>.groovy
 - Model reference inside iFlow XML: /script/<Name>.groovy

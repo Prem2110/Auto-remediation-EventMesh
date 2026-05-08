@@ -1278,17 +1278,23 @@ Rules:
                     "reading current iflow":     1,  # get-iflow
                     "get_iflow":                 1,
                     "planning fix strategy":     1,  # pre-patch planning
-                    "generating xml patch":      2,  # LLM patch generation
-                    "retrying patch generation": 2,
-                    "validating patched xml":    2,  # post-patch XML check
-                    "validate":                  2,  # validate_iflow_xml
+                    "reading message processing":1,  # get_message_logs (diagnostics)
+                    "searching reference":       2,  # list-iflow-examples
+                    "loading reference":         2,  # get-iflow-example
+                    "searching web":             2,  # web_search_sap_fix / web_search_sap_error
+                    "validating iflow":          2,  # validate_iflow_xml
                     "uploading fixed iflow":     3,  # update-iflow
                     "update_iflow":              3,
+                    "unlocking iflow":           3,  # unlock_iflow (pre-upload)
+                    "cancelling existing":       3,  # cancel_checkout
+                    "force-unlocking":           3,  # force_unlock
                     "deploying iflow":           4,  # deploy-iflow
                     "deploy_iflow":              4,
                     "checking deployment":       4,
                     "waiting for iflow":         5,  # post-deploy polling
                     "iflow started":             5,  # STARTED confirmed
+                    "testing iflow":             5,  # test_iflow_with_payload
+                    "checking iflow endpoint":   5,  # get_iflow_endpoint
                 }
                 # Tracks the highest slot reached so correction/retry passes never
                 # visually regress the stage rail (e.g. get-iflow in pass 2 stays at 3+)

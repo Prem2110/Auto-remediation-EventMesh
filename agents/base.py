@@ -164,18 +164,21 @@ class TestExecutionTracker:
 # ─────────────────────────────────────────────
 
 _FIX_TOOL_PROGRESS_LABELS: Dict[str, str] = {
-    "get_iflow":             "Agent: reading current iFlow XML…",
-    "update_iflow":          "Agent: uploading fixed iFlow to SAP CPI…",
-    "deploy_iflow":          "Agent: deploying iFlow to runtime…",
-    "get_deploy_error":      "Agent: checking deployment errors…",
-    "list_iflow_examples":   "Agent: searching reference examples…",
-    "get_iflow_example":     "Agent: loading reference example…",
-    "unlock_iflow":          "Agent: unlocking iFlow for editing…",
-    "cancel_checkout":       "Agent: cancelling existing checkout…",
-    "force_unlock":          "Agent: force-unlocking iFlow…",
-    "get_message_logs":      "Agent: reading message processing logs…",
-    "web_search_sap_error":  "Agent: searching web for SAP CPI solution…",
-    "web_search_sap_fix":    "Agent: searching web for fix guidance…",
+    "get_iflow":               "Agent: reading current iFlow XML…",
+    "update_iflow":            "Agent: uploading fixed iFlow to SAP CPI…",
+    "deploy_iflow":            "Agent: deploying iFlow to runtime…",
+    "get_deploy_error":        "Agent: checking deployment errors…",
+    "list_iflow_examples":     "Agent: searching reference examples…",
+    "get_iflow_example":       "Agent: loading reference example…",
+    "unlock_iflow":            "Agent: unlocking iFlow for editing…",
+    "cancel_checkout":         "Agent: cancelling existing checkout…",
+    "force_unlock":            "Agent: force-unlocking iFlow…",
+    "get_message_logs":        "Agent: reading message processing logs…",
+    "web_search_sap_error":    "Agent: searching web for SAP CPI solution…",
+    "web_search_sap_fix":      "Agent: searching web for fix guidance…",
+    "validate_iflow_xml":      "Agent: validating iFlow XML…",
+    "test_iflow_with_payload": "Agent: testing iFlow with payload…",
+    "get_iflow_endpoint":      "Agent: checking iFlow endpoint…",
 }
 
 
