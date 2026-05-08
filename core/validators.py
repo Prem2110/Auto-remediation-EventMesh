@@ -579,7 +579,11 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
                     for _entry in (_v.text or "").split(","):
                         _entry = _entry.strip()
                         if "=" in _entry:
-                            _collab_ns_prefixes.add(_entry.split("=")[0].strip())
+                            _prefix = _entry.split("=")[0].strip()
+                            # Handle both "d=http://..." and "xmlns:d=http://..." formats
+                            if ":" in _prefix:
+                                _prefix = _prefix.split(":")[-1]
+                            _collab_ns_prefixes.add(_prefix)
 
     for el in mod_root.iter():
         key_el = el.find(f"{{{_IFL}}}key") or el.find("key")

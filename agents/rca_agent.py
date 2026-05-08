@@ -324,6 +324,15 @@ Per error type — primary property to extract from get-iflow output:
   AUTH_ERROR / AUTH_CONFIG_ERROR     → credentialName property on the receiver adapter
   SCRIPT_ERROR                       → scriptRef or fileName property on the Script step
   MAPPING_ERROR                      → mappingRef or fileName property on the Message Mapping step
+
+CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathException):
+  SAP CPI's Saxon engine REJECTS inline 'declare namespace' inside XPath values.
+  The correct fix requires TWO property changes:
+    1. collaboration namespaceMapping → correct_value must be "xmlns:prefix=uri"
+       e.g. "xmlns:d=http://schemas.microsoft.com/ado/2007/08/dataservices"
+       (NOT "d=http://..." — SAP deploy will reject the short form)
+    2. the XPath property (e.g. wrapContent) → correct_value must remove the inline
+       'declare namespace ...; ' prefix and use just the bare XPath: //prefix:element
 """
         self._agent = await _mcp.build_agent(
             tools=all_tools,

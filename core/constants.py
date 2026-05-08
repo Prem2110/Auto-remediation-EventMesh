@@ -141,8 +141,10 @@ FALLBACK_FIX_BY_ERROR_TYPE: Dict[str, str] = {
         "In the iFlow XML, locate the failing <bpmn2:serviceTask> element for the mapping step. "
         "Inspect its <ifl:property> entries for source/target field references. "
         "If a field was renamed or removed, update the XPath expression or field reference in that property. "
-        "For namespace errors: declare the namespace inline in the XPath value using "
-        "'declare namespace prefix=\\'uri\\'; //prefix:element'. "
+        "For namespace errors (XPathException: Unexpected token 'declare namespace'): "
+        "SAP CPI rejects inline declarations. Instead, set the collaboration-level "
+        "namespaceMapping property to xmlns:prefix=uri (e.g. xmlns:d=http://schemas.microsoft.com/ado/2007/08/dataservices) "
+        "and use the bare prefix in the XPath value (e.g. //d:element, not 'declare namespace d=...;'). "
         "Apply only the minimal property-level change. Call validate_iflow_xml, then update-iflow, then deploy-iflow."
     ),
     "DATA_VALIDATION": (
@@ -642,9 +644,15 @@ Review the modified iFlow XML. If any issue is found, correct it before uploadin
   e. Properties added for configuration MUST be placed at the correct level in the iFlow XML:
      - Step-level properties belong inside the <bpmn2:extensionElements> of the specific
        <bpmn2:serviceTask> or <bpmn2:callActivity> element — NOT in <bpmn2:collaboration>.
-     - For XPath namespace issues: declare the namespace INLINE in the XPath expression value
-       using: declare namespace prefix='uri'; //prefix:element
-       Do NOT add a top-level namespaceMapping property to the collaboration or flow root.
+     - For XPath namespace issues (e.g. XPathException: Unexpected token "declare namespace"):
+       SAP CPI's Saxon engine REJECTS inline 'declare namespace' inside XPath values.
+       The correct fix is to declare the namespace at collaboration level:
+         1. Find the <bpmn2:collaboration> extensionElements and its <ifl:property> with <key>namespaceMapping</key>.
+         2. Set its <value> to: xmlns:prefix=uri  (e.g. xmlns:d=http://schemas.microsoft.com/ado/2007/08/dataservices)
+            Multiple namespaces: xmlns:d=http://...,xmlns:ns1=http://...
+         3. In the XPath property value itself, use the prefix directly WITHOUT any declare statement:
+            e.g. //d:InvoiceID='1'  (NOT 'declare namespace d=...; //d:InvoiceID')
+       Do NOT write 'declare namespace' anywhere inside an XPath property value — SAP CPI will reject it.
 
 STEP 3: Call deploy-iflow tool with iFlow ID: "{iflow_id}"
          → VERIFY the response contains deployStatus "Success" or "DEPLOYED".

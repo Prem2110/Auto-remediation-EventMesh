@@ -610,7 +610,7 @@ class FixApplier:
             logger.debug("[FixApplier] get-deploy-error raw=%r iflow=%s", raw, iflow_id)
             # SAP MCP tool returns "{}" or "[]" when there is no deployment error.
             # Treat these empty JSON sentinels the same as an empty string.
-            if raw in ("{}", "[]", "null", "None", "none"):
+            if raw in ("{}", "[]", "null", "None", "none", '""', "''"):
                 return ""
             return raw
         except Exception:
