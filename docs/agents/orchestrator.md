@@ -1,4 +1,4 @@
-# OrchestratorAgent
+﻿# OrchestratorAgent
 
 **File:** `agents/orchestrator_agent.py`
 
@@ -109,4 +109,4 @@ The Orchestrator uses `ClassifierAgent.error_signature()` to compute a 16-charac
 - `ObserverAgent` — calls `set_orchestrator(self)` during wiring
 - `db.database` — all HANA persistence
 - `core.state.FIX_PROGRESS` — in-memory progress tracker
-- `aem.event_bus.AEMEventBus` — event publishing
+- `event_mesh.event_bus.EventBus` — event publishing

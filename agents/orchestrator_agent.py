@@ -4,15 +4,14 @@ agents/orchestrator_agent.py
 OrchestratorAgent — routes detected CPI errors through the full pipeline and
 exposes the general chatbot interface (ask).
 
-Pipeline:
-  process_detected_error()
-    → dedup / correlation check
-    → run_rca (via RCAAgent)
-    → remediation_gate()
-        AUTO_FIX → apply_fix (via FixAgent) → verify (via VerifierAgent)
-        RETRY    → retry_failed_message (via VerifierAgent)
-        APPROVAL → set AWAITING_APPROVAL
-        TICKET   → _create_external_ticket
+Pipeline (Event Mesh webhook-driven):
+  /agents/orchestrator → classify + dedup + create incident → publish "observer"
+  /agents/observer     → enrich OData metadata              → publish "rca"
+  /agents/rca          → run_rca (via RCAAgent)             → publish "fixer"
+  /agents/fixer        → policy gate + apply_fix            → publish "verifier"
+  /agents/verifier     → test_iflow_after_fix               → terminal
+
+  Legacy path (process_detected_error / _route_stage) also publishes via Event Mesh.
 
   execute_incident_fix()
     → called by /execute-fix endpoint (human-triggered or approved)
@@ -41,7 +40,7 @@ from agents.classifier_agent import ClassifierAgent
 from agents.fix_agent import FixAgent
 from agents.rca_agent import RCAAgent
 from agents.verifier_agent import VerifierAgent
-from aem.event_bus import event_bus
+from event_mesh.event_bus import event_bus
 from core.constants import (
     ACTION_HINTS,
     AUTO_FIX_ALL_CPI_ERRORS,
@@ -79,7 +78,7 @@ logger = logging.getLogger(__name__)
 _SAP_TENANT          = os.getenv("SAP_HUB_TENANT_URL", "")
 _TICKET_ASSIGNEE     = os.getenv("TICKET_DEFAULT_ASSIGNEE", "")
 
-# AEM — pipeline uses HTTP webhook push; local queue buffers during agent init
+# Event Mesh — pipeline uses HTTP webhook push; local queue buffers during agent init
 
 
 class OrchestratorAgent:
@@ -141,7 +140,7 @@ class OrchestratorAgent:
         @_tool
         async def run_observer(task: str) -> str:
             """
-            Consume the next failed message from the AEM observer queue and mark it for analysis.
+            Consume the next failed message from the Event Mesh observer queue and mark it for analysis.
             Pass a plain-text instruction describing what to monitor or check.
             """
             lc = _ainvoke_or_method(_obs, "")
@@ -683,19 +682,16 @@ Rules:
             "affected_component": merged.get("affected_component", ""),
         }
         if current_status in {"DETECTED", "RCA_FAILED"} or not self.has_actionable_fix(rca):
-            logger.info("[Autonomous] Re-running RCA for recurring incident: %s", incident_id)
-            update_incident(incident_id, {"status": "RCA_IN_PROGRESS"})
-            rca = await self._rca.run_rca(merged)
-            update_incident(incident_id, {
-                "status":             "RCA_COMPLETE",
-                "root_cause":         rca.get("root_cause", ""),
-                "proposed_fix":       rca.get("proposed_fix", ""),
-                "rca_confidence":     rca.get("confidence", 0.0),
-                "affected_component": rca.get("affected_component", ""),
+            logger.info("[Autonomous] Recurring incident %s needs RCA — publishing to RCA queue", incident_id)
+            await event_bus.publish_to_next(event_bus.make_topic("rca"), {
+                "stage": "rca", "incident_id": incident_id,
             })
-        final_status = await self.remediation_gate(dict(merged), rca)
-        logger.info("[Autonomous] Recurring incident %s → %s", incident_id, final_status)
-        return final_status
+            return "RCA_QUEUED"
+        logger.info("[Autonomous] Recurring incident %s has RCA — publishing to fixer queue", incident_id)
+        await event_bus.publish_to_next(event_bus.make_topic("fixer"), {
+            "stage": "fixer", "incident_id": incident_id,
+        })
+        return "FIX_QUEUED"
 
     # ────────────────────────────────────────────
     # EVENT-DRIVEN STAGE HANDLERS
@@ -704,73 +700,37 @@ Rules:
     async def on_classified_event(self, event: Dict[str, Any]) -> None:
         """
         Triggered by 'classified' event.
-        Runs RCA and emits 'rca' to continue the pipeline.
+        Publishes to the RCA queue topic — no in-process RCA execution.
         """
         incident_id = event.get("incident_id", "")
         if not incident_id:
             return
         incident = get_incident_by_id(incident_id)
         if not incident:
-            logger.error("[AEM:classified] Incident %s not found in DB", incident_id)
+            logger.error("[EM:classified] Incident %s not found in DB", incident_id)
             return
-        update_incident(incident_id, {"status": "RCA_IN_PROGRESS"})
-        try:
-            rca = await asyncio.wait_for(
-                self._rca.run_rca(dict(incident)),
-                timeout=300.0,
-            )
-        except asyncio.TimeoutError:
-            logger.error("[Orchestrator] RCA timed out for incident=%s — marking RCA_FAILED", incident_id)
-            update_incident(incident_id, {
-                "status":     "RCA_FAILED",
-                "fix_summary": "RCA timed out after 300s. Retry or investigate manually.",
-            })
-            return
-        except Exception as _rca_exc:
-            logger.error("[Orchestrator] RCA raised exception for incident=%s: %s", incident_id, _rca_exc)
-            update_incident(incident_id, {
-                "status":     "RCA_FAILED",
-                "fix_summary": f"RCA error: {str(_rca_exc)[:400]}",
-            })
-            return
-        update_incident(incident_id, {
-            "status":             "RCA_COMPLETE",
-            "root_cause":         rca.get("root_cause", ""),
-            "proposed_fix":       rca.get("proposed_fix", ""),
-            "rca_confidence":     rca.get("confidence", 0.0),
-            "affected_component": rca.get("affected_component", ""),
+        update_incident(incident_id, {"status": "CLASSIFIED"})
+        await event_bus.publish_to_next(event_bus.make_topic("rca"), {
+            "stage": "rca", "incident_id": incident_id,
         })
-        asyncio.create_task(self.on_rca_event({
-            "incident_id":        incident_id,
-            "root_cause":         rca.get("root_cause", ""),
-            "proposed_fix":       rca.get("proposed_fix", ""),
-            "confidence":         rca.get("confidence", 0.0),
-            "error_type":         rca.get("error_type", ""),
-            "affected_component": rca.get("affected_component", ""),
-        }))
-        logger.info("[Orchestrator] incident=%s RCA complete, dispatching remediation directly", incident_id)
+        logger.info("[Orchestrator] incident=%s classified, published to RCA queue", incident_id)
 
     async def on_rca_event(self, event: Dict[str, Any]) -> None:
         """
         Triggered by 'rca' event.
-        Calls remediation_gate which applies the fix and emits 'fix' + 'verified'.
+        Publishes to the fixer queue topic — no in-process remediation_gate execution.
         """
         incident_id = event.get("incident_id", "")
         if not incident_id:
             return
         incident = get_incident_by_id(incident_id)
         if not incident:
-            logger.error("[AEM:rca] Incident %s not found in DB", incident_id)
+            logger.error("[EM:rca] Incident %s not found in DB", incident_id)
             return
-        rca = {
-            "root_cause":         incident.get("root_cause", ""),
-            "proposed_fix":       incident.get("proposed_fix", ""),
-            "confidence":         incident.get("rca_confidence", 0.0),
-            "error_type":         incident.get("error_type", ""),
-            "affected_component": incident.get("affected_component", ""),
-        }
-        await self.remediation_gate(dict(incident), rca)
-        logger.info("[AEM:rca] incident=%s remediation_gate complete", incident_id)
+        await event_bus.publish_to_next(event_bus.make_topic("fixer"), {
+            "stage": "fixer", "incident_id": incident_id,
+        })
+        logger.info("[EM:rca] incident=%s published to fixer queue", incident_id)
 
     # ────────────────────────────────────────────
     # PROCESS DETECTED ERROR  (called by ObserverAgent)
@@ -922,13 +882,9 @@ Rules:
         logger.info("[Autonomous] New incident: %s | %s | %s",
                     incident_id, normalized.get("iflow_id", ""), normalized.get("error_type", ""))
 
-        # ── Dispatch directly — no Solace round-trip needed for in-process stages
-        asyncio.create_task(self.on_classified_event({
-            "incident_id": incident_id,
-            "error_type":  clf.get("error_type"),
-            "confidence":  clf.get("confidence"),
-            "tags":        clf.get("tags", []),
-        }))
+        await event_bus.publish_to_next(event_bus.make_topic("observer"), {
+            "stage": "observer", "incident_id": incident_id,
+        })
         return "QUEUED"
 
     # ────────────────────────────────────────────
@@ -1736,13 +1692,13 @@ Rules:
         }
 
     # ────────────────────────────────────────────
-    # AEM SINGLE-QUEUE I/O
+    # EVENT MESH SINGLE-QUEUE I/O
     # ────────────────────────────────────────────
 
     @staticmethod
-    def _normalize_aem_message(msg: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_event_message(msg: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Normalize a raw AEM / SAP CPI queue message to the standard incident dict.
+        Normalize a raw SAP Event Mesh / SAP CPI queue message to the standard incident dict.
 
         Handles four source formats in order:
           1. multimap envelope – {"multimap:Messages": {"multimap:Message1": {"MessageProcessingLogs": {...}}}}
@@ -1904,7 +1860,7 @@ Rules:
                     for _mpl_entry in _mpl_entries:
                         if str(_mpl_entry.get("Status", "")).upper() != "FAILED":
                             continue
-                        _norm = self._normalize_aem_message(_mpl_entry)
+                        _norm = self._normalize_event_message(_mpl_entry)
                         _iflow_ph = _norm["iflow_id"].lower() in ("", "unknown_iflow", "unknown", "n/a")
                         if _iflow_ph and _norm["message_guid"] and self._observer:
                             try:
@@ -1921,7 +1877,7 @@ Rules:
                         await self.process_detected_error(_norm)
                     return  # all MPL entries dispatched
 
-                normalized = self._normalize_aem_message(message)
+                normalized = self._normalize_event_message(message)
                 _iflow_placeholder = normalized["iflow_id"].lower() in ("", "unknown_iflow", "unknown", "n/a")
                 if _iflow_placeholder and normalized["message_guid"] and self._observer:
                     try:
@@ -1948,7 +1904,7 @@ Rules:
                 await self._handle_verified(message)
             else:
                 logger.warning("[Orchestrator] Unknown stage '%s' — treating as new error", stage)
-                normalized = self._normalize_aem_message(message)
+                normalized = self._normalize_event_message(message)
                 _iflow_placeholder = normalized["iflow_id"].lower() in ("", "unknown_iflow", "unknown", "n/a")
                 if _iflow_placeholder and normalized["message_guid"] and self._observer:
                     try:
@@ -1971,7 +1927,7 @@ Rules:
                         "message_guid":  message.get("message_guid") or message.get("MessageGuid") or "",
                         "status":        "PARSE_FAILED",
                         "error_type":    "PARSE_FAILED",
-                        "error_message": f"AEM message could not be parsed: {exc} | raw={_raw[:500]}",
+                        "error_message": f"Event Mesh message could not be parsed: {exc} | raw={_raw[:500]}",
                         "created_at":    get_hana_timestamp(),
                     })
                 except Exception as _db_exc:

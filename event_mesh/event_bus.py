@@ -1,6 +1,6 @@
 """
-aem/event_bus.py
-================
+event_mesh/event_bus.py
+=======================
 SAP Event Mesh event bus — agent-to-agent messaging via SAP Event Mesh.
 
 Each agent publishes its output to a well-known topic; the next agent in the
@@ -16,15 +16,16 @@ Topic layout:
   default/sierra.automation/1/autofix/orbit/verified/{incident_id}
 
 Configuration (all via .env):
-  AEM_ENABLED=false              — master switch; false = in-memory fallback only
-  AEM_REST_URL                   — SAP Event Mesh REST Delivery Endpoint base URL
+  EM_ENABLED=false               — master switch; false = in-memory fallback only
+  EM_REST_URL                    — SAP Event Mesh REST Delivery Endpoint base URL
   EVENT_MESH_DESTINATION_NAME    — SAP BTP Destination name for EventMesh (default: "EventMesh")
 
 Exports:
-  AEMEventBus
+  EventBus
     .publish(topic, event)     → None   (fire-and-forget; logs on failure)
     .subscribe(topic, handler) → None   (register in-process handler)
-    .emit(stage, incident_id, payload) → None  (convenience: build topic + publish)
+    .publish_to_next(topic, payload) → None  (guaranteed delivery handoff, x-qos: 1)
+    .make_topic(stage, incident_id) → str  (build canonical topic from EM_QUEUE_PREFIX)
 """
 
 import asyncio
@@ -39,11 +40,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_AEM_ENABLED         = os.getenv("AEM_ENABLED", "false").lower() == "true"
-_AEM_REST_URL        = os.getenv("AEM_REST_URL", "")
+# Backward-compat: accept both EM_* (new) and AEM_* (legacy) env var names
+_EM_ENABLED          = os.getenv("EM_ENABLED", os.getenv("AEM_ENABLED", "false")).lower() == "true"
+_EM_REST_URL         = os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", ""))
 _EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
 
-# Module-level token cache shared across all AEMEventBus instances
+# Module-level token cache shared across all EventBus instances
 _token_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
 
 
@@ -106,20 +108,16 @@ async def _get_bearer_token() -> str:
     logger.debug("[EventMesh] Bearer token resolved via Destination '%s', expires_in=%ds", _EM_DESTINATION_NAME, expires_in)
     return em_token
 
-# Known pipeline stages in order
-PIPELINE_STAGES = ("observed", "classified", "rca", "fix", "verified")
-
-
-class AEMEventBus:
+class EventBus:
     """
     Lightweight event bus with two modes:
 
-    1. AEM_ENABLED=false (default)  — in-memory only.
+    1. EM_ENABLED=false (default)  — in-memory only.
        subscribe() registers a Python coroutine as handler.
        publish() calls registered handlers directly, no network I/O.
        Zero external dependencies; safe for local dev and unit tests.
 
-    2. AEM_ENABLED=true — REST delivery to SAP Event Mesh.
+    2. EM_ENABLED=true — REST delivery to SAP Event Mesh.
        publish() POSTs the event JSON to the SAP Event Mesh REST Delivery Endpoint.
        subscribe() still registers in-process handlers (for the same process
        to consume its own events during local-mode hybrid testing).
@@ -138,7 +136,7 @@ class AEMEventBus:
 
         Subscribing does NOT require SAP Event Mesh to be enabled — it works in
         both modes and is the primary mechanism for inter-agent calls when
-        AEM_ENABLED=false.
+        EM_ENABLED=false.
         """
         self._handlers.setdefault(topic, []).append(handler)
         logger.debug("[EventMesh] Handler registered for topic: %s", topic)
@@ -153,13 +151,13 @@ class AEMEventBus:
         Always call any in-process handlers registered for this topic
         (so the pipeline keeps working even without external SAP Event Mesh connectivity).
         """
-        if _AEM_ENABLED and _AEM_REST_URL:
+        if _EM_ENABLED and _EM_REST_URL:
             await self._publish_rest(topic, event)
         await self._dispatch_local(topic, event)
 
     async def _publish_rest(self, topic: str, event: Dict[str, Any]) -> None:
         encoded_topic = quote(topic, safe="")
-        url = f"{_AEM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+        url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
         try:
             token = await _get_bearer_token()
             async with httpx.AsyncClient(timeout=10) as client:
@@ -208,7 +206,9 @@ class AEMEventBus:
 
     def make_topic(self, stage: str, incident_id: str = "") -> str:
         """Build the canonical topic string for a pipeline stage."""
-        prefix = os.getenv("AEM_QUEUE_PREFIX", "default/sierra.automation/1/autofix/orbit")
+        prefix = os.getenv("EM_QUEUE_PREFIX", os.getenv("AEM_QUEUE_PREFIX", ""))
+        if not prefix:
+            raise RuntimeError("EM_QUEUE_PREFIX is not set — cannot build Event Mesh topic")
         base = f"{prefix}/{stage}"
         return f"{base}/{incident_id}" if incident_id else base
 
@@ -220,9 +220,9 @@ class AEMEventBus:
         to the next in the event-driven pipeline.  Failures are logged only —
         the caller must NOT raise so the current agent's response is unaffected.
         """
-        if _AEM_ENABLED and _AEM_REST_URL:
+        if _EM_ENABLED and _EM_REST_URL:
             encoded_topic = quote(topic, safe="")
-            url = f"{_AEM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+            url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
             try:
                 token = await _get_bearer_token()
                 async with httpx.AsyncClient(timeout=10) as client:
@@ -247,29 +247,8 @@ class AEMEventBus:
         # always dispatch in-process handlers too
         await self._dispatch_local(topic, payload)
 
-    async def emit(
-        self,
-        stage: str,
-        incident_id: str,
-        payload: Dict[str, Any],
-    ) -> None:
-        """
-        Convenience method: publish a pipeline stage event.
-
-        Example:
-            await bus.emit("rca", incident_id, {"root_cause": ..., "proposed_fix": ...})
-        """
-        topic = self.make_topic(stage, incident_id)
-        event = {
-            "stage":       stage,
-            "incident_id": incident_id,
-            "payload":     payload,
-        }
-        await self.publish(topic, event)
-        logger.info("[EventMesh] Emitted stage='%s' incident='%s'", stage, incident_id)
-
 
 # ─────────────────────────────────────────────
 # Module-level singleton — shared by all agents
 # ─────────────────────────────────────────────
-event_bus = AEMEventBus()
+event_bus = EventBus()

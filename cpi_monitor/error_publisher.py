@@ -7,7 +7,7 @@ as a structured payload to the Event Mesh topic default/sierra.automation/1/auto
 Publishing path:
   SAP Destination service — looks up the destination named
   EVENT_MESH_DESTINATION_NAME (default: "EventMesh") to obtain a
-  bearer token.  The publish URL comes from AEM_REST_URL env var.
+  bearer token.  The publish URL comes from EM_REST_URL env var.
   If the Destination is unavailable the message is skipped (logged as error).
 
 Deduplication: a MessageGuid is not re-published within 30 minutes.
@@ -27,9 +27,9 @@ from utils.utils import clean_error_message
 
 logger = logging.getLogger(__name__)
 
-_PUBLISH_TOPIC       = os.getenv("AEM_INGEST_TOPIC", "")
+_PUBLISH_TOPIC       = os.getenv("EM_INGEST_TOPIC", os.getenv("AEM_INGEST_TOPIC", ""))
 _EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
-_AEM_REST_URL        = os.getenv("AEM_REST_URL", "")
+_EM_REST_URL         = os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", ""))
 _DEDUP_TTL           = 30 * 60  # 30 minutes in seconds
 
 # MessageGuid → monotonic expiry timestamp
@@ -61,7 +61,7 @@ def _mark_published(message_guid: str) -> None:
 async def _resolve_em_token() -> Optional[str]:
     """
     Look up the EventMesh SAP Destination and return only the bearer token.
-    The publish URL is taken from AEM_REST_URL env var — not from the destination.
+    The publish URL is taken from EM_REST_URL env var — not from the destination.
     Token is cached until 60 s before expiry.
     """
     now = time.monotonic()
@@ -129,14 +129,14 @@ async def _resolve_em_token() -> Optional[str]:
 async def _publish_via_destination(topic: str, payload: Dict[str, Any], token: str) -> None:
     """
     POST payload to Event Mesh using:
-      - AEM_REST_URL  as the base publish endpoint
-      - token         from the EventMesh SAP Destination
+      - EM_REST_URL  as the base publish endpoint
+      - token        from the EventMesh SAP Destination
     """
-    if not _AEM_REST_URL:
-        raise RuntimeError("AEM_REST_URL is not set — cannot publish via Destination")
+    if not _EM_REST_URL:
+        raise RuntimeError("EM_REST_URL is not set — cannot publish via Destination")
 
     encoded_topic = quote(topic, safe="")
-    url = f"{_AEM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+    url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
 
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
@@ -181,7 +181,7 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
     For each FAILED message: fetch CPI error details, build payload, publish
     to Event Mesh topic default/sierra.automation/1/autofix/in.
 
-    Uses SAP Destination for the bearer token + AEM_REST_URL for the endpoint.
+    Uses SAP Destination for the bearer token + EM_REST_URL for the endpoint.
     Skips the message (logs error) if the Destination token is unavailable.
     Skips duplicates. Never raises.
     """
@@ -205,7 +205,7 @@ async def publish_failed_messages(messages: List[Dict[str, Any]]) -> None:
         logger.error("[CPI_MONITOR] EventMesh destination token resolution FAILED - check destination binding")
         return
     logger.info("[CPI_MONITOR] EventMesh destination token resolved successfully")
-    logger.debug("[CPI_MONITOR] Publishing via SAP Destination '%s' + AEM_REST_URL", _EM_DESTINATION_NAME)
+    logger.debug("[CPI_MONITOR] Publishing via SAP Destination '%s' + EM_REST_URL", _EM_DESTINATION_NAME)
 
     for msg in messages:
         guid    = msg.get("MessageGuid", "")

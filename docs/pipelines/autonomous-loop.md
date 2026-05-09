@@ -1,4 +1,4 @@
-# Autonomous Loop
+﻿# Autonomous Loop
 
 The autonomous loop runs in the background and continuously monitors SAP Integration Suite for failed messages.
 
@@ -142,4 +142,4 @@ The autonomous loop publishes lifecycle events to the AEM event bus at each stag
 | `sap/cpi/remediation/fix/{id}` | Fix applied |
 | `sap/cpi/remediation/verified/{id}` | Verification result |
 
-When `AEM_ENABLED=false` (default), these events are delivered in-process only. See [Event Bus](../aem/event-bus.md) for details.
+When `EM_ENABLED=false` (default), these events are delivered in-process only. See [Event Bus](../aem/event-bus.md) for details.

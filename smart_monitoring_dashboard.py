@@ -183,16 +183,16 @@ async def get_dashboard_all(mcp=Depends(_get_mcp)):
         except Exception as exc:
             logger.warning(f"[Dashboard] Failed to fetch live failed message count: {exc}")
 
-        aem_enabled = os.getenv("AEM_ENABLED", "false").lower() == "true"
-        aem_payload: Dict[str, Any]
-        if aem_enabled:
-            aem_payload = {
+        em_enabled = os.getenv("EM_ENABLED", os.getenv("AEM_ENABLED", "false")).lower() == "true"
+        em_payload: Dict[str, Any]
+        if em_enabled:
+            em_payload = {
                 "queues": {},
                 "stage_counts": {},
                 "semp_error": None,
             }
         else:
-            aem_payload = {"warning": "AEM is disabled in backend configuration."}
+            em_payload = {"warning": "SAP Event Mesh is disabled in backend configuration."}
 
         return {
             "kpi": {
@@ -222,7 +222,7 @@ async def get_dashboard_all(mcp=Depends(_get_mcp)):
                 {"time": bucket, "count": count}
                 for bucket, count in sorted(timeline_buckets.items())
             ],
-            "aem": aem_payload,
+            "event_mesh": em_payload,
             "total_messages_count": total_failed_messages,
             "total_incidents_count": total_incidents,
             "timestamp": get_hana_timestamp(),

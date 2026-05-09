@@ -1,4 +1,4 @@
-# SAP CPI Self-Healing Agent
+﻿# SAP CPI Self-Healing Agent
 
 **Autonomous AI-powered incident management for SAP Cloud Platform Integration**
 
@@ -38,7 +38,7 @@ flowchart LR
 | Bulk approval | Approve or reject multiple awaiting incidents in one call |
 | Lock handling | Detects "iFlow is locked" and auto-unlocks before retrying |
 | Rollback-ready snapshots | Captures iFlow XML before any change for rollback reference |
-| AEM event streaming | Publishes fix lifecycle events to SAP Advanced Event Mesh |
+| AEM event streaming | Publishes fix lifecycle events to SAP Event Mesh |
 
 ---
 

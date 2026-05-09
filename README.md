@@ -1,4 +1,4 @@
-# Orbit — SAP CPI Auto-Remediation Agent
+﻿# Orbit — SAP CPI Auto-Remediation Agent
 
 An event-driven, multi-agent system that automatically detects, diagnoses, and fixes
 errors in SAP Integration Suite (CPI) iFlows. When a CPI iFlow fails, the system
@@ -160,9 +160,9 @@ Each background task wraps the agent call in `try/except`. On any exception:
 - `publish_to_next()` is **not** called — the pipeline halts cleanly at that stage
 - The failure is logged as `[Agents/<name>] Task failed incident=<id>: <exc>`
 
-### In-Process Fallback (`AEM_ENABLED=false`)
+### In-Process Fallback (`EM_ENABLED=false`)
 
-When `AEM_ENABLED=false` (local dev), `publish_to_next()` dispatches to in-process
+When `EM_ENABLED=false` (local dev), `publish_to_next()` dispatches to in-process
 handlers registered via `event_bus.subscribe()` instead of making HTTP calls to SAP
 Event Mesh. The same five-stage pipeline runs end-to-end with zero external dependencies.
 
@@ -460,10 +460,10 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 
 | Variable | Default | Description |
 |---|---|---|
-| `AEM_ENABLED` | `false` | `true` = publish to SAP Event Mesh REST API via Destination; `false` = in-process fallback only |
-| `AEM_REST_URL` | — | Event Mesh REST gateway base URL (`https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com`) |
+| `EM_ENABLED` | `false` | `true` = publish to SAP Event Mesh REST API via Destination; `false` = in-process fallback only |
+| `EM_REST_URL` | — | Event Mesh REST gateway base URL (`https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com`) |
 | `EVENT_MESH_DESTINATION_NAME` | `EventMesh` | SAP BTP Destination name. Resolved at runtime via the Destination service binding (`VCAP_SERVICES`). |
-| `EVENT_MESH_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Inbound queue name (shown in `/aem/status`) |
+| `EVENT_MESH_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Inbound queue name (shown in `/event-mesh/status`) |
 
 > **Removed:** `EVENT_MESH_TOKEN_URL`, `EVENT_MESH_CLIENT_ID`, and `EVENT_MESH_CLIENT_SECRET`
 > are no longer used. All Event Mesh authentication now goes through the SAP Destination
@@ -551,8 +551,8 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/aem/status` | AEM connectivity, queue depth, stage counts, enabled flag |
-| `GET` | `/event-mesh/status` | Alias for `/aem/status` |
+| `GET` | `/event-mesh/status` | AEM connectivity, queue depth, stage counts, enabled flag |
+| `GET` | `/event-mesh/status` | Alias for `/event-mesh/status` |
 
 ### CPI Monitor
 
@@ -644,14 +644,14 @@ cp .env.example .env
 # Edit .env — fill in HANA, SAP CPI, and AI Core credentials at minimum
 ```
 
-### Run in In-Process Mode (`AEM_ENABLED=false`)
+### Run in In-Process Mode (`EM_ENABLED=false`)
 
 Recommended for local development. No SAP Event Mesh connectivity required.
 The five agents call each other in-process via the in-memory event bus.
 
 ```bash
 # .env settings:
-AEM_ENABLED=false
+EM_ENABLED=false
 CPI_POLL_INTERVAL_SECONDS=30    # faster polling for local testing
 
 uvicorn main:app --host 0.0.0.0 --port 8080 --reload
@@ -677,7 +677,7 @@ curl -X POST http://localhost:8080/autonomous/test_incident \
   -d '{"iflow_id": "MyTestFlow", "error_message": "Mapping failed: field not found"}'
 ```
 
-### Run with SAP Event Mesh (`AEM_ENABLED=true`)
+### Run with SAP Event Mesh (`EM_ENABLED=true`)
 
 Requires the 5 queues and webhook subscriptions configured (see [Section 5](#5-sap-event-mesh-setup)).
 The app must have a public HTTPS URL reachable from SAP Event Mesh.
@@ -688,8 +688,8 @@ setting `VCAP_SERVICES` manually, or use `cf ssh` tunnelling.
 
 ```bash
 # .env settings:
-AEM_ENABLED=true
-AEM_REST_URL=https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com
+EM_ENABLED=true
+EM_REST_URL=https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com
 EVENT_MESH_DESTINATION_NAME=EventMesh
 
 # VCAP_SERVICES must be set for the Destination service lookup to work.
@@ -745,8 +745,8 @@ cf push
 
 ```bash
 # Event Mesh
-cf set-env orbit-is-be AEM_ENABLED   "true"
-cf set-env orbit-is-be AEM_REST_URL  "https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com"
+cf set-env orbit-is-be EM_ENABLED   "true"
+cf set-env orbit-is-be EM_REST_URL  "https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com"
 
 # SAP CPI (used by CPI Monitor + Observer agent)
 cf set-env orbit-is-be SAP_HUB_TENANT_URL    "https://<tenant>.it-cpi<n>.cfapps.<region>.hana.ondemand.com"
@@ -892,7 +892,7 @@ Uses `@tanstack/react-query` for polling, CSS Modules for styling (dark theme,
 
 | Page | Tab | Description |
 |---|---|---|
-| Observability | **Event Mesh** | Live SVG pipeline diagram with animated glowing nodes, 6 stats cards (total, retrieved, queue depth, stage counts), auto-scrolling event log. Polls `/aem/status` and `/autonomous/incidents` every 3 s. |
+| Observability | **Event Mesh** | Live SVG pipeline diagram with animated glowing nodes, 6 stats cards (total, retrieved, queue depth, stage counts), auto-scrolling event log. Polls `/event-mesh/status` and `/autonomous/incidents` every 3 s. |
 | Observability | **Messages** | Paginated CPI failed messages with AI analysis, explain-error, and fix-patch actions |
 | Observability | **Agent Monitor** | Real-time agent running state, tool distribution per agent, autonomous loop toggle |
 | Observability | **AEM Status** | Event Mesh connectivity status, enabled flag, queue depth |
@@ -993,7 +993,7 @@ needed for the ingestion path.
 
 Previously, Event Mesh credentials were passed as plain env vars (`EVENT_MESH_CLIENT_ID`,
 `EVENT_MESH_CLIENT_SECRET`, `EVENT_MESH_TOKEN_URL`). These have been removed entirely.
-Both `cpi_monitor/error_publisher.py` (inbound publish) and `aem/event_bus.py`
+Both `cpi_monitor/error_publisher.py` (inbound publish) and `event_mesh/event_bus.py`
 (agent-to-agent publish) now resolve their bearer token exclusively via the SAP
 Destination service — the `EventMesh` destination configured in BTP Connectivity and
 exposed through the `VCAP_SERVICES` binding.
@@ -1068,7 +1068,7 @@ auto-remediation - EventMesh/
 ├── aem/
 │   └── event_bus.py                 # SAP Event Mesh publisher — bearer token via SAP
 │                                    #   Destination service, publish / publish_to_next /
-│                                    #   in-process fallback (AEM_ENABLED=false)
+│                                    #   in-process fallback (EM_ENABLED=false)
 │
 ├── core/
 │   ├── constants.py                 # Tuning constants, prompt templates, error rules

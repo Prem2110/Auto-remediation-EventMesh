@@ -7,12 +7,12 @@ This file contains ONLY:
   - FastAPI app setup + CORS middleware
   - Lifespan: create all agents, wire dependencies, start autonomous loop
   - All HTTP endpoints (delegating to the appropriate agent)
-  - POST /aem/events  — AEM webhook entry point
+  - POST /event-mesh/events  — Event Mesh webhook entry point
 
 All business logic lives in:
-  core/     — mcp_manager, validators, constants, state
-  agents/   — classifier, observer, rca, fix, verifier, orchestrator
-  aem/      — event_bus
+  core/        — mcp_manager, validators, constants, state
+  agents/      — classifier, observer, rca, fix, verifier, orchestrator
+  event_mesh/  — event_bus
 
 To promote this to the live main.py:
   mv main.py main_legacy.py && mv main_v2.py main.py
@@ -78,9 +78,9 @@ from agents.rca_agent import RCAAgent
 from agents.verifier_agent import VerifierAgent
 
 # ─────────────────────────────────────────────
-# AEM
+# Event Mesh
 # ─────────────────────────────────────────────
-from aem.event_bus import AEMEventBus, event_bus
+from event_mesh.event_bus import event_bus
 # solace_client removed — Event Mesh delivers via HTTP webhook push
 
 # ─────────────────────────────────────────────
@@ -1038,36 +1038,34 @@ async def update_ticket_status(ticket_id: str, body: Dict[str, Any]):
 async def inject_test_incident(background_tasks: BackgroundTasks):
     _guard()
     incident_id = str(uuid.uuid4())
-    incident    = {
-        "incident_id":    incident_id,
-        "message_guid":   "TEST-" + incident_id[:8],
-        "iflow_id":       "EH8-BPP-Material-UPSERT",
-        "sender":         "S4HANA",
-        "receiver":       "BPP",
-        "status":         "DETECTED",
-        "error_type":     "MAPPING_ERROR",
-        "error_message":  "MappingException: Field 'NetPrice' does not exist in target structure.",
-        "correlation_id": "COR-TEST-001",
-        "log_start":      get_hana_timestamp(),
-        "log_end":        get_hana_timestamp(),
-        "created_at":     get_hana_timestamp(),
-        "tags":           ["mapping", "schema"],
+    _group_key  = orchestrator.incident_group_key(  # type: ignore[union-attr]
+        {"iflow_id": "EH8-BPP-Material-UPSERT", "error_type": "MAPPING_ERROR"}
+    ) if orchestrator else ""
+    incident = {
+        "incident_id":          incident_id,
+        "message_guid":         "TEST-" + incident_id[:8],
+        "iflow_id":             "EH8-BPP-Material-UPSERT",
+        "sender":               "S4HANA",
+        "receiver":             "BPP",
+        "status":               "CLASSIFIED",
+        "error_type":           "MAPPING_ERROR",
+        "error_message":        "MappingException: Field 'NetPrice' does not exist in target structure.",
+        "correlation_id":       "COR-TEST-001",
+        "log_start":            get_hana_timestamp(),
+        "log_end":              get_hana_timestamp(),
+        "created_at":           get_hana_timestamp(),
+        "incident_group_key":   _group_key,
+        "occurrence_count":     1,
+        "last_seen":            get_hana_timestamp(),
+        "verification_status":  "UNVERIFIED",
+        "consecutive_failures": 0,
+        "auto_escalated":       0,
+        "tags":                 ["mapping", "schema"],
     }
     create_incident(incident)
 
-    async def run_pipeline():
-        update_incident(incident_id, {"status": "RCA_IN_PROGRESS"})
-        rca = await orchestrator._rca.run_rca(incident)
-        update_incident(incident_id, {
-            "status":             "RCA_COMPLETE",
-            "root_cause":         rca.get("root_cause", ""),
-            "proposed_fix":       rca.get("proposed_fix", ""),
-            "rca_confidence":     rca.get("confidence", 0.0),
-            "affected_component": rca.get("affected_component", ""),
-        })
-        await orchestrator.remediation_gate(dict(incident), rca)
-
-    background_tasks.add_task(run_pipeline)
+    # Route via Event Mesh — observer enriches, then rca → fixer → verifier
+    background_tasks.add_task(_run_observer_task, {"stage": "observer", "incident_id": incident_id})
     return {"status": "test_incident_created", "incident_id": incident_id}
 
 
@@ -1076,7 +1074,6 @@ async def inject_test_incident(background_tasks: BackgroundTasks):
 # ─────────────────────────────────────────────
 
 @app.get("/event-mesh/status")
-@app.get("/aem/status")
 async def event_mesh_status():
     """Return SAP Event Mesh connectivity info and pipeline stage counts."""
     queue_name = os.getenv("EVENT_MESH_QUEUE", "")
@@ -1103,7 +1100,6 @@ async def event_mesh_status():
 # ─────────────────────────────────────────────
 
 @app.post("/event-mesh/events")
-@app.post("/aem/events")
 async def event_mesh_webhook(event: Dict[str, Any]):
     """
     SAP Event Mesh webhook push endpoint.
@@ -1175,8 +1171,8 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
     try:
         set_db_source("EVENT_MESH")
 
-        # Normalize the raw AEM/iFlow message envelope
-        normalized = orchestrator._normalize_aem_message(event)  # type: ignore[union-attr]
+        # Normalize the raw Event Mesh/iFlow message envelope
+        normalized = orchestrator._normalize_event_message(event)  # type: ignore[union-attr]
         _error_msg = normalized.get("error_message", "")
         _iflow_id  = normalized.get("iflow_id", "")
 
@@ -1402,9 +1398,8 @@ async def agent_rca_webhook(event: Dict[str, Any]):
 
 async def _run_fixer_task(event: Dict[str, Any]) -> None:
     """
-    Apply the proposed fix (update iFlow XML, deploy), persist the result,
-    then publish to the verifier queue — but ONLY if the fix was successfully applied.
-    Does NOT run the verifier inline.
+    Policy gate + fix: evaluate remediation policy, then apply fix and publish to verifier.
+    Handles AUTO_FIX, RETRY, AWAITING_APPROVAL, and TICKET_CREATED paths.
     """
     incident_id: str = event.get("incident_id", "")
     try:
@@ -1421,13 +1416,65 @@ async def _run_fixer_task(event: Dict[str, Any]) -> None:
             "error_type":         incident.get("error_type", ""),
             "affected_component": incident.get("affected_component", ""),
         }
+        confidence  = rca["confidence"]
+        policy      = orchestrator.get_remediation_policy(dict(incident), rca)  # type: ignore[union-attr]
+        _error_type = rca.get("error_type") or incident.get("error_type") or "UNKNOWN_ERROR"
 
+        # ── Non-fixable error gate ────────────────────────────────────────────
+        if not orchestrator._classifier.is_iflow_fixable(_error_type) and confidence >= 0.80:  # type: ignore[union-attr]
+            ticket_id = await orchestrator._create_external_ticket(dict(incident), rca)  # type: ignore[union-attr]
+            update_incident(incident_id, {
+                "status":      "TICKET_CREATED",
+                "ticket_id":   ticket_id,
+                "fix_summary": f"Error type '{_error_type}' cannot be resolved by modifying iFlow XML.",
+            })
+            logger.info("[Agents/fixer] Non-fixable error incident=%s → TICKET_CREATED", incident_id)
+            return
+
+        # ── RETRY policy ──────────────────────────────────────────────────────
+        if policy["action"] == "RETRY" and confidence >= SUGGEST_FIX_CONFIDENCE:
+            retry_result = await orchestrator._verifier.retry_failed_message(dict(incident))  # type: ignore[union-attr]
+            if retry_result["success"]:
+                update_incident(incident_id, {
+                    "status":      "RETRIED",
+                    "fix_summary": retry_result["summary"],
+                    "resolved_at": get_hana_timestamp(),
+                })
+                logger.info("[Agents/fixer] Message retried incident=%s", incident_id)
+                return
+            logger.info("[Agents/fixer] Retry failed — falling through to iFlow fix incident=%s", incident_id)
+
+        # ── Policy / confidence decision ──────────────────────────────────────
+        effective_auto_fix = (
+            RUNTIME_FLAGS["auto_fix_enabled"]
+            and orchestrator.has_actionable_fix(rca)  # type: ignore[union-attr]
+            and _error_type != "UNKNOWN_ERROR"
+        )
+        should_fix = orchestrator.should_auto_fix(dict(incident), rca, policy, confidence) or effective_auto_fix  # type: ignore[union-attr]
+
+        if not should_fix:
+            if confidence >= SUGGEST_FIX_CONFIDENCE:
+                update_incident(incident_id, {
+                    "status":        "AWAITING_APPROVAL",
+                    "pending_since": get_hana_timestamp(),
+                })
+                logger.info("[Agents/fixer] Medium confidence incident=%s → AWAITING_APPROVAL", incident_id)
+            else:
+                ticket_id = await orchestrator._create_external_ticket(dict(incident), rca)  # type: ignore[union-attr]
+                update_incident(incident_id, {
+                    "status":    "TICKET_CREATED",
+                    "ticket_id": ticket_id,
+                })
+                logger.info("[Agents/fixer] Low confidence incident=%s → TICKET_CREATED", incident_id)
+            return
+
+        # ── AUTO-FIX path ─────────────────────────────────────────────────────
         update_incident(incident_id, {"status": "FIX_IN_PROGRESS"})
         fix_result  = await orchestrator._fix.apply_fix(dict(incident), rca)  # type: ignore[union-attr]
         fix_success = fix_result.get("success", False)
         fix_status  = FixAgent.determine_post_fix_status(
             fix_success=fix_success,
-            policy={"action": "AUTO_FIX"},
+            policy=policy,
             failed_stage=fix_result.get("failed_stage", ""),
         )
         update_incident(incident_id, {
@@ -1522,7 +1569,7 @@ async def agent_verifier_webhook(request: Request, event: Dict[str, Any]):
     body_bytes = await request.body()
     logger.info("[Agents/verifier] RAW PAYLOAD: %s", body_bytes.decode("utf-8", errors="replace")[:500])
 
-    # Fallback: if FastAPI body-parsing silently produced an empty dict (e.g. AEM
+    # Fallback: if FastAPI body-parsing silently produced an empty dict (e.g. Event Mesh
     # delivered with a non-application/json Content-Type), re-parse from raw bytes.
     if not event and body_bytes:
         try:
@@ -1543,7 +1590,7 @@ async def agent_verifier_webhook(request: Request, event: Dict[str, Any]):
 async def agents_options_preflight(agent_name: str):
     """
     Handles OPTIONS preflight from SAP Event Mesh webhook subscription validation.
-    CORS middleware only intercepts requests that carry an Origin header; AEM sends
+    CORS middleware only intercepts requests that carry an Origin header; SAP Event Mesh sends
     plain OPTIONS without one, so a dedicated handler is required.
     """
     return JSONResponse(status_code=200, content={"status": "ok"})
@@ -1667,7 +1714,7 @@ async def cpi_monitor_status():
         },
         "event_mesh_publish": {
             "destination_name":    _EM_DESTINATION_NAME,
-            "publish_url":         os.getenv("AEM_REST_URL", "NOT SET"),
+            "publish_url":         os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", "NOT SET")),
             "cached_token":        "present" if _em_cache.get("token") else "not resolved yet",
         },
         "dedup_cache": {

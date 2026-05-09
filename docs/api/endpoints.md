@@ -1,4 +1,4 @@
-# Core API Endpoints
+﻿# Core API Endpoints
 
 Base URL: `http://<host>:8080`
 
@@ -166,13 +166,13 @@ Approve multiple incidents at once.
 
 ---
 
-## AEM Webhook
+## Event Mesh Webhook
 
-### `POST /aem/events`
+### `POST /event-mesh/events`
 
-Receive incoming AEM events. Used when AEM is configured to push events back to this service.
+Receive incoming SAP Event Mesh events pushed to this service.
 
-**Request:** AEM event JSON payload (topic-specific structure)
+**Request:** SAP Event Mesh event JSON payload (topic-specific structure)
 
 ---
 

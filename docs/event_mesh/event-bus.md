@@ -1,9 +1,9 @@
-# AEM Event Bus
+﻿# Event Mesh Event Bus
 
-**File:** `aem/event_bus.py`  
-**Class:** `AEMEventBus`
+**File:** `event_mesh/event_bus.py`  
+**Class:** `EventBus`
 
-Publishes fix lifecycle events. Supports two modes: in-process only (default) and SAP Advanced Event Mesh REST delivery.
+Publishes fix lifecycle events. Supports two modes: in-process only (default) and SAP Event Mesh REST delivery.
 
 ---
 
@@ -11,22 +11,22 @@ Publishes fix lifecycle events. Supports two modes: in-process only (default) an
 
 ### Mode 1: In-Process (Default)
 
-When `AEM_ENABLED=false` (the default), all events are delivered directly to registered Python async handlers within the same process. No external dependencies.
+When `EM_ENABLED=false` (the default), all events are delivered directly to registered Python async handlers within the same process. No external dependencies.
 
 ```python
-bus = AEMEventBus()
+bus = EventBus()
 bus.subscribe("sap/cpi/remediation/verified", my_handler)
 await bus.publish("sap/cpi/remediation/verified/incident-123", event_data)
 # → my_handler(event_data) is called directly
 ```
 
-### Mode 2: SAP Advanced Event Mesh
+### Mode 2: SAP Event Mesh
 
-When `AEM_ENABLED=true`, events are POSTed to the AEM REST endpoint **in addition to** calling local handlers.
+When `EM_ENABLED=true`, events are POSTed to the SAP Event Mesh REST endpoint **in addition to** calling local handlers.
 
 ```
-POST {AEM_REST_URL}
-Authorization: Basic {AEM_USERNAME}:{AEM_PASSWORD}
+POST {EM_REST_URL}
+Authorization: Basic {EM_USERNAME}:{EM_PASSWORD}
 Content-Type: application/json
 
 { "topic": "sap/cpi/remediation/verified/incident-123", "data": {...} }
@@ -39,7 +39,7 @@ Content-Type: application/json
 All topics follow this pattern:
 
 ```
-{AEM_QUEUE_PREFIX}/{stage}/{incident_id}
+{EM_QUEUE_PREFIX}/{stage}/{incident_id}
 ```
 
 Default prefix: `sap/cpi/remediation`
@@ -69,7 +69,7 @@ bus.subscribe("sap/cpi/remediation/fix", on_fix)
 
 ### `publish(topic, event)`
 
-Publish an event. Calls all matching subscribers and (if enabled) posts to AEM.
+Publish an event. Calls all matching subscribers and (if enabled) posts to SAP Event Mesh.
 
 ```python
 await bus.publish(
@@ -90,9 +90,9 @@ await bus.publish(
 In `main_v2.py` lifespan:
 
 ```python
-from aem.event_bus import AEMEventBus
+from event_mesh.event_bus import EventBus
 
-bus = AEMEventBus()
+bus = EventBus()
 
 # Example: notify a dashboard on RCA completion
 bus.subscribe("sap/cpi/remediation/rca", dashboard_handler)
@@ -107,20 +107,20 @@ bus.subscribe("sap/cpi/remediation/fix", slack_notifier)
 
 | Variable | Default | Description |
 |---|---|---|
-| `AEM_ENABLED` | `false` | Enable REST delivery to SAP AEM |
-| `AEM_REST_URL` | — | AEM REST endpoint URL |
-| `AEM_USERNAME` | — | Basic auth username |
-| `AEM_PASSWORD` | — | Basic auth password |
-| `AEM_QUEUE_PREFIX` | `sap/cpi/remediation` | Topic prefix |
+| `EM_ENABLED` | `false` | Enable REST delivery to SAP Event Mesh |
+| `EM_REST_URL` | — | SAP Event Mesh REST endpoint URL |
+| `EM_USERNAME` | — | Basic auth username |
+| `EM_PASSWORD` | — | Basic auth password |
+| `EM_QUEUE_PREFIX` | `sap/cpi/remediation` | Topic prefix |
 
 ---
 
 ## Inbound Events
 
-The `/aem/events` endpoint in `main_v2.py` receives events pushed by SAP AEM:
+The `/event-mesh/events` endpoint receives events pushed by SAP Event Mesh:
 
 ```
-POST /aem/events
+POST /event-mesh/events
 Content-Type: application/json
 
 {

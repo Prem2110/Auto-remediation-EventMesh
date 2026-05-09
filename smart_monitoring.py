@@ -386,7 +386,7 @@ def _incident_matches_filter(
     cutoff = _parse_time_range_cutoff(time_range)
     if cutoff:
         # Prefer last_seen (updated on every correlation) over log_end (frozen at
-        # the original AEM event time) so recently active incidents are always visible.
+        # the original Event Mesh event time) so recently active incidents are always visible.
         ts = str(inc.get("last_seen") or inc.get("log_end") or inc.get("created_at") or "")
         dt = _parse_sap_timestamp(ts)
         if dt and dt < cutoff:
@@ -945,7 +945,7 @@ async def list_messages(
 ):
     """
     Fetch incidents from the local DB — no SAP CPI OData API calls.
-    All incidents originate from the AEM queue via the autonomous pipeline.
+    All incidents originate from the Event Mesh queue via the autonomous pipeline.
     """
     incidents = get_all_incidents(limit=limit * 3)
 

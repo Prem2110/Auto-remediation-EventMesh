@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+﻿import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchAemStatus, fetchAemIncidents, fetchMcpTools } from "../../services/api.ts";
-import type { AemStatusResponse, McpToolsStatus } from "../../services/api.ts";
+import type { EventMeshStatusResponse, McpToolsStatus } from "../../services/api.ts";
 import SvgIcon, { type IconName } from "../../components/icons/SvgIcon.tsx";
 import styles from "./EventMeshFlow.module.css";
 
@@ -214,15 +214,15 @@ function NodeParticles({ cx, counts }: NodeParticlesProps) {
 
 interface PipelineDiagramProps {
   incidents: Incident[];
-  aemEnabled: boolean;
+  emEnabled: boolean;
   messagesRetrieved: number;
 }
 
-function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineDiagramProps) {
+function PipelineDiagram({ incidents, emEnabled, messagesRetrieved }: PipelineDiagramProps) {
   const counts = computeNodeCounts(incidents);
 
   function getGlow(nodeId: NodeId): GlowState {
-    if (nodeId === "cpi") return (aemEnabled && messagesRetrieved > 0) ? "blue" : "idle";
+    if (nodeId === "cpi") return (emEnabled && messagesRetrieved > 0) ? "blue" : "idle";
     return nodeGlowState(counts.get(nodeId) ?? { blue: 0, green: 0, red: 0, total: 0 });
   }
 
@@ -234,12 +234,12 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
     <div className={styles.diagramCard}>
       <div className={styles.diagramHeader}>
         <span className={styles.diagramTitle}>Event Mesh Pipeline Flow</span>
-        <span className={styles.aemStatus} data-enabled={String(aemEnabled)}>
-          <span className={styles.aemDot} />
-          {aemEnabled ? "Event Mesh Connected" : "Event Mesh Disconnected"}
+        <span className={styles.emStatus} data-enabled={String(emEnabled)}>
+          <span className={styles.emDot} />
+          {emEnabled ? "Event Mesh Connected" : "Event Mesh Disconnected"}
         </span>
       </div>
-      {!aemEnabled && (
+      {!emEnabled && (
         <div className={styles.disconnectedBanner}>
           <SvgIcon name="warning" size={14} style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />
           Event Mesh is disconnected — the pipeline is not receiving events
@@ -294,9 +294,9 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
           {NODES.map((node) => {
             const glow    = getGlow(node.id);
             const nodeCts = node.id === "cpi"
-              ? { blue: aemEnabled ? 1 : 0, green: 0, red: 0, total: aemEnabled ? 1 : 0 }
+              ? { blue: emEnabled ? 1 : 0, green: 0, red: 0, total: emEnabled ? 1 : 0 }
               : (counts.get(node.id) ?? { blue: 0, green: 0, red: 0, total: 0 });
-            const total = node.id === "cpi" ? (aemEnabled && messagesRetrieved > 0 ? messagesRetrieved : 0) : nodeCts.total;
+            const total = node.id === "cpi" ? (emEnabled && messagesRetrieved > 0 ? messagesRetrieved : 0) : nodeCts.total;
 
             return (
               <g key={node.id}>
@@ -354,11 +354,11 @@ function PipelineDiagram({ incidents, aemEnabled, messagesRetrieved }: PipelineD
 // ── Stats Row ─────────────────────────────────────────────────────────────────
 
 function StatsRow({
-  aemStatus,
+  emStatus,
   incidents,
   mcpTools,
 }: {
-  aemStatus: AemStatusResponse | null;
+  emStatus: EventMeshStatusResponse | null;
   incidents: Incident[];
   mcpTools: McpToolsStatus | null;
 }) {
@@ -386,12 +386,12 @@ function StatsRow({
   }, [mcpOpen]);
 
   const CARDS: Array<{ label: string; value: number | string; accent: string }> = [
-    { label: "Webhooks Received", value: aemStatus?.messages_retrieved ?? 0, accent: "#3b82f6" },
-    { label: "Total Incidents",   value: aemStatus?.total_incidents ?? incidents.length, accent: "#6366f1" },
+    { label: "Webhooks Received", value: emStatus?.messages_retrieved ?? 0, accent: "#3b82f6" },
+    { label: "Total Incidents",   value: emStatus?.total_incidents ?? incidents.length, accent: "#6366f1" },
     { label: "Fixed & Verified",  value: fixedCount,  accent: "#22c55e" },
     { label: "In Progress",       value: inProgress,  accent: "#f59e0b" },
     { label: "Failed",            value: failedCount, accent: "#ef4444" },
-    { label: "Queue Depth",       value: aemStatus?.queue_depth ?? 0, accent: "#8b5cf6" },
+    { label: "Queue Depth",       value: emStatus?.queue_depth ?? 0, accent: "#8b5cf6" },
   ];
 
   const serverEntries = Object.entries(mcpTools?.servers ?? {});
@@ -568,8 +568,8 @@ export default function EventMeshFlow() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const prevMapRef = useRef<Map<string, string>>(new Map());
 
-  const { data: aemStatus } = useQuery({
-    queryKey: ["aem-flow-status"],
+  const { data: emStatus } = useQuery({
+    queryKey: ["event-mesh-status"],
     queryFn: fetchAemStatus,
     refetchInterval: 3_000,
     retry: false,
@@ -644,10 +644,10 @@ export default function EventMeshFlow() {
     <div className={styles.root}>
       <PipelineDiagram
         incidents={incidents}
-        aemEnabled={(aemStatus?.event_mesh_enabled || aemStatus?.webhook_active) ?? false}
-        messagesRetrieved={aemStatus?.messages_retrieved ?? 0}
+        emEnabled={(emStatus?.event_mesh_enabled || emStatus?.webhook_active) ?? false}
+        messagesRetrieved={emStatus?.messages_retrieved ?? 0}
       />
-      <StatsRow aemStatus={aemStatus ?? null} incidents={incidents} mcpTools={mcpTools ?? null} />
+      <StatsRow emStatus={emStatus ?? null} incidents={incidents} mcpTools={mcpTools ?? null} />
       <EventLog entries={logEntries} onClear={() => setLogEntries([])} />
     </div>
   );

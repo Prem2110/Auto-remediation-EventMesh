@@ -178,19 +178,6 @@
 }
 .sidebarCollapsed { width: 3.5rem; }
 
-/* Nav group label */
-.navGroupLabel {
-  padding: 0.75rem 1rem 0.25rem;
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #94a3b8;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.sidebarCollapsed .navGroupLabel { opacity: 0; }
-
 /* Nav item */
 .navItem {
   display: flex;

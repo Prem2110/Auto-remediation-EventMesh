@@ -1,4 +1,4 @@
-import {
+﻿import {
   useEffect,
   useRef,
   useState,
@@ -121,13 +121,13 @@ export default function Orchestrator() {
     <div className={styles.page}>
 
       {/* ── Pipeline Status Bar ── */}
-      <div className={styles.aemBar} data-connected={String(pipelineOn)}>
-        <span className={styles.aemBarDot} />
-        <span className={styles.aemBarLabel}>
+      <div className={styles.emBar} data-connected={String(pipelineOn)}>
+        <span className={styles.emBarDot} />
+        <span className={styles.emBarLabel}>
           Event Mesh Pipeline
         </span>
-        <span className={styles.aemBarSep}>·</span>
-        <span className={styles.aemBarItem}>
+        <span className={styles.emBarSep}>·</span>
+        <span className={styles.emBarItem}>
           Pipeline: <strong>{pipelineOn ? "Running" : "Stopped"}</strong>
         </span>
       </div>

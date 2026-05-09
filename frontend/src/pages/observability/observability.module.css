@@ -1,4 +1,4 @@
-.page {
+﻿.page {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -24,8 +24,8 @@
   margin: 0;
 }
 
-/* ── AEM Banner ── */
-.aemBanner {
+/* ── Event Mesh Banner ── */
+.emBanner {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -39,13 +39,13 @@
   flex-shrink: 0;
 }
 
-.aemBanner[data-connected="false"] {
+.emBanner[data-connected="false"] {
   background: #f8fafc;
   border-color: #e2e8f0;
   color: #64748b;
 }
 
-.aemDot {
+.emDot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -53,17 +53,17 @@
   flex-shrink: 0;
 }
 
-.aemBanner[data-connected="false"] .aemDot {
+.emBanner[data-connected="false"] .emDot {
   background: #94a3b8;
 }
 
-.aemBanner[data-connected="true"][data-semp-error="true"] .aemDot {
+.emBanner[data-connected="true"][data-semp-error="true"] .emDot {
   background: #f59e0b; /* amber — connected but SEMP stats unreliable */
 }
 
-.aemBannerLabel { font-weight: 600; }
-.aemSep         { color: #93c5fd; }
-.aemStat        { color: #1e40af; }
+.emBannerLabel { font-weight: 600; }
+.emSep         { color: #93c5fd; }
+.emStat        { color: #1e40af; }
 
 .aemStage {
   font-size: 0.68rem;
@@ -74,7 +74,7 @@
   border: 1px solid rgba(132,94,247,0.25);
 }
 
-.aemError {
+.emError {
   color: #dc2626;
   font-weight: 600;
 }

@@ -1,4 +1,4 @@
-# Architecture Overview
+﻿# Architecture Overview
 
 ## High-Level System Diagram
 
@@ -9,7 +9,7 @@ flowchart TB
         HANA["SAP HANA Cloud\n(Incidents · Patterns · Vector)"]
         AICORE["SAP AI Core\n(LLM Inference)"]
         S3["AWS S3\n(File Storage)"]
-        AEM_EXT["SAP Advanced Event Mesh\n(Optional)"]
+        AEM_EXT["SAP Event Mesh\n(Optional)"]
     end
 
     subgraph App["FastAPI Application (main_v2.py)"]
@@ -24,7 +24,7 @@ flowchart TB
             VER["VerifierAgent"]
         end
         MCP["MultiMCP Manager\n(core/mcp_manager.py)"]
-        EVTBUS["AEM Event Bus\n(aem/event_bus.py)"]
+        EVTBUS["AEM Event Bus\n(event_mesh/event_bus.py)"]
         DB["Database Layer\n(db/database.py)"]
         STORE["Storage Layer\n(storage/)"]
         VALID["XML Validator\n(core/validators.py)"]
@@ -88,7 +88,7 @@ flowchart TB
 | `utils/utils.py` | HANA timestamp helpers, MCP response formatter |
 | `utils/logger_config.py` | Rotating file logger setup |
 | `utils/xsd_handler.py` | XSD parsing and validation |
-| `aem/event_bus.py` | In-process pub/sub with optional AEM REST delivery |
+| `event_mesh/event_bus.py` | In-process pub/sub with optional AEM REST delivery |
 | `smart_monitoring.py` | `/smart-monitoring/*` router |
 | `smart_monitoring_dashboard.py` | `/dashboard/*` analytics router |
 | `config/config.py` | Settings class; runtime config toggle persistence |

@@ -1,4 +1,4 @@
-# API Routes Documentation
+﻿# API Routes Documentation
 
 This document lists all HTTP API routes exposed by the SAP CPI Self-Healing Agent (`main.py`), including the mounted sub-routers from `smart_monitoring.py` and `smart_monitoring_dashboard.py`.
 
@@ -93,7 +93,7 @@ This document lists all HTTP API routes exposed by the SAP CPI Self-Healing Agen
 | `/autonomous/stop` | POST | Stop the orchestrator autonomous loop |
 | `/autonomous/status` | GET | Get pipeline running state and configuration |
 | `/autonomous/tools` | GET | List all MCP tools loaded, grouped by server. Optional `?server=` filter. |
-| `/autonomous/manual_trigger` | POST | Pull one message from the AEM queue and process it (background) |
+| `/autonomous/manual_trigger` | POST | Pull one message from the Event Mesh queue and process it (background) |
 | `/autonomous/test_incident` | POST | Inject a synthetic test incident and run the full pipeline (background) |
 
 ### `/autonomous/status` Response
@@ -163,19 +163,19 @@ This document lists all HTTP API routes exposed by the SAP CPI Self-Healing Agen
 
 ---
 
-## AEM (Advanced Event Mesh)
+## AEM (SAP Event Mesh)
 
 | Route | Method | Description |
 |-------|--------|-------------|
-| `/aem/status` | GET | AEM connectivity, SEMP queue depth, Solace counters, and pipeline stage counts |
-| `/aem/events` | POST | Webhook entry point for Solace REST Delivery Point (RDP). Accepts raw event JSON and dispatches to orchestrator pipeline. |
-| `/event-mesh/status` | GET | Alias of `/aem/status` (legacy) |
-| `/event-mesh/events` | POST | Alias of `/aem/events` (legacy) |
+| `/event-mesh/status` | GET | AEM connectivity, SEMP queue depth, Solace counters, and pipeline stage counts |
+| `/event-mesh/events` | POST | Webhook entry point for Solace REST Delivery Point (RDP). Accepts raw event JSON and dispatches to orchestrator pipeline. |
+| `/event-mesh/status` | GET | Alias of `/event-mesh/status` (legacy) |
+| `/event-mesh/events` | POST | Alias of `/event-mesh/events` (legacy) |
 
-### `/aem/status` Response
+### `/event-mesh/status` Response
 ```json
 {
-  "aem_enabled": true,
+  "EM_ENABLED": true,
   "receiver_connected": true,
   "queue_name": "sap.cpi.autofix.observer.out",
   "queue_depth": 3,
@@ -320,10 +320,10 @@ Mounted from `smart_monitoring_dashboard.py`.
 }
 ```
 
-### AEM Status (`/aem/status`)
+### AEM Status (`/event-mesh/status`)
 ```typescript
 {
-  aem_enabled:        boolean;
+  EM_ENABLED:        boolean;
   receiver_connected: boolean;
   queue_name:         string;
   queue_depth:        number | null;

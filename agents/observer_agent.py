@@ -50,11 +50,9 @@ _SAP_CLIENT_ID  = os.getenv("SAP_HUB_CLIENT_ID", "")
 _SAP_CLIENT_SEC = os.getenv("SAP_HUB_CLIENT_SECRET", "")
 _TICKET_ASSIGNEE = os.getenv("TICKET_DEFAULT_ASSIGNEE", "")
 
-# AEM queue consumer
-_AEM_REST_URL       = os.getenv("AEM_REST_URL", "")
-_AEM_USERNAME       = os.getenv("AEM_USERNAME", "")
-_AEM_PASSWORD       = os.getenv("AEM_PASSWORD", "")
-_AEM_OBSERVER_QUEUE = os.getenv("AEM_OBSERVER_QUEUE", "sap.cpi.autofix.observer.out")
+# Event Mesh queue consumer (EM_* preferred; AEM_* accepted for backward compat)
+_EM_REST_URL       = os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", ""))
+_EM_OBSERVER_QUEUE = os.getenv("EM_OBSERVER_QUEUE", os.getenv("AEM_OBSERVER_QUEUE", "sap.cpi.autofix.observer.out"))
 
 
 # ─────────────────────────────────────────────
@@ -396,7 +394,7 @@ class ObserverAgent:
         self._orchestrator = orchestrator
 
     async def build_agent(self) -> None:
-        """Build a LangChain agent with local @tool functions for AEM queue monitoring."""
+        """Build a LangChain agent with local @tool functions for Event Mesh queue monitoring."""
         from langchain_core.tools import tool as _tool  # noqa: PLC0415
         from db.database import update_incident as _upd  # noqa: PLC0415
 
@@ -405,14 +403,14 @@ class ObserverAgent:
         @_tool
         async def fetch_failed_messages() -> str:
             """
-            Report current AEM queue status.
+            Report current Event Mesh queue status.
             Queue consumption is managed exclusively by the OrchestratorAgent polling loop.
-            Use GET /aem/status for live queue depth.
+            Use GET /event-mesh/status for live queue depth.
             """
             return (
                 f"Queue consumption is managed by the OrchestratorAgent autonomous loop. "
-                f"Queue: '{_AEM_OBSERVER_QUEUE}'. "
-                "Check GET /aem/status for current depth and pipeline stage counts."
+                f"Queue: '{_EM_OBSERVER_QUEUE}'. "
+                "Check GET /event-mesh/status for current depth and pipeline stage counts."
             )
 
         @_tool
@@ -424,7 +422,7 @@ class ObserverAgent:
         system_prompt = (
             "You are an SAP CPI monitoring agent. "
             f"Use fetch_failed_messages to consume new failures from the Event mesh queue "
-            f"'{_AEM_OBSERVER_QUEUE}'. If the queue is empty the tool returns a WARNING — "
+            f"'{_EM_OBSERVER_QUEUE}'. If the queue is empty the tool returns a WARNING — "
             "report it and do not proceed further. "
             "Mark each consumed incident with mark_incident_in_progress. "
             "Do NOT attempt to fix errors — only detect and record them."
@@ -433,7 +431,7 @@ class ObserverAgent:
             tools=[fetch_failed_messages, mark_incident_in_progress],
             system_prompt=system_prompt,
         )
-        logger.info("[Observer] LangChain agent ready (AEM queue source: '%s').", _AEM_OBSERVER_QUEUE)
+        logger.info("[Observer] LangChain agent ready (Event Mesh queue source: '%s').", _EM_OBSERVER_QUEUE)
 
     # ── deduplication ────────────────────────
 

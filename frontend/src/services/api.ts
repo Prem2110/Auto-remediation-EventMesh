@@ -331,10 +331,10 @@ export interface PaginatedMessagesResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AEM / Event Mesh status
+// Event Mesh status
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface AemStatusResponse {
+export interface EventMeshStatusResponse {
   total_incidents: number;
   messages_retrieved: number;
   webhook_events_count?: number;
@@ -344,8 +344,11 @@ export interface AemStatusResponse {
   webhook_active?: boolean;
 }
 
-export async function fetchAemStatus(): Promise<AemStatusResponse | null> {
-  return requestMaybe<AemStatusResponse>(`${_BASE}/aem/status`);
+/** @deprecated Use EventMeshStatusResponse */
+export type AemStatusResponse = EventMeshStatusResponse;
+
+export async function fetchAemStatus(): Promise<EventMeshStatusResponse | null> {
+  return requestMaybe<EventMeshStatusResponse>(`${_BASE}/event-mesh/status`);
 }
 
 export async function fetchAemIncidents(

@@ -1,4 +1,4 @@
-# Configuration
+﻿# Configuration
 
 All configuration is loaded from a `.env` file at the project root. Copy `.env.example` to `.env` and fill in the required values.
 
@@ -135,15 +135,15 @@ Used by `ObserverAgent` to poll for failed messages via OData.
 
 ---
 
-## SAP Advanced Event Mesh (AEM)
+## SAP Event Mesh (AEM)
 
 | Variable | R/O | Default | Description |
 |---|---|---|---|
-| `AEM_ENABLED` | O | `false` | Enable AEM REST delivery |
-| `AEM_REST_URL` | O | — | AEM REST messaging endpoint |
-| `AEM_USERNAME` | O | — | AEM credentials |
-| `AEM_PASSWORD` | O | — | AEM credentials |
-| `AEM_QUEUE_PREFIX` | O | `sap/cpi/remediation` | Topic prefix for published events |
+| `EM_ENABLED` | O | `false` | Enable AEM REST delivery |
+| `EM_REST_URL` | O | — | AEM REST messaging endpoint |
+| `EM_USERNAME` | O | — | AEM credentials |
+| `EM_PASSWORD` | O | — | AEM credentials |
+| `EM_QUEUE_PREFIX` | O | `sap/cpi/remediation` | Topic prefix for published events |
 
 ---
 

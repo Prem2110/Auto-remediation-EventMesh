@@ -177,12 +177,6 @@
   display: block;
 }
 
-.codeCell {
-  font-family: "Fira Code", "Courier New", monospace;
-  font-size: 0.72rem;
-  color: var(--orbit-gray-600, #4b5563);
-}
-
 .downloadBtn {
   background: none;
   border: 1px solid var(--orbit-gray-200, #e5e7eb);

@@ -1,4 +1,4 @@
-.page {
+﻿.page {
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
@@ -231,8 +231,8 @@
   padding: 1.5rem;
 }
 
-/* ── AEM Banner ── */
-.aemBanner {
+/* ── Event Mesh Banner ── */
+.emBanner {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -245,13 +245,13 @@
   color: #1e40af;
 }
 
-.aemBanner[data-enabled="false"] {
+.emBanner[data-enabled="false"] {
   background: #f8fafc;
   border-color: #e2e8f0;
   color: #64748b;
 }
 
-.aemDot {
+.emDot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -259,24 +259,24 @@
   flex-shrink: 0;
 }
 
-.aemBanner[data-enabled="false"] .aemDot {
+.emBanner[data-enabled="false"] .emDot {
   background: #94a3b8;
 }
 
-.aemLabel {
+.emLabel {
   font-weight: 600;
 }
 
-.aemSep {
+.emSep {
   color: #93c5fd;
   font-weight: 300;
 }
 
-.aemStat {
+.emStat {
   color: #1e40af;
 }
 
-.aemError {
+.emError {
   color: #dc2626;
   font-weight: 600;
 }

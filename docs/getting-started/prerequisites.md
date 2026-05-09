@@ -1,4 +1,4 @@
-# Prerequisites
+﻿# Prerequisites
 
 Before installing the SAP CPI Self-Healing Agent, ensure the following are available.
 
@@ -22,7 +22,7 @@ Before installing the SAP CPI Self-Healing Agent, ensure the following are avail
 | SAP Integration Suite (Cloud Integration) | Yes | iFlow runtime; source of failed messages |
 | SAP AI Core | Yes | LLM inference (GPT-4o via `gen_ai_hub`) |
 | SAP HANA Cloud | Yes | Incident storage, vector store, fix patterns |
-| SAP Advanced Event Mesh (AEM) | No | Event streaming; in-process fallback used if disabled |
+| SAP Event Mesh (AEM) | No | Event streaming; in-process fallback used if disabled |
 
 ### SAP AI Core Setup
 

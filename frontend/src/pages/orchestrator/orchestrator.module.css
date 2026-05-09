@@ -1,12 +1,12 @@
-.page {
+﻿.page {
   display: flex;
   flex-direction: column;
   height: 100%;
   background: var(--orbit-gray-100, #f3f4f6);
 }
 
-/* ── AEM Status Bar ── */
-.aemBar {
+/* ── Event Mesh Status Bar ── */
+.emBar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -18,13 +18,13 @@
   color: #1e40af;
 }
 
-.aemBar[data-connected="false"] {
+.emBar[data-connected="false"] {
   background: #f8fafc;
   border-color: #e2e8f0;
   color: #64748b;
 }
 
-.aemBarDot {
+.emBarDot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -32,15 +32,15 @@
   flex-shrink: 0;
 }
 
-.aemBar[data-connected="false"] .aemBarDot {
+.emBar[data-connected="false"] .emBarDot {
   background: #94a3b8;
 }
 
-.aemBarLabel { font-weight: 700; }
-.aemBarSep   { color: #93c5fd; }
-.aemBarItem  { color: #1e40af; }
+.emBarLabel { font-weight: 700; }
+.emBarSep   { color: #93c5fd; }
+.emBarItem  { color: #1e40af; }
 
-.aemBarStage {
+.emBarStage {
   font-size: 0.7rem;
   padding: 0.1rem 0.45rem;
   border-radius: 2rem;
@@ -49,7 +49,7 @@
   border: 1px solid rgba(132,94,247,0.25);
 }
 
-.aemBarError {
+.emBarError {
   color: #dc2626;
   font-weight: 600;
 }

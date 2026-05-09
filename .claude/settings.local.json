@@ -19,7 +19,23 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:github.com)",
       "Bash(python3 *)",
-      "Bash(py -3 -c ' *)"
+      "Bash(py -3 -c ' *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\" -Recurse -File)",
+      "Bash(Measure-Object)",
+      "Bash(Select-Object -ExpandProperty Count)",
+      "PowerShell(Rename-Item *)",
+      "Bash(dir \"C:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\" -Recurse -Directory)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\" -Depth 1 | Where-Object { $_.Name -ne '.venv' -and $_.Name -ne 'frontend' -and $_.Name -ne 'node_modules' } | Select-Object Name)",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\" -Filter \"README*\" -File)",
+      "Bash(Select-Object Name, FullName)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\" -File | Where-Object { $_.Name -match \"README|manifest|deploy|setup\" } | Select-Object -ExpandProperty Name)",
+      "PowerShell(cd \"C:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\"; Get-ChildItem -Recurse | Where-Object {$_.PSIsContainer} | Select-Object -ExpandProperty FullName | Select-Object -First 20)",
+      "Bash(Get-ChildItem -Path \"frontend/src\" -Recurse -Filter \"*.tsx\")",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(Remove-Item *)",
+      "PowerShell(Remove-Item *)"
     ]
   }
 }

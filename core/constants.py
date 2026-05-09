@@ -14,9 +14,9 @@ from typing import Dict
 # MCP SERVERS
 # ─────────────────────────────────────────────
 MCP_SERVERS = {
-    "integration_suite": "https://sap-integration-suite-mcp-lean-capybara-mb.cfapps.us10-001.hana.ondemand.com/mcp",
-    "mcp_testing":       "https://iflow-test-mcp-py-wise-fox-ay.cfapps.us10-001.hana.ondemand.com/mcp",
-    "documentation_mcp": "https://Documentation-Agent-py-reflective-armadillo-kx.cfapps.us10-001.hana.ondemand.com/mcp",
+    "integration_suite": os.getenv("MCP_INTEGRATION_SUITE_URL", ""),
+    "mcp_testing":       os.getenv("MCP_TESTING_URL", ""),
+    "documentation_mcp": os.getenv("MCP_DOCUMENTATION_URL", ""),
 }
 
 TRANSPORT_OPTIONS = {
@@ -64,16 +64,9 @@ BURST_DEDUP_WINDOW_SECONDS          = int(os.getenv("BURST_DEDUP_WINDOW_SECONDS"
 # ─────────────────────────────────────────────
 # EVENT MESH CONFIG
 # ─────────────────────────────────────────────
-AEM_ENABLED              = os.getenv("AEM_ENABLED", "false").lower() == "true"
-AEM_REST_URL             = os.getenv("AEM_REST_URL", "")
-AEM_USERNAME             = os.getenv("AEM_USERNAME", "")
-AEM_PASSWORD             = os.getenv("AEM_PASSWORD", "")
-AEM_QUEUE_PREFIX         = os.getenv("AEM_QUEUE_PREFIX", "sap/cpi/remediation")
-
-EVENT_MESH_QUEUE         = os.getenv("EVENT_MESH_QUEUE", os.getenv("AEM_OBSERVER_QUEUE", ""))
-EVENT_MESH_TOKEN_URL     = os.getenv("EVENT_MESH_TOKEN_URL", "")
-EVENT_MESH_CLIENT_ID     = os.getenv("EVENT_MESH_CLIENT_ID", "")
-EVENT_MESH_CLIENT_SECRET = os.getenv("EVENT_MESH_CLIENT_SECRET", "")
+EM_ENABLED               = os.getenv("EM_ENABLED", os.getenv("AEM_ENABLED", "false")).lower() == "true"
+EM_REST_URL              = os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", ""))
+EM_QUEUE_PREFIX          = os.getenv("EM_QUEUE_PREFIX", os.getenv("AEM_QUEUE_PREFIX", ""))
 
 # ─────────────────────────────────────────────
 # REMEDIATION POLICIES
