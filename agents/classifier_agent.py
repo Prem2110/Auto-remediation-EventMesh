@@ -17,6 +17,7 @@ Exports:
     .create_tools()                       → List[BaseTool] — LangChain-compatible wrappers
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -308,7 +309,9 @@ class ClassifierAgent:
                     '{"error_type": "...", "confidence": 0.0, "tags": []}'
                 ),
             })
-            result = await self._agent.ainvoke({"input": prompt})
+            result = await asyncio.wait_for(
+                self._agent.ainvoke({"input": prompt}), timeout=60.0
+            )
             output = result.get("output", "") if isinstance(result, dict) else str(result)
             match  = re.search(r'\{[^{}]+\}', output)
             if match:
@@ -320,6 +323,8 @@ class ClassifierAgent:
                     "tags":             parsed.get("tags", []),
                     "is_iflow_fixable": self.is_iflow_fixable(error_type),
                 }
+        except asyncio.TimeoutError:
+            logger.error("[Classifier] LLM classify timed out after 60s for iflow=%s", iflow_id)
         except Exception as exc:
             logger.warning("[Classifier] LLM fallback failed: %s", exc)
         return {}
@@ -358,14 +363,19 @@ class ClassifierAgent:
                     system_prompt="You are an SAP CPI error classifier. Return ONLY JSON.",
                     deployment_id=os.getenv("LLM_DEPLOYMENT_ID_RCA") or None,
                 )
-                result   = await _tmp_agent.ainvoke(
-                    {"messages": [{"role": "user", "content": prompt}]},
-                    config={"recursion_limit": 3},
+                result   = await asyncio.wait_for(
+                    _tmp_agent.ainvoke(
+                        {"messages": [{"role": "user", "content": prompt}]},
+                        config={"recursion_limit": 3},
+                    ),
+                    timeout=60.0,
                 )
                 final    = result["messages"][-1]
                 answer   = final.content if hasattr(final, "content") else str(final)
             else:
-                result = await _agent.ainvoke({"input": prompt})
+                result = await asyncio.wait_for(
+                    _agent.ainvoke({"input": prompt}), timeout=60.0
+                )
                 answer = result.get("output", "") if isinstance(result, dict) else str(result)
 
             clean = re.sub(r"```(?:json)?|```", "", answer).strip()
@@ -377,6 +387,8 @@ class ClassifierAgent:
                     "confidence": float(parsed.get("confidence", 0.0)),
                     "reasoning":  parsed.get("reasoning", ""),
                 }
+        except asyncio.TimeoutError:
+            logger.error("[Classifier] reclassify_with_llm timed out after 60s for iflow=%s", iflow_id)
         except Exception as exc:
             logger.warning("[Classifier] reclassify_with_llm failed: %s", exc)
         return {}

@@ -392,9 +392,78 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
                 "Wait a few seconds and retry."
             )
 
-        # ── Pattern history hint ──────────────────────────────────────────────
+        # ── Parallel pre-fetch: DB lookups + MCP reads all at once ──────────────
+        from db.database import get_patterns_by_error_type as _get_cross  # noqa: PLC0415
+
         sig      = self._classifier.error_signature(iflow_id, error_type, error_message)
-        patterns = get_similar_patterns(sig)
+        _md5_sig = hashlib.md5(f"{iflow_id}:{error_type}".encode()).hexdigest()[:16]
+
+        async def _fetch_patterns():
+            return get_similar_patterns(sig)
+
+        async def _fetch_md5_patterns():
+            return get_similar_patterns(_md5_sig)
+
+        async def _fetch_cross_patterns():
+            return _get_cross(error_type, min_success_count=1, limit=3)
+
+        async def _fetch_sap_notes():
+            vs = get_vector_store()
+            notes = vs.retrieve_relevant_notes(error_message, error_type, iflow_id, limit=3)
+            return vs, notes
+
+        async def _fetch_iflow_xml():
+            if not iflow_id or not self._mcp:
+                return ""
+            try:
+                r = await self._mcp.execute_integration_tool("get-iflow", {"id": iflow_id})
+                return str(r.get("output", "")).strip() if r.get("success") else ""
+            except Exception as exc:
+                logger.warning("[RCA] iFlow XML pre-fetch failed for %s: %s", iflow_id, exc)
+                return ""
+
+        async def _fetch_message_logs():
+            if not message_guid or not self._mcp:
+                return ""
+            try:
+                r = await self._mcp.execute_integration_tool(
+                    "get_message_logs", {"message_guid": message_guid}
+                )
+                return str(r.get("output", "")).strip() if r.get("success") else ""
+            except Exception as exc:
+                logger.warning("[RCA] Message logs pre-fetch failed for %s: %s", message_guid, exc)
+                return ""
+
+        _gathered = await asyncio.gather(
+            _fetch_patterns(),
+            _fetch_md5_patterns(),
+            _fetch_cross_patterns(),
+            _fetch_sap_notes(),
+            _fetch_iflow_xml(),
+            _fetch_message_logs(),
+            return_exceptions=True,
+        )
+        _r_patterns, _r_md5, _r_cross, _r_notes, _r_xml, _r_logs = _gathered
+
+        patterns      = _r_patterns  if isinstance(_r_patterns, list)  else []
+        _md5_patterns = _r_md5       if isinstance(_r_md5, list)       else []
+        _cross_patterns = _r_cross   if isinstance(_r_cross, list)     else []
+        iflow_xml     = _r_xml       if isinstance(_r_xml, str)        else ""
+        raw_message_logs = _r_logs   if isinstance(_r_logs, str)       else ""
+
+        if isinstance(_r_notes, tuple) and len(_r_notes) == 2:
+            vector_store, sap_notes = _r_notes
+        else:
+            vector_store, sap_notes = get_vector_store(), []
+
+        logger.info(
+            "[RCA] Parallel pre-fetch complete | iflow_xml=%d chars | logs=%d chars | "
+            "patterns=%d | md5=%d | cross=%d | notes=%d",
+            len(iflow_xml), len(raw_message_logs),
+            len(patterns), len(_md5_patterns), len(_cross_patterns), len(sap_notes),
+        )
+
+        # ── Assemble text blocks from pre-fetched data ────────────────────────
         history_hint = ""
         if patterns:
             compact = []
@@ -417,9 +486,6 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
                 f"{json.dumps(compact, indent=2)}"
             )
 
-        # ── SAP Notes from vector store ────────────────────────────────────────
-        vector_store      = get_vector_store()
-        sap_notes         = vector_store.retrieve_relevant_notes(error_message, error_type, iflow_id, limit=3)
         kb_notes = vector_store.format_notes_for_prompt(sap_notes) if sap_notes else ""
         if kb_notes:
             logger.info(
@@ -435,10 +501,7 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
             )
         iflow_hint = f"- iFlow ID for config lookup: {iflow_id}" if iflow_id else ""
 
-        # ── MD5-based pattern pre-fetch (matches record_fix_outcome signature) ──
-        _md5_sig      = hashlib.md5(f"{iflow_id}:{error_type}".encode()).hexdigest()[:16]
-        _md5_patterns = get_similar_patterns(_md5_sig)
-        pattern_text  = ""
+        pattern_text = ""
         if _md5_patterns:
             best = _md5_patterns[0]
             if best.get("success_count", 0) >= 2:
@@ -448,14 +511,11 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
                     f"fix_applied: {best.get('fix_applied', '')}\n"
                 )
 
-        # ── Cross-iFlow patterns pre-fetch — proven fixes for same error type on other iFlows ──
-        from db.database import get_patterns_by_error_type as _get_cross  # noqa: PLC0415
-        _cross_patterns = _get_cross(error_type, min_success_count=1, limit=3)
         cross_iflow_text = ""
         if _cross_patterns:
             lines = ["=== PROVEN FIXES FROM OTHER IFLOWS (same error type) ==="]
             for _cp in _cross_patterns:
-                if _cp.get("iflow_id") != iflow_id:  # skip same iFlow — already in pattern_text
+                if _cp.get("iflow_id") != iflow_id:
                     lines.append(
                         f"iFlow: {_cp.get('iflow_id')} | "
                         f"root_cause: {(_cp.get('root_cause') or '')[:120]} | "
@@ -469,10 +529,36 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
                     len(lines) - 1, error_type, iflow_id,
                 )
 
+        # Sections injected into the prompt so the LLM skips redundant tool calls
+        _iflow_section = (
+            f"\n=== iFlow XML (pre-fetched — do NOT call get-iflow again) ===\n{iflow_xml}\n"
+            if iflow_xml and not iflow_xml.startswith("ERROR")
+            else ""
+        )
+        _logs_section = (
+            f"\n=== Message Processing Log (pre-fetched — do NOT call get_message_logs again) ===\n{raw_message_logs}\n"
+            if raw_message_logs and not raw_message_logs.startswith("ERROR")
+            else ""
+        )
+
         # ── Prompt — two variants depending on whether we have a message GUID ─
+        # iFlow XML and message logs are pre-fetched and injected directly.
+        # The LLM must skip tool calls for data that is already provided.
+        _has_iflow  = bool(_iflow_section)
+        _has_logs   = bool(_logs_section)
+
         if message_guid:
+            _step_instructions = (
+                "The iFlow XML and message logs are provided below — analyse them directly.\n"
+                "Only call get-iflow or get_message_logs if the pre-fetched data is missing or truncated."
+                if _has_iflow and _has_logs else
+                "Steps (execute in order, stop after step 3):\n"
+                f"1. Call get_message_logs ONCE for message ID: {message_guid}\n"
+                f"2. Call get-iflow ONCE for iFlow ID: {iflow_id}\n"
+                "3. Cross-reference the log error with the iFlow configuration and produce a precise diagnosis"
+            )
             prompt = f"""
-AUTONOMOUS RCA — do NOT ask for human input. Maximum 8 tool calls total.
+AUTONOMOUS RCA — do NOT ask for human input. Maximum 6 tool calls total.
 
 Error detected:
 - iFlow:      {iflow_id}
@@ -489,11 +575,8 @@ Error detected:
 
 === cross_iflow_patterns (proven fixes from other iFlows — use as reference) ===
 {cross_iflow_text}
-
-Steps (execute in order, stop after step 3):
-1. Call get_message_logs ONCE for message ID: {message_guid}
-2. Call get-iflow ONCE for iFlow ID: {iflow_id} — read the actual configuration to pinpoint which step/adapter/mapping is misconfigured
-3. Cross-reference the log error with the iFlow configuration and produce a precise diagnosis
+{_logs_section}{_iflow_section}
+{_step_instructions}
 
 Return ONLY valid JSON (no markdown, no preamble):
 {{
@@ -522,6 +605,14 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
 STOP after returning JSON. Do not call any other tools.
 """
         else:
+            _step_instructions = (
+                "The iFlow XML is provided below — analyse it directly.\n"
+                "Only call get-iflow if the pre-fetched XML is missing or truncated."
+                if _has_iflow else
+                f"Steps (execute in order, stop after step 2):\n"
+                f"1. Call get-iflow ONCE for iFlow ID: {iflow_id}\n"
+                "2. Produce a precise diagnosis based on the iFlow config and the error above"
+            )
             prompt = f"""
 AUTONOMOUS RCA — do NOT ask for human input. No message GUID is available.
 {iflow_hint}
@@ -535,15 +626,13 @@ AUTONOMOUS RCA — do NOT ask for human input. No message GUID is available.
 
 === cross_iflow_patterns (proven fixes from other iFlows — use as reference) ===
 {cross_iflow_text}
-
+{_iflow_section}
 Error detected:
 - iFlow:      {iflow_id}
 - Error Type: {error_type}
 - Message:    {error_message}
 
-Steps (execute in order, stop after step 2):
-1. Call get-iflow ONCE for iFlow ID: {iflow_id} — read the actual configuration to identify the misconfigured step
-2. Produce a precise diagnosis based on the iFlow config and the error above
+{_step_instructions}
 
 Return ONLY valid JSON (no markdown, no preamble):
 {{

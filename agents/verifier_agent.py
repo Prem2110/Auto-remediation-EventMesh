@@ -262,7 +262,11 @@ Maximum 5 tool calls total.
             answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
             try:
                 parsed = json.loads(answer.strip())
-            except Exception:
+            except Exception as json_exc:
+                logger.warning(
+                    "[TEST_AFTER_FIX] iflow=%s — could not parse LLM JSON response: %s | raw=%s",
+                    iflow_id, json_exc, answer[:300],
+                )
                 parsed = {}
             test_passed = parsed.get("test_passed", False)
             logger.info(

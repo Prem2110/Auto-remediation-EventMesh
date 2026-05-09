@@ -485,8 +485,8 @@ class FixApplier:
             if progress_fn:
                 try:
                     progress_fn(f"Agent: waiting for iFlow to start… ({elapsed}s)")
-                except Exception:
-                    pass
+                except Exception as cb_exc:
+                    logger.debug("[FixApplier] progress_fn callback error (non-fatal): %s", cb_exc)
 
             deploy_error = await self._fetch_deploy_error(ctx.iflow_id)
             logger.info(

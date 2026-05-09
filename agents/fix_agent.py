@@ -319,7 +319,14 @@ class FixAgent:
     ) -> Dict[str, Any]:
         agent = self._agent or self._mcp.agent
         if agent is None:
-            raise RuntimeError("MCP agent not ready.")
+            logger.warning("[FIX] Agent not ready at call time — attempting lazy build.")
+            try:
+                await self.build_agent()
+                agent = self._agent or self._mcp.agent
+            except Exception as rebuild_exc:
+                logger.error("[FIX] Lazy rebuild failed: %s", rebuild_exc)
+            if agent is None:
+                raise RuntimeError("MCP agent not ready.")
 
         missing_tools = self._mcp.validate_required_tools(
             "integration_suite", ["get-iflow", "update-iflow", "deploy-iflow"]
@@ -805,7 +812,14 @@ class FixAgent:
     ) -> Dict[str, Any]:
         agent = self._agent or self._mcp.agent
         if agent is None:
-            raise RuntimeError("MCP agent not ready.")
+            logger.warning("[FIX] Agent not ready for deploy-only — attempting lazy build.")
+            try:
+                await self.build_agent()
+                agent = self._agent or self._mcp.agent
+            except Exception as rebuild_exc:
+                logger.error("[FIX] Lazy rebuild failed: %s", rebuild_exc)
+            if agent is None:
+                raise RuntimeError("MCP agent not ready.")
 
         missing = self._mcp.validate_required_tools("integration_suite", ["deploy-iflow"])
         if missing:
@@ -936,16 +950,17 @@ class FixAgent:
           2. Set the _fix_ctx ContextVar for the XML validator.
         """
         try:
-            get_tool = self._mcp.get_mcp_tool("integration_suite", "get-iflow")
-            if not get_tool:
+            r = await self._mcp.execute_integration_tool("get-iflow", {"id": iflow_id})
+            if not r.get("success") or not r.get("output"):
+                logger.warning("[FIX] iFlow snapshot fetch failed for %s: %s", iflow_id, r.get("error", ""))
                 return
-            snapshot_raw = await get_tool.ainvoke({"id": iflow_id})
-            snapshot_str = json.dumps(snapshot_raw) if not isinstance(snapshot_raw, str) else snapshot_raw
+            snapshot_str = str(r["output"])
             from db.database import update_incident as _update  # noqa: PLC0415
             _update(incident_id, {"iflow_snapshot_before": snapshot_str})
             logger.info("[FIX] iFlow snapshot captured for %s (%d chars)", iflow_id, len(snapshot_str))
             orig_fp, orig_xml = _extract_iflow_file(snapshot_str, iflow_id=iflow_id)
             if orig_fp and (orig_xml or "").strip():
+                orig_fp = _normalize_iflow_filepath(orig_fp)
                 _fix_ctx_set(iflow_id, orig_fp, orig_xml)
                 logger.info("[VALIDATOR] Fix context set: filepath='%s' xml_len=%d", orig_fp, len(orig_xml))
             elif orig_fp and not (orig_xml or "").strip():

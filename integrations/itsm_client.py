@@ -196,6 +196,9 @@ async def get_itsm_ticket(itsm_ticket_id: str) -> Optional[Dict]:
             )
         if resp.status_code in (401, 403):
             _invalidate_cache()
+        if resp.status_code == 404:
+            logger.warning("[ITSM] Ticket ID=%s not found in ITSM (404) — may be stale or demo data", itsm_ticket_id)
+            return None
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:

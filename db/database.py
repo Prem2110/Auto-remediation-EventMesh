@@ -1192,10 +1192,10 @@ def update_escalation_ticket(ticket_id: str, updates: Dict):
     try:
         conn = get_connection()
         cur  = conn.cursor()
-        assignments = ", ".join(f'"{k}"=?' for k in updates)
+        assignments = ", ".join(f'"{k.upper()}"=?' for k in updates)
         values      = list(updates.values()) + [ticket_id]
         cur.execute(
-            f'UPDATE "{_TICKETS_TABLE}" SET {assignments} WHERE "ticket_id"=?',
+            f'UPDATE "{_TICKETS_TABLE}" SET {assignments} WHERE "TICKET_ID"=?',
             values,
         )
         conn.commit()

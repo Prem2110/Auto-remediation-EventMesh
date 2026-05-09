@@ -200,35 +200,42 @@ class MultiMCP:
         used_names: set[str] = set()
 
         async def _load(server: str, client: Client):
-            async with client:
-                raw = await client.list_tools()
-                logger.info("[MCP] Discovering tools from server: %s", server)
-                server_tool_names: List[str] = []
-                for t in raw:
-                    schema          = t.inputSchema or {}
-                    Model           = build_model(t.name + "_Input", schema)
-                    agent_tool_name = self._safe_tool_name(server, t.name)
-                    suffix = 2
-                    while agent_tool_name in used_names:
-                        agent_tool_name = f"{agent_tool_name}_{suffix}"
-                        suffix += 1
-                    used_names.add(agent_tool_name)
-                    desc_prefix = f"[server={server}] {SERVER_ROUTING_GUIDE.get(server, '')}".strip()
-                    full_desc   = f"{desc_prefix} Original tool: {t.name}. {t.description or ''}".strip()
-                    self.tools.append(MCPTool(
-                        name=agent_tool_name,
-                        description=full_desc,
-                        args_schema=Model,
-                        server=server,
-                        mcp_tool_name=t.name,
-                        manager=self,
-                    ))
-                    self._tool_index[(server, t.name)] = self.tools[-1]
-                    server_tool_names.append(t.name)
-                preview = ", ".join(server_tool_names[:5])
-                if len(server_tool_names) > 5:
-                    preview += "…"
-                logger.info("[MCP] Loaded %d tools from %s: %s", len(server_tool_names), server, preview)
+            try:
+                async with client:
+                    try:
+                        raw = await asyncio.wait_for(client.list_tools(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        logger.error("[MCP] list_tools() timed out after 30s for server: %s — skipping", server)
+                        return
+                    logger.info("[MCP] Discovering tools from server: %s", server)
+                    server_tool_names: List[str] = []
+                    for t in raw:
+                        schema          = t.inputSchema or {}
+                        Model           = build_model(t.name + "_Input", schema)
+                        agent_tool_name = self._safe_tool_name(server, t.name)
+                        suffix = 2
+                        while agent_tool_name in used_names:
+                            agent_tool_name = f"{agent_tool_name}_{suffix}"
+                            suffix += 1
+                        used_names.add(agent_tool_name)
+                        desc_prefix = f"[server={server}] {SERVER_ROUTING_GUIDE.get(server, '')}".strip()
+                        full_desc   = f"{desc_prefix} Original tool: {t.name}. {t.description or ''}".strip()
+                        self.tools.append(MCPTool(
+                            name=agent_tool_name,
+                            description=full_desc,
+                            args_schema=Model,
+                            server=server,
+                            mcp_tool_name=t.name,
+                            manager=self,
+                        ))
+                        self._tool_index[(server, t.name)] = self.tools[-1]
+                        server_tool_names.append(t.name)
+                    preview = ", ".join(server_tool_names[:5])
+                    if len(server_tool_names) > 5:
+                        preview += "…"
+                    logger.info("[MCP] Loaded %d tools from %s: %s", len(server_tool_names), server, preview)
+            except Exception as load_exc:
+                logger.error("[MCP] Tool discovery failed for server '%s' — skipping: %s", server, load_exc)
 
         await asyncio.gather(*(_load(n, c) for n, c in self.clients.items()))
 
