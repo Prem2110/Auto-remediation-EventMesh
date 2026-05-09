@@ -148,8 +148,11 @@ class ComponentReplacer:
 
             try:
                 ref_root = ET.fromstring(reference_xml)
-            except ET.ParseError:
-                logger.warning("[ComponentReplacer] Reference XML parse failed")
+            except ET.ParseError as parse_err:
+                logger.warning(
+                    "[ComponentReplacer] Reference XML parse failed for component=%s: %s | first_100=%r",
+                    affected_component, parse_err, reference_xml[:100],
+                )
                 return None
 
             broken_tag = broken_elem.tag

@@ -289,7 +289,7 @@ class MultiMCP:
                     else:
                         parts.append(str(c))
                 output = "\n".join(parts)
-                if tool == "get-iflow":
+                if tool in ("get-iflow", "get-iflow-example"):
                     output = _unwrap_getiflow_response(output)
                 return output
             except asyncio.TimeoutError:

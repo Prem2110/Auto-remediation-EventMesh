@@ -1039,11 +1039,13 @@ Rules:
                 "rca_confidence": 1.0,
             })
 
-        total = 5 if not self.has_actionable_fix(rca) else 4
+        # Always use 6 steps — matches frontend FIX_STAGES ["Submit","Get iFlow","Validate","Patch","Deploy","Started"]
+        # so the 1:1 mapping is always active and no proportional mismatch can occur.
+        _PROGRESS_TOTAL = 6
 
         # ── RCA (if no actionable fix yet) ────────────────────────────────────
         if not self.has_actionable_fix(rca):
-            self._set_progress(incident_id, "Running Root Cause Analysis…", 1, total)
+            self._set_progress(incident_id, "Running Root Cause Analysis…", 1, _PROGRESS_TOTAL)
             update_incident(incident_id, {"status": "RCA_IN_PROGRESS"})
             rca = await self._rca.run_rca(working_incident)
             update_incident(incident_id, {
@@ -1062,7 +1064,7 @@ Rules:
                 "current_value":      rca.get("current_value") or "",
                 "correct_value":      rca.get("correct_value") or "",
             })
-            self._set_progress(incident_id, "Agent: classifying error type…", 1, total)
+            self._set_progress(incident_id, "Agent: classifying error type…", 1, _PROGRESS_TOTAL)
 
         # ── Unfixable detection ───────────────────────────────────────────────
         # Clear-cut structural signals: these always require changes that cannot be
@@ -1122,7 +1124,7 @@ Rules:
             })
             self._set_progress(
                 incident_id, "Unfixable — ticket created for manual review",
-                total, total, status="TICKET_CREATED",
+                _PROGRESS_TOTAL, _PROGRESS_TOTAL, status="TICKET_CREATED",
             )
             return {
                 "incident_id":    incident_id,
@@ -1139,8 +1141,7 @@ Rules:
                 "incident":       get_incident_by_id(incident_id) or working_incident,
             }
 
-        step_base = 2 if total == 5 else 1
-        self._set_progress(incident_id, "Verifying iFlow exists…", step_base, total)
+        self._set_progress(incident_id, "Verifying iFlow exists…", 1, _PROGRESS_TOTAL)
 
         # ── Double-check existence right before fix ───────────────────────────
         if iflow_id:
@@ -1152,7 +1153,7 @@ Rules:
                     f"{existence['message']}"
                 )
                 self._set_progress(
-                    incident_id, "iFlow deleted — cannot fix", total, total, status="ARTIFACT_MISSING"
+                    incident_id, "iFlow deleted — cannot fix", _PROGRESS_TOTAL, _PROGRESS_TOTAL, status="ARTIFACT_MISSING"
                 )
                 update_incident(incident_id, {
                     "status":              "ARTIFACT_MISSING",
@@ -1201,7 +1202,7 @@ Rules:
                 }
         try:
             self._set_progress(
-                incident_id, "Downloading iFlow configuration…", step_base + 1, total,
+                incident_id, "Downloading iFlow configuration…", 1, _PROGRESS_TOTAL,
                 iflow_id=iflow_id,
                 root_cause=working_incident.get("root_cause"),
                 proposed_fix=working_incident.get("proposed_fix"),
@@ -1217,7 +1218,7 @@ Rules:
             # ── Apply fix or deploy-only ──────────────────────────────────────
             if deploy_only:
                 self._set_progress(
-                    incident_id, "Deploying iFlow (update already applied)…", step_base + 2, total
+                    incident_id, "Deploying iFlow (update already applied)…", 4, _PROGRESS_TOTAL
                 )
                 fix_result = await self._fix.ask_deploy_only(
                     iflow_id=iflow_id,
@@ -1225,9 +1226,7 @@ Rules:
                     timestamp=get_hana_timestamp(),
                 )
             else:
-                # Use 6 steps to match the 6 visual stages:
-                # 0=Submit 1=Get iFlow 2=Validate 3=Patch 4=Deploy 5=Started
-                _PROGRESS_TOTAL = 6
+                # _PROGRESS_TOTAL=6 already set above — matches FIX_STAGES["Submit","Get iFlow","Validate","Patch","Deploy","Started"]
                 self._set_progress(incident_id, "Agent: planning fix strategy…", 1, _PROGRESS_TOTAL)
 
                 _LABEL_TO_SLOT: dict = {
@@ -1291,7 +1290,7 @@ Rules:
             replay_skipped = False
             if fix_result.get("success"):
                 self._set_progress(
-                    incident_id, "Validating fix — replaying failed message…", total, total
+                    incident_id, "Validating fix — replaying failed message…", 5, _PROGRESS_TOTAL
                 )
                 retry_result  = await self._verifier.retry_failed_message(working_incident)
                 replay_success = retry_result.get("success", False)
@@ -1370,7 +1369,7 @@ Rules:
                       else f"Fix failed — stage: {failed_stage}" if failed_stage else "Fix failed")
             )
             self._set_progress(
-                incident_id, done_step, total, total, status=final_status,
+                incident_id, done_step, _PROGRESS_TOTAL, _PROGRESS_TOTAL, status=final_status,
                 failed_stage=failed_stage or None,
                 technical_details=technical_details[:300] if technical_details else None,
             )
