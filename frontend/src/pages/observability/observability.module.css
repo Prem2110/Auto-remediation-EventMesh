@@ -1313,6 +1313,24 @@
   font-weight: 600;
 }
 
+.stageLabelSub {
+  font-size: 0.5rem;
+  color: #3b82f6;
+  font-style: italic;
+  text-align: center;
+  max-width: 4.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: -0.05rem;
+  animation: fadeSubIn 0.3s ease;
+}
+
+@keyframes fadeSubIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Inline progress row (below stage rail) ──────────────────────────── */
 .fixProgressInline {
   display: flex;

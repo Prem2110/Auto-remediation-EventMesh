@@ -341,7 +341,9 @@ function FixPlanSteps({ steps }: { steps: IFixPlanStep[] }) {
 }
 
 /* ── Pipeline stage rail (shown during fix execution) ───────────────── */
-const FIX_STAGES = ["Submit", "Get iFlow", "Validate", "Patch", "Deploy", "Started"] as const;
+// Slot mapping (matches backend _LABEL_TO_SLOT):
+//  0=Submit  1=Fetch  2=Research  3=Patch  4=Deploy  5=Verify
+const FIX_STAGES = ["Submit", "Fetch", "Research", "Patch", "Deploy", "Verify"] as const;
 
 function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: number; totalSteps: number; currentStep?: string }) {
   const slots = FIX_STAGES.length;
@@ -356,6 +358,12 @@ function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: 
           stepIndex <= 0 ? 0 : Math.round((stepIndex / Math.max(totalSteps, 1)) * (slots - 1)),
           slots - 1
         );
+
+  // Strip internal "Agent: " prefix for display; trim ellipsis for compactness
+  const subLabel = currentStep
+    ? currentStep.replace(/^Agent:\s*/i, "").replace(/…$/, "")
+    : "";
+
   return (
     <div className={styles.stageRail}>
       {FIX_STAGES.map((label, i) => {
@@ -382,6 +390,11 @@ function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: 
               >
                 {label}
               </span>
+              {isActive && subLabel && (
+                <span className={styles.stageLabelSub} title={subLabel}>
+                  {subLabel}
+                </span>
+              )}
             </div>
             {i < slots - 1 && (
               <div className={[styles.stageConnector, done ? styles.stageConnectorDone : ""].filter(Boolean).join(" ")} />
