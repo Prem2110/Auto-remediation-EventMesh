@@ -329,6 +329,149 @@ CLASSIFIED → OBSERVED → RCA_IN_PROGRESS → RCA_COMPLETE → FIX_IN_PROGRESS
 
 ---
 
+## Environment Variable Reference
+
+Complete list of every variable the application reads, what it does, and which component uses it.
+Variables marked **Required** will cause a startup crash or silent failure if missing.
+
+### MCP Servers
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `MCP_INTEGRATION_SUITE_URL` | ✅ Required | `core/constants.py` | CF route of the Integration Suite MCP app — iFlow get / update / deploy |
+| `MCP_TESTING_URL` | ✅ Required | `core/constants.py` | CF route of the Testing MCP app — test execution and validation |
+| `MCP_DOCUMENTATION_URL` | ✅ Required | `core/constants.py` | CF route of the Documentation MCP app — SAP docs and spec generation |
+
+### SAP AI Core
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `AICORE_CLIENT_ID` | ✅ Required | `cpi_monitor/cpi_poller.py`, `core/mcp_manager.py` | OAuth client ID for AI Core service |
+| `AICORE_CLIENT_SECRET` | ✅ Required | `cpi_monitor/cpi_poller.py`, `core/mcp_manager.py` | OAuth client secret for AI Core service |
+| `AICORE_AUTH_URL` | ✅ Required | `cpi_monitor/cpi_poller.py`, `core/mcp_manager.py` | Token URL for AI Core OAuth (`https://<subdomain>.authentication.<region>.hana.ondemand.com`) |
+| `AICORE_BASE_URL` | ✅ Required | `cpi_monitor/cpi_poller.py`, `core/mcp_manager.py` | AI Core API base URL |
+| `AICORE_RESOURCE_GROUP` | Optional | `core/mcp_manager.py` | AI Core resource group (default: `default`) |
+| `LLM_DEPLOYMENT_ID` | ✅ Required | `core/mcp_manager.py` | Default LLM deployment ID — used by all agents unless overridden |
+| `LLM_DEPLOYMENT_ID_RCA` | Optional | `agents/rca_agent.py`, `agents/classifier_agent.py` | LLM deployment for RCA and classification — falls back to `LLM_DEPLOYMENT_ID` |
+| `LLM_DEPLOYMENT_ID_FIX` | Optional | `agents/fix_planner.py`, `agents/fix_generator.py` | LLM deployment for fix generation — falls back to `LLM_DEPLOYMENT_ID` |
+
+### SAP Integration Suite — Design-Time API
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `API_BASE_URL` | ✅ Required | `cpi_monitor/cpi_poller.py` (fallback) | CPI design-time base URL (`/api/v1`) — iFlow get, update, deploy |
+| `API_OAUTH_CLIENT_ID` | ✅ Required | `cpi_monitor/cpi_poller.py` (fallback) | OAuth client ID for design-time API |
+| `API_OAUTH_CLIENT_SECRET` | ✅ Required | `cpi_monitor/cpi_poller.py` (fallback) | OAuth client secret for design-time API |
+| `API_OAUTH_TOKEN_URL` | ✅ Required | `cpi_monitor/cpi_poller.py` (fallback) | Token URL for design-time API OAuth |
+
+### SAP Integration Suite — Runtime / Monitoring API
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `CPI_BASE_URL` | ✅ Required | Observer, Fix agents | CPI runtime base URL — message logs, error details |
+| `CPI_OAUTH_CLIENT_ID` | ✅ Required | Observer, Fix agents | OAuth client ID for runtime API |
+| `CPI_OAUTH_CLIENT_SECRET` | ✅ Required | Observer, Fix agents | OAuth client secret for runtime API |
+| `CPI_OAUTH_TOKEN_URL` | ✅ Required | Observer, Fix agents | Token URL for runtime API OAuth |
+
+### SAP Hub — CPI Error Polling
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `SAP_HUB_TENANT_URL` | ✅ Required | `cpi_monitor/cpi_poller.py`, `agents/observer_agent.py`, `main.py` | CPI tenant URL used by the poller to fetch failed messages |
+| `SAP_HUB_TOKEN_URL` | ✅ Required | `cpi_monitor/cpi_poller.py`, `agents/observer_agent.py` | Token URL for CPI Hub OAuth |
+| `SAP_HUB_CLIENT_ID` | ✅ Required | `cpi_monitor/cpi_poller.py`, `agents/observer_agent.py` | OAuth client ID for CPI Hub |
+| `SAP_HUB_CLIENT_SECRET` | ✅ Required | `cpi_monitor/cpi_poller.py`, `agents/observer_agent.py` | OAuth client secret for CPI Hub |
+
+### SAP HANA Cloud
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `HANA_HOST` | ✅ Required | `db/database.py`, `config/config.py` | HANA Cloud hostname |
+| `HANA_ADDRESS` | Optional | `utils/vector_store.py`, `vectorize_docs.py` | HANA hostname alias — falls back to `HANA_HOST` if not set |
+| `HANA_PORT` | Optional | `db/database.py` | HANA port (default: `443`) |
+| `HANA_USER` | ✅ Required | `db/database.py` | HANA runtime user |
+| `HANA_PASSWORD` | ✅ Required | `db/database.py` | HANA runtime user password |
+| `HANA_SCHEMA` | ✅ Required | `db/database.py` | HANA schema name |
+| `HANA_TABLE_QUERY_HISTORY` | Optional | `config/config.py` | Table for MCP query history (default: `MCP_QUERY_HISTORY`) |
+| `HANA_TABLE_USER_FILES` | Optional | `config/config.py` | Table for uploaded file metadata (default: `USER_FILES_METADATA`) |
+| `HANA_TABLE_XSD_FILES` | Optional | `config/config.py` | Table for XSD schema files (default: `SAP_IS_XSD_FILES`) |
+| `HANA_TABLE_VECTOR` | Optional | `utils/vector_store.py` | Table for SAP Notes vector embeddings (default: `SAP_HELP_DOCS`) |
+| `HANA_TABLE_SAP_DOCS` | Optional | `vectorize_docs.py`, `scrape_sap_docs.py` | Table used by scrape/vectorize scripts (default: `SAP_HELP_DOCS`) |
+| `HANA_TABLE_EM_INCIDENTS` | Optional | `db/database.py` | Incident store table (default: `EM_AUTONOMOUS_INCIDENTS`) |
+| `HANA_TABLE_EM_FIX_PATTERNS` | Optional | `db/database.py` | Fix pattern store table (default: `EM_FIX_PATTERNS`) |
+| `HANA_TABLE_EM_ESCALATION_TICKETS` | Optional | `db/database.py` | Escalation ticket table (default: `EM_ESCALATION_TICKETS`) |
+
+### AWS S3 Object Store
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `BUCKET_NAME` | ✅ Required | `storage/object_store.py` | S3 bucket name |
+| `REGION` | Optional | `storage/object_store.py` | AWS region (default: `us-east-1`) |
+| `HOST` | Optional | `storage/object_store.py` | S3 hostname used to build endpoint URL (default: `s3.amazonaws.com`) |
+| `WRITE_ACCESS_KEY_ID` | ✅ Required | `storage/object_store.py` | AWS access key for write (upload) operations |
+| `WRITE_SECRET_ACCESS_KEY` | ✅ Required | `storage/object_store.py` | AWS secret key for write operations |
+| `READ_ACCESS_KEY_ID` | ✅ Required | `storage/object_store.py` | AWS access key for read (download/list) operations |
+| `READ_SECRET_ACCESS_KEY` | ✅ Required | `storage/object_store.py` | AWS secret key for read operations |
+
+> **Note:** `OBJECT_STORE_ACCESS_KEY`, `OBJECT_STORE_SECRET_KEY`, `ENDPOINT_URL`, and `OBJECT_STORE_ENDPOINT` are **not read by any code** — do not rely on them.
+
+### SAP Event Mesh
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `EM_ENABLED` | ✅ Required | `event_mesh/event_bus.py`, `core/constants.py` | Master switch — `true` enables real Event Mesh; `false` = in-process only |
+| `EM_REST_URL` | ✅ Required | `event_mesh/event_bus.py`, `cpi_monitor/error_publisher.py` | Event Mesh REST endpoint base URL (from service key, `httprest` protocol) |
+| `EM_QUEUE_PREFIX` | ✅ Required | `event_mesh/event_bus.py` | Topic namespace prefix — all agent-to-agent topics are built from this. **App crashes if missing.** Example: `default/acme.corp/1/autofix/orbit` |
+| `EM_INGEST_TOPIC` | ✅ Required | `cpi_monitor/error_publisher.py`, `scripts/initial_load.py` | Topic the CPI Monitor publishes new errors to. Example: `default/acme.corp/1/autofix/in` |
+| `EVENT_MESH_DESTINATION_NAME` | Optional | `event_mesh/event_bus.py`, `cpi_monitor/error_publisher.py` | BTP Destination name holding the Event Mesh OAuth token (default: `EventMesh`) |
+| `EVENT_MESH_QUEUE` | Optional | `main.py` | Orchestrator queue name — used only in `/event-mesh/status` display |
+
+### Pipeline Behaviour
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `CPI_POLL_INTERVAL_SECONDS` | Optional | `cpi_monitor/cpi_poller.py` | Seconds between CPI failed-message polls (default: `600`) |
+| `AUTO_FIX_ALL_CPI_ERRORS` | Optional | `core/constants.py`, `agents/orchestrator_agent.py` | `true` = auto-fix all error types; `false` = respect per-type policy (default: `true`) |
+| `AUTO_FIX_CONFIDENCE` | Optional | `core/constants.py`, `agents/orchestrator_agent.py` | Minimum confidence score for fully automatic fix without approval (default: `0.90`) |
+| `SUGGEST_FIX_CONFIDENCE` | Optional | `core/constants.py`, `agents/orchestrator_agent.py` | Minimum confidence for suggesting a fix; below this creates a ticket (default: `0.70`) |
+| `AUTO_DEPLOY_AFTER_FIX` | Optional | `core/constants.py`, `main.py` | `true` = automatically deploy the iFlow after a successful fix update (default: `true`) |
+| `MAX_CONSECUTIVE_FAILURES` | Optional | `core/constants.py`, `agents/orchestrator_agent.py` | Consecutive failures for the same iFlow before auto-escalating to a ticket (default: `5`) |
+| `PENDING_APPROVAL_TIMEOUT_HRS` | Optional | `core/constants.py`, `agents/observer_agent.py` | Hours an incident can stay `AWAITING_APPROVAL` before auto-escalating (default: `24`) |
+| `PATTERN_MIN_SUCCESS_COUNT` | Optional | `core/constants.py`, `agents/orchestrator_agent.py` | Minimum successful fixes a pattern needs before it is reused (default: `2`) |
+| `BURST_DEDUP_WINDOW_SECONDS` | Optional | `core/constants.py`, `agents/orchestrator_agent.py` | Window in seconds to absorb duplicate errors for the same iFlow (default: `60`) |
+| `WEB_SEARCH_ENABLED` | Optional | `agents/rca_agent.py`, `agents/fix_generator.py` | `true` = enable web search tool during RCA and fix generation (default: `false`) |
+
+### ITSM Integration
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `ITSM_REQUESTER_ID` | ✅ Required | `agents/orchestrator_agent.py`, `integrations/itsm_client.py`, `main.py` | SAP user UUID stamped as `requester_ID` on all auto-created escalation tickets |
+
+### Server & Logging
+
+| Variable | Required | Used in | Purpose |
+|---|---|---|---|
+| `ENABLE_CONSOLE_LOGS` | Optional | `utils/logger_config.py` | `true` = write logs to console in addition to rotating file (default: `true`) |
+| `UPLOAD_ROOT` | Optional | `config/config.py`, `storage/storage.py` | Root prefix for file uploads in S3 (default: `user`) |
+
+> **Note:** `LOG_LEVEL`, `API_HOST`, and `API_PORT` are present in `.env.example` for reference but are **not currently read by any code path** in the running application.
+
+### Variables in Manifest That Are Not Read by the Code
+
+These variables appear in some deployments but have **no effect** — the code does not call `os.getenv` for them:
+
+| Variable | Notes |
+|---|---|
+| `CPI_BASIC_AUTH_USERNAME` / `CPI_BASIC_AUTH_PASSWORD` / `CPI_AUTH_METHOD` | No basic-auth code path exists — all CPI auth uses OAuth |
+| `SAP_DESIGN_TIME_URL` / `SAP_DESIGN_TIME_TOKEN_URL` / `SAP_DESIGN_TIME_CLIENT_ID` / `SAP_DESIGN_TIME_CLIENT_SECRET` | Design-time auth uses `API_OAUTH_*` vars — these are duplicates with a different name that the code never reads |
+| `OBJECT_STORE_ACCESS_KEY` / `OBJECT_STORE_SECRET_KEY` | Code reads `WRITE_ACCESS_KEY_ID` and `READ_ACCESS_KEY_ID` instead |
+| `ENDPOINT_URL` / `OBJECT_STORE_ENDPOINT` | Code builds the endpoint from `HOST` |
+| `USE_REAL_FIXES` / `FAILED_MESSAGES_PAGE_SIZE` / `FAILED_MESSAGES_MAX_TOTAL` | No `os.getenv` for these anywhere in the codebase |
+| `AEM_HOST` | Not read — Event Mesh endpoint comes from `EM_REST_URL` |
+| `WEB_SEARCH_EcfNABLED` | Typo — code reads `WEB_SEARCH_ENABLED` |
+
+---
+
 ## Checklist
 
 - [ ] Step 1 — Three MCP servers deployed and URLs noted
