@@ -379,6 +379,14 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
 
         agent = self._agent or self._mcp.agent
         if agent is None:
+            # Startup may have failed — attempt a lazy rebuild before giving up
+            try:
+                logger.warning("[RCA] Agent not ready at run time — attempting lazy build.")
+                await self.build_agent()
+                agent = self._agent or self._mcp.agent
+            except Exception as build_exc:
+                logger.error("[RCA] Lazy build failed: %s", build_exc)
+        if agent is None:
             raise RuntimeError(
                 "MCP agent is not ready — SAP CPI MCP servers may still be connecting. "
                 "Wait a few seconds and retry."

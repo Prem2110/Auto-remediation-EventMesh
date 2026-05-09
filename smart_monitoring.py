@@ -72,7 +72,7 @@ class _MCPCompat:
 
     @property
     def _autonomous_running(self) -> bool:
-        return self._orchestrator._autonomous_running if self._orchestrator else False
+        return self._orchestrator._agents_ready if self._orchestrator else False
 
     def classify_error(self, error_message: str):
         return self._orchestrator._classifier.classify_error(error_message)

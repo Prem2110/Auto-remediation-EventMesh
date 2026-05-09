@@ -432,15 +432,6 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `CPI_OAUTH_CLIENT_SECRET` | Client secret |
 | `CPI_OAUTH_TOKEN_URL` | Token endpoint URL |
 
-### SAP Integration Suite — Design Time
-
-| Variable | Description |
-|---|---|
-| `SAP_DESIGN_TIME_URL` | Design-time base URL |
-| `SAP_DESIGN_TIME_TOKEN_URL` | Token endpoint |
-| `SAP_DESIGN_TIME_CLIENT_ID` | Client ID |
-| `SAP_DESIGN_TIME_CLIENT_SECRET` | Client secret |
-
 ### SAP Hub — CPI OData Polling (CPI Monitor + Observer agent)
 
 | Variable | Description |
@@ -462,8 +453,9 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 |---|---|---|
 | `EM_ENABLED` | `false` | `true` = publish to SAP Event Mesh REST API via Destination; `false` = in-process fallback only |
 | `EM_REST_URL` | — | Event Mesh REST gateway base URL (`https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com`) |
+| `EM_QUEUE_PREFIX` | — | Topic prefix for agent-to-agent routing (e.g. `default/sierra.automation/1/autofix/orbit`). Stage names are appended automatically. |
+| `EM_INGEST_TOPIC` | — | Inbound topic the CPI Monitor publishes to (e.g. `default/sierra.automation/1/autofix/in`). The orchestrator queue subscribes here. |
 | `EVENT_MESH_DESTINATION_NAME` | `EventMesh` | SAP BTP Destination name. Resolved at runtime via the Destination service binding (`VCAP_SERVICES`). |
-| `EVENT_MESH_QUEUE` | `default/sierra.automation/1/autofix/orbit/orchestrator` | Inbound queue name (shown in `/event-mesh/status`) |
 
 > **Removed:** `EVENT_MESH_TOKEN_URL`, `EVENT_MESH_CLIENT_ID`, and `EVENT_MESH_CLIENT_SECRET`
 > are no longer used. All Event Mesh authentication now goes through the SAP Destination
@@ -497,26 +489,25 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 |---|---|
 | `BUCKET_NAME` | S3 bucket name |
 | `REGION` | AWS region (e.g. `us-east-1`) |
-| `ENDPOINT_URL` | S3 endpoint |
-| `OBJECT_STORE_ACCESS_KEY` | Access key |
-| `OBJECT_STORE_SECRET_KEY` | Secret key |
-| `WRITE_ACCESS_KEY_ID` | Write-only access key |
-| `WRITE_SECRET_ACCESS_KEY` | Write-only secret key |
+| `HOST` | S3 hostname used to build the endpoint URL (default: `s3.amazonaws.com`) |
+| `WRITE_ACCESS_KEY_ID` | AWS access key for write (upload) operations |
+| `WRITE_SECRET_ACCESS_KEY` | AWS secret key for write operations |
+| `READ_ACCESS_KEY_ID` | AWS access key for read (download/list) operations |
+| `READ_SECRET_ACCESS_KEY` | AWS secret key for read operations |
 
 ### Autonomous Operations — Feature Flags
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTONOMOUS_ENABLED` | `true` | Enable the orchestrator polling loop at startup |
 | `AUTO_FIX_CONFIDENCE` | `0.90` | Min RCA confidence to auto-apply a fix |
 | `SUGGEST_FIX_CONFIDENCE` | `0.70` | Min confidence to suggest (not apply) a fix |
-| `USE_REAL_FIXES` | `true` | Actually deploy; `false` = dry-run (no iFlow changes) |
-| `FAILED_MESSAGES_PAGE_SIZE` | `400` | Page size for CPI failed message fetch |
-| `FAILED_MESSAGES_MAX_TOTAL` | `50000` | Max messages to fetch per cycle |
+| `AUTO_FIX_ALL_CPI_ERRORS` | `false` | `true` = auto-fix every fixable error regardless of per-type policy |
+| `AUTO_DEPLOY_AFTER_FIX` | `true` | Automatically deploy the iFlow after a successful fix update |
 | `MAX_CONSECUTIVE_FAILURES` | `5` | Circuit breaker: escalate after N consecutive failures |
 | `PENDING_APPROVAL_TIMEOUT_HRS` | `24` | Hours before pending approval auto-escalates |
 | `PATTERN_MIN_SUCCESS_COUNT` | `2` | Min successful fixes before a pattern is trusted |
 | `BURST_DEDUP_WINDOW_SECONDS` | `60` | Window for absorbing rapid repeat events |
+| `FAILED_MESSAGE_FETCH_LIMIT` | `100` | Max failed messages fetched per polling cycle |
 
 ### Server & Logging
 
@@ -552,7 +543,6 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/event-mesh/status` | AEM connectivity, queue depth, stage counts, enabled flag |
-| `GET` | `/event-mesh/status` | Alias for `/event-mesh/status` |
 
 ### CPI Monitor
 
@@ -745,8 +735,10 @@ cf push
 
 ```bash
 # Event Mesh
-cf set-env orbit-is-be EM_ENABLED   "true"
-cf set-env orbit-is-be EM_REST_URL  "https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com"
+cf set-env orbit-is-be EM_ENABLED        "true"
+cf set-env orbit-is-be EM_REST_URL       "https://enterprise-messaging-pubsub.cfapps.us10.hana.ondemand.com"
+cf set-env orbit-is-be EM_QUEUE_PREFIX   "default/<namespace>/1/autofix/orbit"
+cf set-env orbit-is-be EM_INGEST_TOPIC   "default/<namespace>/1/autofix/in"
 
 # SAP CPI (used by CPI Monitor + Observer agent)
 cf set-env orbit-is-be SAP_HUB_TENANT_URL    "https://<tenant>.it-cpi<n>.cfapps.<region>.hana.ondemand.com"
@@ -1065,7 +1057,7 @@ auto-remediation - EventMesh/
 │   ├── verifier_agent.py            # Post-fix test execution + runtime check
 │   └── orchestrator_agent.py        # Pipeline coordinator, dedup logic, chatbot
 │
-├── aem/
+├── event_mesh/
 │   └── event_bus.py                 # SAP Event Mesh publisher — bearer token via SAP
 │                                    #   Destination service, publish / publish_to_next /
 │                                    #   in-process fallback (EM_ENABLED=false)

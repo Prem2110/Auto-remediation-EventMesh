@@ -281,18 +281,33 @@ async def lifespan(app: FastAPI):
                 logger.info("[Startup] Initialising MCP servers in background…")
                 await mcp.connect()
                 await mcp.discover_tools()
-                await mcp.build_agent()                  # full-toolset shared agent (must be first)
+                try:
+                    await mcp.build_agent()              # full-toolset shared agent
+                    logger.info("[Startup] Shared MCP agent ready — %d tools.", len(mcp.tools))
+                except Exception as mcp_exc:
+                    # Discovery failure must not prevent specialist agents from building
+                    # with their local tools (vector store, patterns, etc.)
+                    logger.error("[Startup] Shared MCP agent build failed (specialist agents will still build): %s", mcp_exc)
             else:
                 logger.info("[Startup] MCP disabled - skipping MCP initialization")
 
-            # Build all specialist agents in parallel — they are independent of each other
-            await asyncio.gather(
+            # Build all specialist agents in parallel — independent of each other.
+            # return_exceptions=True ensures one failure doesn't abort the rest.
+            results = await asyncio.gather(
                 observer.build_agent(),
                 orchestrator._classifier.build_agent(mcp),
                 _rca.build_agent(),
                 _fix.build_agent(),
                 _verifier.build_agent(),
+                return_exceptions=True,
             )
+            agent_names = ["observer", "classifier", "rca", "fix", "verifier"]
+            for name, result in zip(agent_names, results):
+                if isinstance(result, BaseException):
+                    logger.error("[Startup] %s agent build failed: %s", name, result)
+                else:
+                    logger.info("[Startup] %s agent ready.", name)
+
             await orchestrator.build_agent(observer=observer)  # depends on all above being ready
             logger.info("[Startup] All specialist agents built — orchestrator ready to process messages.")
         except asyncio.CancelledError:
