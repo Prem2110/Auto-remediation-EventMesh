@@ -1896,6 +1896,41 @@ _TERMINAL_STATUSES = frozenset({
 })
 
 
+def _generate_next_steps(fix_summary: str, error_type: str, proposed_fix: str) -> str:
+    combined = f"{(fix_summary or '').lower()} {(proposed_fix or '').lower()}"
+    if any(w in combined for w in ["address", "endpoint", "url", "asmx", "wsdl", "soap"]):
+        return (
+            "The backend endpoint address was updated. Verify the new URL is reachable from SAP CPI "
+            "and returns a valid WSDL/response. If end-to-end tests still fail, the AI may have used "
+            "a placeholder — set the correct production endpoint in the iFlow receiver channel."
+        )
+    if any(w in combined for w in ["timeout", "connecttimeout", "response_timeout"]):
+        return (
+            "Timeout values were adjusted. Monitor the iFlow under real traffic to confirm the new "
+            "timeout prevents failures without cutting off slow-but-valid responses."
+        )
+    if any(w in combined for w in ["proxy", "proxyhost", "proxyport"]):
+        return (
+            "Proxy settings were updated. Verify the proxy host and port are correct for your "
+            "network and reachable from the SAP CPI runtime."
+        )
+    if any(w in combined for w in ["credential", "user", "password", "alias", "securitymaterial"]):
+        return (
+            "Credential references were updated. Verify the referenced credential alias exists in "
+            "SAP CPI Security Material and has the correct username/password."
+        )
+    if any(w in combined for w in ["certificate", "keystore", "truststore", "ssl", "tls"]):
+        return (
+            "Certificate or keystore references were changed. Verify the certificate is uploaded in "
+            "SAP CPI Keystore and has not expired."
+        )
+    return (
+        "'Fix Verified' means the iFlow deployed successfully — not that the business scenario "
+        "works end-to-end. Test your integration in Postman or SAP Integration Suite Message "
+        "Monitor to confirm the error is resolved."
+    )
+
+
 def _get_fix_progress(incident_id: str) -> dict:
     """Read live pipeline progress from the in-memory store in main.py (no DB hit)."""
     try:
@@ -1951,6 +1986,11 @@ async def get_fix_status(incident_id: str):
             "iflow_id":            incident.get("iflow_id"),
             "recommended_action":  _recommended_action(
                 incident.get("status", ""), incident.get("error_type", "")
+            ),
+            "next_steps": _generate_next_steps(
+                incident.get("fix_summary", ""),
+                incident.get("error_type", ""),
+                incident.get("proposed_fix", ""),
             ),
         }
         

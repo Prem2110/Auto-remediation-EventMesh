@@ -342,8 +342,8 @@ function FixPlanSteps({ steps }: { steps: IFixPlanStep[] }) {
 
 /* ── Pipeline stage rail (shown during fix execution) ───────────────── */
 // Slot mapping (matches backend _LABEL_TO_SLOT):
-//  0=Submit  1=Fetch  2=Research  3=Patch  4=Deploy  5=Verify
-const FIX_STAGES = ["Submit", "Fetch", "Research", "Patch", "Deploy", "Verify"] as const;
+//  0=Submit  1=Get iFlow  2=Analyze  3=Patch  4=Deploy  5=Verify
+const FIX_STAGES = ["Submit", "Get iFlow", "Analyze", "Patch", "Deploy", "Verify"] as const;
 
 function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: number; totalSteps: number; currentStep?: string }) {
   const slots = FIX_STAGES.length;
@@ -557,6 +557,7 @@ export default function Observability() {
   const [fixPatchLoading, setFixPatchLoading] = useState(false);
   const [fixState, setFixState] = useState<"idle" | "loading" | "success" | "error" | "skipped" | "deployed_unverified">("idle");
   const [fixResult, setFixResult] = useState<string>("");
+  const [fixNextSteps, setFixNextSteps] = useState<string | null>(null);
   const [fixProgress, setFixProgress] = useState<{
     currentStep: string; stepIndex: number; totalSteps: number; stepsDone: string[];
   } | null>(null);
@@ -725,6 +726,7 @@ export default function Observability() {
     setFixPatch(null);
     setFixState("idle");
     setFixResult("");
+    setFixNextSteps(null);
     setFixProgress(null);
     setActiveTab("error");
     setErrorExplain(null);
@@ -742,15 +744,24 @@ export default function Observability() {
 
       // Restore fix outcome state from incident status
       const incStatus = (d.incident_status || "").toUpperCase();
+      const incidentId = d.incident_id || "";
       if (incStatus === "HUMAN_INITIATED_FIX") {
         setFixState("skipped");
         setFixResult(d.ai_recommendation?.fix_summary || "iFlow was already running — no changes were applied.");
       } else if (incStatus === "FIX_DEPLOYED") {
         setFixState("deployed_unverified");
         setFixResult(d.ai_recommendation?.fix_summary || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
+        if (incidentId) fetchFixStatus(incidentId).then((fs: unknown) => {
+          const r = fs as Record<string, unknown>;
+          if (r?.next_steps) setFixNextSteps(r.next_steps as string);
+        }).catch(() => undefined);
       } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(incStatus)) {
         setFixState("success");
         setFixResult(d.ai_recommendation?.fix_summary || "Fix applied and deployed successfully.");
+        if (incidentId) fetchFixStatus(incidentId).then((fs: unknown) => {
+          const r = fs as Record<string, unknown>;
+          if (r?.next_steps) setFixNextSteps(r.next_steps as string);
+        }).catch(() => undefined);
       } else if (["FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME"].includes(incStatus)) {
         setFixState("error");
         setFixResult(d.ai_recommendation?.fix_summary || "Fix failed — see history for details.");
@@ -826,8 +837,8 @@ export default function Observability() {
         // Update the live step progress from the backend
         setFixProgress({
           currentStep: (s.current_step as string) || st,
-          stepIndex:   (s.step_index as number)  || 1,
-          totalSteps:  (s.total_steps as number) || 4,
+          stepIndex:   (s.step_index as number)  ?? 1,
+          totalSteps:  (s.total_steps as number) || 6,
           stepsDone:   (s.steps_done as string[]) || [],
         });
 
@@ -842,9 +853,11 @@ export default function Observability() {
           } else if (st === "FIX_DEPLOYED") {
             setFixState("deployed_unverified");
             setFixResult((s.fix_summary as string) || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
+            setFixNextSteps((s.next_steps as string) || null);
           } else if (SUCCESS_STATUSES.has(st) || stepImpliesDone) {
             setFixState("success");
             setFixResult((s.fix_summary as string) || "Fix applied and deployed successfully.");
+            setFixNextSteps((s.next_steps as string) || null);
           } else {
             setFixState("error");
             setFixResult((s.fix_summary as string) || `Fix failed (${st}).`);
@@ -892,10 +905,12 @@ export default function Observability() {
         setFixProgress(null);
         setFixState("deployed_unverified");
         setFixResult((result.summary as string) || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
+        setFixNextSteps((result.next_steps as string) || null);
       } else if (SUCCESS_STATUSES.has(syncStatus) || (syncFixApplied && syncDeploy)) {
         setFixProgress(null);
         setFixState("success");
         setFixResult((result.summary as string) || "Fix applied and deployed successfully.");
+        setFixNextSteps((result.next_steps as string) || null);
       } else if (syncStatus === "FIX_FAILED") {
         setFixProgress(null);
         setFixState("error");
@@ -970,6 +985,10 @@ export default function Observability() {
     } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(st)) {
       setFixState("success");
       setFixResult(detail.ai_recommendation?.fix_summary || "Fix applied and deployed.");
+      if (incidentId) fetchFixStatus(incidentId).then((fs: unknown) => {
+        const r = fs as Record<string, unknown>;
+        if (r?.next_steps) setFixNextSteps(r.next_steps as string);
+      }).catch(() => undefined);
     } else if (["FIX_FAILED", "PIPELINE_ERROR"].includes(st)) {
       setFixState("error");
       setFixResult(detail.ai_recommendation?.fix_summary || "Fix failed.");
@@ -1448,6 +1467,11 @@ export default function Observability() {
                     {fixResult && (
                       <div className={`${styles.fixResultBanner} ${styles[`fixResultBanner_${fixState}`] || ""}`}>
                         {cleanFixSummary(fixResult)}
+                      </div>
+                    )}
+                    {fixNextSteps && (fixState === "success" || fixState === "deployed_unverified") && (
+                      <div className={styles.fixNextStepsBanner}>
+                        <strong>What to verify:</strong> {fixNextSteps}
                       </div>
                     )}
                     <div className={styles.fixFooterActions}>

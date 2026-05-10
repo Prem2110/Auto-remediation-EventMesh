@@ -250,6 +250,18 @@ async def lifespan(app: FastAPI):
     ensure_em_schema()
     ensure_fix_patterns_schema()
 
+    # Register in-process pipeline fallback handlers.
+    # These fire via _dispatch_local ONLY when EventMesh REST publish fails or is disabled,
+    # so when EventMesh is working they are not called (no double-processing).
+    try:
+        event_bus.subscribe(event_bus.make_topic("observer"), _run_observer_task)
+        event_bus.subscribe(event_bus.make_topic("rca"),      _run_rca_task)
+        event_bus.subscribe(event_bus.make_topic("fixer"),    _run_fixer_task)
+        event_bus.subscribe(event_bus.make_topic("verifier"), _run_verifier_task)
+        logger.info("[EventBus] In-process pipeline fallback handlers registered")
+    except RuntimeError as _em_sub_exc:
+        logger.warning("[EventBus] Could not register in-process handlers (EM_QUEUE_PREFIX not set?): %s", _em_sub_exc)
+
     # Create the MCP infrastructure only if servers are configured
     from core.constants import MCP_SERVERS
     if MCP_SERVERS:
@@ -1222,6 +1234,9 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
                 "[Agents/orchestrator] Signature dedup → correlated into incident=%s",
                 existing_sig["incident_id"],
             )
+            # Re-queue the existing incident so it progresses if it got stuck
+            # (e.g. CLASSIFIED with no EventMesh subscription delivering the message).
+            await orchestrator.resume_correlated_incident(dict(existing_sig), normalized)  # type: ignore[union-attr]
             return
 
         # Burst dedup — absorb rapid repeat errors within the dedup window

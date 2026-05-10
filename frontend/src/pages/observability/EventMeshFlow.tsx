@@ -58,7 +58,8 @@ const NODES: NodeDef[] = [
 const STATUS_TO_NODE: Partial<Record<string, NodeId>> = {
   DETECTED:             "orchestrator",
   CLASSIFIED:           "observer",
-  RCA_IN_PROGRESS:      "observer",
+  OBSERVED:             "observer",
+  RCA_IN_PROGRESS:      "rca",
   RCA_COMPLETE:         "rca",
   FIX_IN_PROGRESS:      "fixer",
   FIX_DEPLOYED:         "fixer",

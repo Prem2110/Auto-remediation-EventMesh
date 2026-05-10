@@ -1226,7 +1226,7 @@ Rules:
                     timestamp=get_hana_timestamp(),
                 )
             else:
-                # _PROGRESS_TOTAL=6 already set above — matches FIX_STAGES["Submit","Get iFlow","Validate","Patch","Deploy","Started"]
+                # _PROGRESS_TOTAL=6 already set above — matches FIX_STAGES["Submit","Get iFlow","Analyze","Patch","Deploy","Verify"]
                 self._set_progress(incident_id, "Agent: planning fix strategy…", 1, _PROGRESS_TOTAL)
 
                 _LABEL_TO_SLOT: dict = {
@@ -1281,7 +1281,7 @@ Rules:
                 if deploy_error_text:
                     fix_result["technical_details"] = deploy_error_text[:1500]
                     fix_summary = (
-                        f"{fix_summary}\nDeployment error details: {deploy_error_text[:800]}"
+                        f"{fix_summary} | Deploy error: {deploy_error_text[:800]}"
                         if fix_summary else deploy_error_text[:800]
                     )
 
@@ -1295,8 +1295,8 @@ Rules:
                 retry_result  = await self._verifier.retry_failed_message(working_incident)
                 replay_success = retry_result.get("success", False)
                 replay_skipped = retry_result.get("skipped", False)
-                if retry_result.get("summary"):
-                    fix_summary = f"{fix_summary}\nReplay: {retry_result['summary']}"
+                if retry_result.get("summary") and not retry_result.get("skipped"):
+                    fix_summary = f"{fix_summary} | Replay: {retry_result['summary']}"
 
             if fix_result.get("success") and not replay_success and not replay_skipped:
                 final_status = "FIX_DEPLOYED"

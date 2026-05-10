@@ -265,6 +265,7 @@ class EventBus:
         to the next in the event-driven pipeline.  Failures are logged only —
         the caller must NOT raise so the current agent's response is unaffected.
         """
+        _rest_ok = False
         if _EM_ENABLED and _EM_REST_URL:
             encoded_topic = quote(topic, safe="")
             url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
@@ -287,10 +288,14 @@ class EventBus:
                     )
                 else:
                     logger.info("[EventMesh] publish_to_next '%s' OK (HTTP %d)", topic, resp.status_code)
+                    _rest_ok = True
             except Exception as exc:
                 logger.warning("[EventMesh] publish_to_next dead-letter for '%s': %s", topic, exc)
-        # always dispatch in-process handlers too
-        await self._dispatch_local(topic, payload)
+        # Fall back to in-process dispatch only when EventMesh REST publish did not succeed.
+        # When EventMesh accepted the message, delivery happens via the HTTP webhook push —
+        # calling local handlers here too would cause double-processing.
+        if not _rest_ok:
+            await self._dispatch_local(topic, payload)
 
 
 # ─────────────────────────────────────────────
