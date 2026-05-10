@@ -1262,6 +1262,7 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
         await event_bus.publish_to_next(event_bus.make_topic("observer"), {
             "stage": "observer", "incident_id": incident_id,
         })
+        logger.info("[Pipeline] incident=%s: orchestrator → observer (published)", incident_id)
     except Exception as exc:
         logger.error("[Agents/orchestrator] Task failed: %s", exc)
 
@@ -1328,6 +1329,7 @@ async def _run_observer_task(event: Dict[str, Any]) -> None:
         await event_bus.publish_to_next(event_bus.make_topic("rca"), {
             "stage": "rca", "incident_id": incident_id,
         })
+        logger.info("[Pipeline] incident=%s: observer → rca (published)", incident_id)
     except Exception as exc:
         logger.error("[Agents/observer] Task failed incident=%s: %s", incident_id, exc)
         if incident_id:
@@ -1386,6 +1388,10 @@ async def _run_rca_task(event: Dict[str, Any]) -> None:
         await event_bus.publish_to_next(event_bus.make_topic("fixer"), {
             "stage": "fixer", "incident_id": incident_id,
         })
+        logger.info(
+            "[Pipeline] incident=%s: rca → fixer (published, confidence=%.2f)",
+            incident_id, rca.get("confidence", 0.0),
+        )
     except Exception as exc:
         logger.error("[Agents/rca] Task failed incident=%s: %s", incident_id, exc)
         if incident_id:
@@ -1511,6 +1517,10 @@ async def _run_fixer_task(event: Dict[str, Any]) -> None:
         await event_bus.publish_to_next(event_bus.make_topic("verifier"), {
             "stage": "verifier", "incident_id": incident_id,
         })
+        logger.info(
+            "[Pipeline] incident=%s: fixer → verifier (published, fix_status=%s)",
+            incident_id, fix_status,
+        )
     except Exception as exc:
         logger.error("[Agents/fixer] Task failed incident=%s: %s", incident_id, exc)
         if incident_id:

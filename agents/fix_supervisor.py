@@ -116,6 +116,7 @@ class FixSupervisor:
                             {
                                 "id":    ctx.iflow_id,
                                 "files": [{"filepath": ctx.original_filepath, "content": ctx.original_xml}],
+                                "autoDeploy": False,
                             },
                         )
                         logger.info("[Supervisor] Restored original XML before attempt=%d", attempt)
@@ -282,6 +283,7 @@ class FixSupervisor:
                         {
                             "id":    ctx.iflow_id,
                             "files": [{"filepath": ctx.original_filepath, "content": ctx.original_xml}],
+                            "autoDeploy": False,
                         },
                     )
                     logger.info(
@@ -334,6 +336,7 @@ class FixSupervisor:
                 {
                     "id":    ctx.iflow_id,
                     "files": [{"filepath": ctx.original_filepath, "content": ctx.original_xml}],
+                    "autoDeploy": False,
                 },
             )
             restore_out = str(restore_result.get("output", ""))

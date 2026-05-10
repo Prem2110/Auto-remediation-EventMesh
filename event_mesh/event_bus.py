@@ -192,15 +192,19 @@ class EventBus:
             if reg_topic != topic and topic.startswith(reg_topic + "/"):
                 matched.extend(reg_handlers)
         if not matched:
+            logger.debug("[EventMesh] No in-process handlers registered for topic '%s' — skipping local dispatch", topic)
             return
+        logger.debug("[EventMesh] Dispatching topic '%s' to %d handler(s)", topic, len(matched))
         for handler in matched:
+            handler_name = getattr(handler, "__name__", repr(handler))
             try:
                 if asyncio.iscoroutinefunction(handler):
                     await handler(event)
                 else:
                     handler(event)
+                logger.debug("[EventMesh] Handler '%s' for topic '%s' completed successfully", handler_name, topic)
             except Exception as exc:
-                logger.error("[EventMesh] Handler for topic '%s' raised: %s", topic, exc)
+                logger.error("[EventMesh] Handler '%s' for topic '%s' raised: %s", handler_name, topic, exc)
 
     # ── convenience helper ───────────────────────────────────────────────────
 

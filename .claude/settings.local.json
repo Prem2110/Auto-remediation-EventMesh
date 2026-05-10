@@ -35,7 +35,11 @@
       "Bash(cat)",
       "Read(//tmp/**)",
       "Bash(Remove-Item *)",
-      "PowerShell(Remove-Item *)"
+      "PowerShell(Remove-Item *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\PremkumarUthayakumar\\\\Desktop\\\\projects\\\\New folder\\\\auto-remediation - EventMesh\" -Recurse -Filter \"*.py\")",
+      "Bash(curl -s https://api.github.com/repos/Prem2110/CPI-MCP-Server-SHTTP/contents/src/handlers/iflow)",
+      "Bash(curl -s https://api.github.com/repos/Prem2110/CPI-MCP-Server-SHTTP/contents/src/api)",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }

@@ -127,6 +127,7 @@ class FixApplier:
                     {
                         "id": ctx.iflow_id,
                         "files": [{"filepath": ctx.original_filepath, "content": merged_xml}],
+                        "autoDeploy": False,
                     },
                 )
                 _cr_out = str(update_result.get("output", ""))
@@ -134,16 +135,7 @@ class FixApplier:
                     "[FixApplier] component-replace update-iflow response: iflow=%s output_len=%d output=%.200s",
                     ctx.iflow_id, len(_cr_out), _cr_out,
                 )
-                _cr_verified = False
-                if not _cr_out.strip() and not _cr_out.startswith("ERROR") and not _cr_out.startswith("VALIDATION"):
-                    _vr = await self._mcp.execute_integration_tool("get-iflow", {"id": ctx.iflow_id})
-                    if _vr.get("success") and _vr.get("output", ""):
-                        logger.info(
-                            "[FixApplier] component-replace empty body verified via get-iflow: iflow=%s",
-                            ctx.iflow_id,
-                        )
-                        _cr_verified = True
-                update_ok = _cr_verified or self._update_succeeded(_cr_out)
+                update_ok = self._update_succeeded(_cr_out)
                 if not update_ok:
                     logger.warning(
                         "[FixApplier] Component replace update failed for iflow=%s", ctx.iflow_id
@@ -190,38 +182,40 @@ class FixApplier:
         )
         update_result = await self._mcp.execute_integration_tool(
             "update-iflow",
-            {"id": ctx.iflow_id,
-             "files": [{"filepath": ctx.original_filepath, "content": vr.patched_xml}]},
+            {
+                "id": ctx.iflow_id,
+                "files": [{"filepath": ctx.original_filepath, "content": vr.patched_xml}],
+                "autoDeploy": False,
+            },
         )
         update_out = str(update_result.get("output", ""))
         logger.info(
             "[FixApplier] update-iflow response: iflow=%s output_len=%d output=%.300s",
             ctx.iflow_id, len(update_out), update_out,
         )
-        # SAP BTP sometimes returns HTTP 200 with an empty body.
-        # Verify via get-iflow before treating an empty response as failure.
-        _update_verified = False
-        if not update_out.strip() and not update_out.startswith("ERROR") and not update_out.startswith("VALIDATION"):
-            _verify = await self._mcp.execute_integration_tool("get-iflow", {"id": ctx.iflow_id})
-            if _verify.get("success") and _verify.get("output", ""):
-                logger.info(
-                    "[FixApplier] update-iflow empty body — iFlow accessible via get-iflow: iflow=%s",
-                    ctx.iflow_id,
+        # An empty update-iflow body is ambiguous — SAP CPI sometimes returns
+        # HTTP 200 with no body even when the write succeeded.  Verify by
+        # re-fetching the live XML and checking every patched field landed.
+        if not self._update_succeeded(update_out):
+            patch_confirmed = await self._verify_patch_landed(ctx, patch.operations)
+            if not patch_confirmed:
+                _reason = "empty body — patch not confirmed in live XML" if not update_out.strip() else update_out[:200]
+                logger.warning(
+                    "[FixApplier] update-iflow failed (content check): iflow=%s reason=%s",
+                    ctx.iflow_id, _reason,
                 )
-                _update_verified = True
-        if not _update_verified and not self._update_succeeded(update_out):
-            logger.warning(
-                "[FixApplier] update-iflow failed: iflow=%s output=%.400s",
-                ctx.iflow_id, update_out,
-            )
-            return ApplyResult(
-                success=False,
-                fix_applied=False,
-                deploy_success=False,
-                failed_stage="update",
-                summary=f"update-iflow failed after structured patch: {update_out[:200]}",
-                technical_details=update_out,
-                steps=[],
+                return ApplyResult(
+                    success=False,
+                    fix_applied=False,
+                    deploy_success=False,
+                    failed_stage="update",
+                    summary=f"update-iflow failed after structured patch: {_reason}",
+                    technical_details=update_out,
+                    steps=[],
+                )
+            logger.info(
+                "[FixApplier] update-iflow empty body — content check confirmed patch landed: iflow=%s",
+                ctx.iflow_id,
             )
 
         # Call deploy-iflow
@@ -615,6 +609,124 @@ class FixApplier:
             return raw
         except Exception:
             return ""
+
+    # ── content verification ──────────────────────────────────────────────────
+
+    async def _verify_patch_landed(
+        self,
+        ctx: "FixContext",
+        operations: List[Dict[str, Any]],
+    ) -> bool:
+        """
+        Verify that every structured patch operation is reflected in the live
+        iFlow XML by calling get-iflow and parsing the returned XML.
+
+        Used as a fallback when update-iflow returns an empty body — SAP CPI
+        occasionally returns HTTP 200 with no body even when the write succeeded.
+        Returns True only when every operation's changed value is confirmed.
+        """
+        import xml.etree.ElementTree as ET  # noqa: PLC0415
+        from core.validators import _extract_iflow_file  # noqa: PLC0415
+
+        _BPMN2 = "http://www.omg.org/spec/BPMN/20100524/MODEL"
+        _IFL   = "http:///com.sap.ifl.model/Ifl.xsd"
+
+        try:
+            verify = await self._mcp.execute_integration_tool("get-iflow", {"id": ctx.iflow_id})
+            if not verify.get("success") or not verify.get("output"):
+                logger.warning(
+                    "[FixApplier] verify-patch: get-iflow returned no output for iflow=%s",
+                    ctx.iflow_id,
+                )
+                return False
+
+            _, live_xml = _extract_iflow_file(str(verify["output"]), iflow_id=ctx.iflow_id)
+            if not live_xml:
+                logger.warning(
+                    "[FixApplier] verify-patch: could not extract iflw XML from get-iflow for iflow=%s",
+                    ctx.iflow_id,
+                )
+                return False
+
+            root = ET.fromstring(live_xml.encode("utf-8"))
+        except Exception as exc:
+            logger.warning("[FixApplier] verify-patch: XML fetch/parse error for iflow=%s: %s", ctx.iflow_id, exc)
+            return False
+
+        for op in operations:
+            change_type = (op.get("change_type") or "").strip()
+            target_id   = (op.get("target_component") or "").strip()
+            field       = (op.get("field") or "").strip()
+            new_value   = str(op.get("new_value") or "")
+
+            if change_type not in ("update_property", "update_expression", "add_property", "update_attribute"):
+                logger.debug(
+                    "[FixApplier] verify-patch: cannot verify change_type=%s — treating as unconfirmed",
+                    change_type,
+                )
+                return False
+
+            target = next((e for e in root.iter() if e.get("id") == target_id), None)
+            if target is None:
+                logger.warning(
+                    "[FixApplier] verify-patch: component '%s' not found in live XML for iflow=%s",
+                    target_id, ctx.iflow_id,
+                )
+                return False
+
+            if change_type in ("update_property", "update_expression", "add_property"):
+                ext = target.find(f"{{{_BPMN2}}}extensionElements")
+                if ext is None:
+                    logger.warning(
+                        "[FixApplier] verify-patch: no extensionElements on '%s' for iflow=%s",
+                        target_id, ctx.iflow_id,
+                    )
+                    return False
+                live_val: Optional[str] = None
+                for prop in ext.findall(f"{{{_IFL}}}property"):
+                    key_text = (
+                        prop.findtext(f"{{{_IFL}}}key")
+                        or prop.findtext("key")
+                        or ""
+                    )
+                    if key_text == field:
+                        val_elem = prop.find(f"{{{_IFL}}}value") or prop.find("value")
+                        live_val = (val_elem.text if val_elem is not None else "") or ""
+                        break
+                if live_val is None:
+                    logger.warning(
+                        "[FixApplier] verify-patch: property '%s' not found on '%s' in live XML iflow=%s",
+                        field, target_id, ctx.iflow_id,
+                    )
+                    return False
+                if live_val != new_value:
+                    logger.warning(
+                        "[FixApplier] verify-patch: property '%s' on '%s' is '%s', expected '%s' "
+                        "— update did not land for iflow=%s",
+                        field, target_id, live_val, new_value, ctx.iflow_id,
+                    )
+                    return False
+
+            elif change_type == "update_attribute":
+                live_attr = target.get(field)
+                if live_attr != new_value:
+                    logger.warning(
+                        "[FixApplier] verify-patch: attribute '%s' on '%s' is '%s', expected '%s' "
+                        "— update did not land for iflow=%s",
+                        field, target_id, live_attr, new_value, ctx.iflow_id,
+                    )
+                    return False
+
+            logger.debug(
+                "[FixApplier] verify-patch: confirmed %s '%s'='%s' on '%s' iflow=%s",
+                change_type, field, new_value, target_id, ctx.iflow_id,
+            )
+
+        logger.info(
+            "[FixApplier] verify-patch: all %d operation(s) confirmed in live XML for iflow=%s",
+            len(operations), ctx.iflow_id,
+        )
+        return True
 
     # ── static helpers ────────────────────────────────────────────────────────
 

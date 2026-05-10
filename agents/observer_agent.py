@@ -407,6 +407,7 @@ class ObserverAgent:
             Queue consumption is managed exclusively by the OrchestratorAgent polling loop.
             Use GET /event-mesh/status for live queue depth.
             """
+            logger.info("[Observer] fetch_failed_messages tool invoked — queue='%s'", _EM_OBSERVER_QUEUE)
             return (
                 f"Queue consumption is managed by the OrchestratorAgent autonomous loop. "
                 f"Queue: '{_EM_OBSERVER_QUEUE}'. "

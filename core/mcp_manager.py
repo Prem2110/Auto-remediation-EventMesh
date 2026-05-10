@@ -50,6 +50,42 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
+# MCP LOGGING HELPERS
+# ─────────────────────────────────────────────
+
+def _looks_like_xml(s: str) -> bool:
+    t = s.strip()
+    return t.startswith("<") or t.startswith("<?xml")
+
+
+def _sanitize_args_for_log(args: Dict) -> Dict:
+    """Return a copy of args safe to log — replaces XML/large file content with a summary."""
+    sanitized: Dict[str, Any] = {}
+    for k, v in args.items():
+        if k == "files" and isinstance(v, list):
+            sanitized[k] = []
+            for f in v:
+                if isinstance(f, dict) and "content" in f:
+                    raw = str(f.get("content", ""))
+                    label = f"<XML len={len(raw)}>" if _looks_like_xml(raw) else f"<content len={len(raw)}>"
+                    sanitized[k].append({fk: fv for fk, fv in f.items() if fk != "content"} | {"content": label})
+                else:
+                    sanitized[k].append(f)
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
+def _summarize_output_for_log(output: str) -> str:
+    """Summarise MCP tool output for logging — XML is replaced with a length note."""
+    if _looks_like_xml(output):
+        return f"<XML len={len(output)}>"
+    if len(output) > 400:
+        return output[:400] + f"… [total len={len(output)}]"
+    return output
+
+
+# ─────────────────────────────────────────────
 # LLM FACTORY
 # ─────────────────────────────────────────────
 
@@ -271,6 +307,8 @@ class MultiMCP:
 
         client = self.clients[server]
         _update_timeout = float(os.getenv("UPDATE_IFLOW_TIMEOUT", "120.0"))
+        _log_args = _sanitize_args_for_log(args)
+        logger.info("[MCP→] server=%s tool=%s args=%s", server, tool, json.dumps(_log_args))
         for attempt in range(MAX_RETRIES):
             try:
                 async with client:
@@ -291,6 +329,7 @@ class MultiMCP:
                 output = "\n".join(parts)
                 if tool in ("get-iflow", "get-iflow-example"):
                     output = _unwrap_getiflow_response(output)
+                logger.info("[MCP←] server=%s tool=%s output=%s", server, tool, _summarize_output_for_log(output))
                 return output
             except asyncio.TimeoutError:
                 logger.warning(
@@ -411,11 +450,14 @@ Execution policy:
         alias_map: Dict[str, List[str]] = {
             "iflow_id":           ["iflow_id", "artifact_id", "integration_flow_id", "id", "name"],
             "id":                 ["iflow_id", "artifact_id", "id", "name"],
+            # deploy-iflow uses "iflowId" (camelCase) — must map to our "id" context key
+            "iflowid":            ["iflow_id", "artifact_id", "id", "name"],
             "name":               ["iflow_id", "artifact_name", "name"],
             "artifact_id":        ["artifact_id", "iflow_id", "id", "name"],
             "artifact_name":      ["artifact_name", "iflow_id", "name"],
             "integrationflowid":  ["iflow_id", "artifact_id", "id", "name"],
             "integrationflowname":["iflow_id", "artifact_name", "name"],
+            "pkgid":              ["package_id", "package", "package_name"],
             "package_id":         ["package_id", "package", "package_name"],
             "package_name":       ["package_name", "package", "package_id"],
             "message_guid":       ["message_guid", "message_id", "mpl_id"],
@@ -465,6 +507,12 @@ Execution policy:
                 missing_required.append(field_name)
 
         if missing_required:
+            logger.error(
+                "[MCP] BLOCKED tool=%s — missing required fields: %s (context keys provided: %s)",
+                mcp_tool_name,
+                ", ".join(missing_required),
+                ", ".join(sorted(context.keys())),
+            )
             return {
                 "success": False,
                 "tool":    mcp_tool_name,
