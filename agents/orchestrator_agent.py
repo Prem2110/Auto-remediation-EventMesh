@@ -1230,10 +1230,12 @@ Rules:
                 self._set_progress(incident_id, "Agent: planning fix strategy…", 1, _PROGRESS_TOTAL)
 
                 _LABEL_TO_SLOT: dict = {
-                    "reading current iflow":     1,  # get-iflow
+                    "reading current iflow":     1,  # get-iflow (start)
                     "get_iflow":                 1,
                     "planning fix strategy":     1,  # pre-patch planning
                     "reading message processing":1,  # get_message_logs (diagnostics)
+                    "analyzing iflow structure": 2,  # get-iflow (end) — LLM now thinking
+                    "reviewing reference":       2,  # list/get-iflow-example (end)
                     "searching reference":       2,  # list-iflow-examples
                     "loading reference":         2,  # get-iflow-example
                     "searching web":             2,  # web_search_sap_fix / web_search_sap_error

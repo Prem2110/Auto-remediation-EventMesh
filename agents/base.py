@@ -163,6 +163,7 @@ class TestExecutionTracker:
 # STEP LOGGER (LangChain callback)
 # ─────────────────────────────────────────────
 
+# Labels emitted on tool *start* (fire as soon as the tool is called).
 _FIX_TOOL_PROGRESS_LABELS: Dict[str, str] = {
     "get_iflow":               "Agent: reading current iFlow XML…",
     "update_iflow":            "Agent: uploading fixed iFlow to SAP CPI…",
@@ -179,6 +180,15 @@ _FIX_TOOL_PROGRESS_LABELS: Dict[str, str] = {
     "validate_iflow_xml":      "Agent: validating iFlow XML…",
     "test_iflow_with_payload": "Agent: testing iFlow with payload…",
     "get_iflow_endpoint":      "Agent: checking iFlow endpoint…",
+}
+
+
+# Labels emitted on tool *end* — fires after the SAP API responds, giving the
+# long LLM-thinking window a visible phase change on the progress rail.
+_FIX_TOOL_END_LABELS: Dict[str, str] = {
+    "get_iflow":           "Agent: analyzing iFlow structure…",
+    "list_iflow_examples": "Agent: reviewing reference examples…",
+    "get_iflow_example":   "Agent: reviewing reference example…",
 }
 
 
@@ -257,5 +267,16 @@ class StepLogger(BaseCallbackHandler):
             if step["tool"] == tool_name and step["output"] is None:
                 step["output"] = _stored_output
                 break
+
+        # Emit a follow-on label once get_iflow download completes so the
+        # long LLM-thinking window has a visible "Analyze" phase on the rail.
+        if self._progress_fn:
+            short = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+            follow_label = _FIX_TOOL_END_LABELS.get(short)
+            if follow_label:
+                try:
+                    self._progress_fn(follow_label)
+                except Exception:
+                    pass
 
         logger.info("[TOOL_RESULT] tool=%s | output=%.2000s", tool_name, str(output))
