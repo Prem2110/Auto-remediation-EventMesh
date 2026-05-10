@@ -48,11 +48,23 @@ _EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
 # Module-level token cache shared across all EventBus instances
 _token_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
 
+logger.info(
+    "[EventMesh] mode=%s rest_url=%s destination=%s",
+    "ENABLED (SAP EventMesh REST)" if _EM_ENABLED else "DISABLED (in-process only)",
+    _EM_REST_URL or "<not set>",
+    _EM_DESTINATION_NAME,
+)
+
 
 async def _get_bearer_token() -> str:
     """
-    Return a cached EventMesh bearer token resolved via the SAP Destination service.
-    Refreshes 60 s before expiry.  Raises RuntimeError if the token cannot be obtained.
+    Return a cached EventMesh bearer token via the SAP BTP Destination service.
+
+    Requires:
+      1. App bound to the Destination service in CF (manifest.yml services list).
+      2. A destination named EVENT_MESH_DESTINATION_NAME (default: 'EventMesh') created
+         in the BTP cockpit as an OAuth2ClientCredentials destination pointing to the
+         Event Mesh service UAA token URL.
     """
     now = time.monotonic()
     if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
@@ -61,7 +73,10 @@ async def _get_bearer_token() -> str:
     from cpi_monitor.cpi_poller import get_destination_service_creds
     creds = get_destination_service_creds()
     if not creds:
-        raise RuntimeError("[EventMesh] SAP Destination service binding not found in VCAP_SERVICES")
+        raise RuntimeError(
+            "[EventMesh] VCAP_SERVICES has no Destination service binding — "
+            "ensure the app is bound to destination-service in manifest.yml and restaged."
+        )
 
     dest_uri   = creds.get("uri", "")
     token_url  = creds.get("url", "").rstrip("/") + "/oauth/token"
@@ -69,9 +84,12 @@ async def _get_bearer_token() -> str:
     client_sec = creds.get("clientsecret", "")
 
     if not (dest_uri and client_id and client_sec):
-        raise RuntimeError("[EventMesh] Incomplete SAP Destination service credentials in VCAP_SERVICES")
+        raise RuntimeError(
+            f"[EventMesh] Destination service credentials incomplete in VCAP_SERVICES "
+            f"(uri={bool(dest_uri)}, clientid={bool(client_id)}, clientsecret={bool(client_sec)})"
+        )
 
-    # 1. Obtain a token scoped to the Destination service itself
+    logger.info("[EventMesh] Fetching Destination service token from %s", token_url)
     async with httpx.AsyncClient(timeout=15) as client:
         tok_resp = await client.post(
             token_url,
@@ -81,31 +99,54 @@ async def _get_bearer_token() -> str:
                 "client_secret": client_sec,
             },
         )
-    tok_resp.raise_for_status()
+    if tok_resp.status_code != 200:
+        raise RuntimeError(
+            f"[EventMesh] Destination service token request failed: HTTP {tok_resp.status_code} {tok_resp.text[:200]}"
+        )
     dest_token = tok_resp.json()["access_token"]
 
-    # 2. Fetch the named EventMesh destination to get the EventMesh bearer token
+    dest_lookup_url = f"{dest_uri.rstrip('/')}/destination-configuration/v1/destinations/{_EM_DESTINATION_NAME}"
+    logger.info("[EventMesh] Looking up destination '%s' at %s", _EM_DESTINATION_NAME, dest_lookup_url)
     async with httpx.AsyncClient(timeout=10) as client:
         dest_resp = await client.get(
-            f"{dest_uri.rstrip('/')}/destination-configuration/v1/destinations/{_EM_DESTINATION_NAME}",
+            dest_lookup_url,
             headers={"Authorization": f"Bearer {dest_token}"},
         )
-    dest_resp.raise_for_status()
+    if dest_resp.status_code != 200:
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' lookup failed: "
+            f"HTTP {dest_resp.status_code} {dest_resp.text[:300]}"
+        )
     dest_data = dest_resp.json()
 
     auth_tokens = dest_data.get("authTokens", [])
     if not auth_tokens:
-        raise RuntimeError(f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' returned no authTokens")
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' returned no authTokens — "
+            f"check the destination type is OAuth2ClientCredentials in BTP cockpit. "
+            f"Destination keys present: {list(dest_data.keys())}"
+        )
 
-    em_token   = auth_tokens[0].get("value", "")
-    expires_in = int(auth_tokens[0].get("expires_in", 3600))
+    token_entry = auth_tokens[0]
+    if token_entry.get("error"):
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' authToken error: {token_entry['error']}"
+        )
+
+    em_token   = token_entry.get("value", "")
+    expires_in = int(token_entry.get("expires_in", 3600))
 
     if not em_token:
-        raise RuntimeError(f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' authToken value is empty")
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' authToken value is empty"
+        )
 
     _token_cache["token"]      = em_token
     _token_cache["expires_at"] = now + expires_in
-    logger.debug("[EventMesh] Bearer token resolved via Destination '%s', expires_in=%ds", _EM_DESTINATION_NAME, expires_in)
+    logger.info(
+        "[EventMesh] Bearer token resolved via BTP Destination '%s', expires_in=%ds",
+        _EM_DESTINATION_NAME, expires_in,
+    )
     return em_token
 
 class EventBus:
@@ -176,7 +217,7 @@ class EventBus:
                     topic, resp.status_code, resp.text[:200],
                 )
             else:
-                logger.debug("[EventMesh] Published to '%s' (HTTP %d)", topic, resp.status_code)
+                logger.info("[EventMesh] Published to '%s' (HTTP %d)", topic, resp.status_code)
         except Exception as exc:
             logger.warning("[EventMesh] REST publish failed for topic '%s': %s", topic, exc)
 
@@ -245,7 +286,7 @@ class EventBus:
                         topic, resp.status_code, resp.text[:200],
                     )
                 else:
-                    logger.debug("[EventMesh] publish_to_next '%s' OK (HTTP %d)", topic, resp.status_code)
+                    logger.info("[EventMesh] publish_to_next '%s' OK (HTTP %d)", topic, resp.status_code)
             except Exception as exc:
                 logger.warning("[EventMesh] publish_to_next dead-letter for '%s': %s", topic, exc)
         # always dispatch in-process handlers too
