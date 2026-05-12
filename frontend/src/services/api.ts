@@ -275,6 +275,12 @@ export async function fetchTickets(
   return request(`${_BASE}/autonomous/tickets?limit=${pageSize}&offset=${offset}`);
 }
 
+export async function retryItsmPush(ticketId: string): Promise<{ success: boolean; ticket: unknown }> {
+  return request(`${_BASE}/autonomous/tickets/${encodeURIComponent(ticketId)}/retry-itsm`, {
+    method: "POST",
+  });
+}
+
 export async function updateTicket(
   ticketId: string,
   updates: { status?: string; assigned_to?: string | null; resolution_notes?: string | null }

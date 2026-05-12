@@ -11,6 +11,7 @@ import {
   fetchFixStatus,
   fetchTickets,
   updateTicket,
+  retryItsmPush,
   fetchPendingApprovals,
   approveIncident,
 } from "../../services/api.ts";
@@ -576,6 +577,7 @@ export default function Observability() {
   const [resolveNotes,       setResolveNotes]       = useState<Record<string, string>>({});
   const [ticketActionError,  setTicketActionError]  = useState<string | null>(null);
   const [ticketPage,         setTicketPage]         = useState(1);
+  const [retryingItsmId,     setRetryingItsmId]     = useState<string | null>(null);
   const TICKET_PAGE_SIZE = 10;
 
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -1631,7 +1633,29 @@ export default function Observability() {
                       <span className={`${styles.badge} ${styles[`status_${ticket.status.toLowerCase().replace(/\s+/g, '_')}`]}`}>
                         {ticket.status}
                       </span>
+                      {!(ticket.itsm_ticket_id || ticket.itsm_ticket_number) && (ticket.status || "").toUpperCase() !== "RESOLVED" && (
+                        <span className={styles.itsmFailBadge}>⚠ ITSM sync failed</span>
+                      )}
                     </div>
+                    {!(ticket.itsm_ticket_id || ticket.itsm_ticket_number) && (ticket.status || "").toUpperCase() !== "RESOLVED" && (
+                      <button
+                        className={styles.btnRetryItsm}
+                        disabled={retryingItsmId === ticket.ticket_id}
+                        onClick={async () => {
+                          setRetryingItsmId(ticket.ticket_id);
+                          try {
+                            await retryItsmPush(ticket.ticket_id);
+                            refetchTickets();
+                          } catch {
+                            setTicketActionError("ITSM retry failed — check app logs");
+                          } finally {
+                            setRetryingItsmId(null);
+                          }
+                        }}
+                      >
+                        {retryingItsmId === ticket.ticket_id ? "Retrying…" : "↻ Retry ITSM"}
+                      </button>
+                    )}
                   </div>
                   
                   <div className={styles.ticketBody}>

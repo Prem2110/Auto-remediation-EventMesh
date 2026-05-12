@@ -1675,6 +1675,37 @@
   font-weight: 700;
 }
 
+.itsmFailBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.6rem;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #92400e;
+}
+
+.btnRetryItsm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.7rem;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #92400e;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.btnRetryItsm:hover:not(:disabled) { background: #fef3c7; }
+.btnRetryItsm:disabled             { opacity: 0.5; cursor: not-allowed; }
+
 .ticketDescription {
   color: var(--orbit-gray-700, #374151);
   line-height: 1.6;

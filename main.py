@@ -1154,6 +1154,32 @@ async def update_ticket_status(ticket_id: str, body: Dict[str, Any]):
     return {"ticket": updated}
 
 
+@app.post("/autonomous/tickets/{ticket_id}/retry-itsm")
+async def retry_itsm_push(ticket_id: str):
+    """Re-attempt ITSM ticket creation for a ticket whose initial push failed."""
+    ticket = get_escalation_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if (ticket.get("itsm_ticket_id") or "").strip():
+        return {"success": True, "message": "ITSM ticket already exists", "ticket": ticket}
+    try:
+        from integrations.itsm_client import create_itsm_ticket as _create_itsm
+        itsm_result = await _create_itsm({**ticket, "requester_id": os.getenv("ITSM_REQUESTER_ID", "")})
+        if not itsm_result:
+            raise HTTPException(status_code=502, detail="ITSM push failed — check app logs")
+        update_escalation_ticket(ticket_id, {
+            "itsm_ticket_id":     itsm_result["itsm_id"],
+            "itsm_ticket_number": itsm_result["ticket_number"],
+        })
+        updated = get_escalation_ticket_by_id(ticket_id)
+        logger.info("[ITSM] Retry push succeeded for ticket %s → %s", ticket_id, itsm_result["ticket_number"])
+        return {"success": True, "ticket": updated}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # ─────────────────────────────────────────────
 # MANUAL TRIGGER + TEST INCIDENT
 # ─────────────────────────────────────────────
