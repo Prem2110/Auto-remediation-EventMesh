@@ -108,11 +108,11 @@ async def _resolve_itsm_destination() -> Optional[Dict[str, str]]:
         return None
 
 
-async def create_itsm_ticket(ticket: Dict) -> Optional[str]:
+async def create_itsm_ticket(ticket: Dict) -> Optional[Dict[str, str]]:
     """
     POST /odata/v4/ticket/Tickets to create a ticket in ITSM.
     Maps incident fields to ITSM payload.
-    Returns the ITSM ticket ID (as string) or None on failure.
+    Returns {"itsm_id": <UUID>, "ticket_number": <TCK-YYYY-NNNNN>} or None on failure.
     Never raises — failures are logged and swallowed.
 
     Mandatory fields:  title, type_code, source, requester_ID
@@ -163,13 +163,15 @@ async def create_itsm_ticket(ticket: Dict) -> Optional[str]:
             _invalidate_cache()
         resp.raise_for_status()
         data = resp.json()
-        # "ID" confirmed as the field name from the real ITSM POST response
-        itsm_id = str(data.get("ID") or "")
+        itsm_id       = str(data.get("ID")           or "")
+        ticket_number = str(data.get("ticketNumber") or "")
+        if not itsm_id:
+            return None
         logger.info(
-            "[ITSM] Ticket created successfully. ITSM ID: %s  iflow: %s",
-            itsm_id, ticket.get("iflow_id"),
+            "[ITSM] Ticket created successfully. ITSM ID: %s  number: %s  iflow: %s",
+            itsm_id, ticket_number, ticket.get("iflow_id"),
         )
-        return itsm_id or None
+        return {"itsm_id": itsm_id, "ticket_number": ticket_number}
 
     except Exception as exc:
         logger.error("[ITSM] create_itsm_ticket failed for iflow=%s: %s", ticket.get("iflow_id"), exc)

@@ -461,10 +461,14 @@ Rules:
             ticket_id = create_escalation_ticket(ticket_data)
 
             # 3. Push to ITSM via SAP Destination "ITSM-Sierra"
-            itsm_id = await create_itsm_ticket({**ticket_data, "ticket_id": ticket_id})
-            if itsm_id:
-                update_escalation_ticket(ticket_id, {"itsm_ticket_id": itsm_id})
-                logger.info("[ITSM] Ticket pushed to ITSM: %s → itsm_id=%s", ticket_id, itsm_id)
+            itsm_result = await create_itsm_ticket({**ticket_data, "ticket_id": ticket_id})
+            if itsm_result:
+                update_escalation_ticket(ticket_id, {
+                    "itsm_ticket_id":     itsm_result["itsm_id"],
+                    "itsm_ticket_number": itsm_result["ticket_number"],
+                })
+                logger.info("[ITSM] Ticket pushed to ITSM: %s → %s (%s)",
+                            ticket_id, itsm_result["ticket_number"], itsm_result["itsm_id"])
             else:
                 logger.warning("[ITSM] ITSM push failed — local ticket still saved: %s", ticket_id)
 
@@ -1336,12 +1340,15 @@ Rules:
                         "environment":   os.getenv("CPI_ENVIRONMENT", "production"),
                     }
                     ticket_id = create_escalation_ticket(ticket_data)
-                    itsm_id = await create_itsm_ticket({**ticket_data, "ticket_id": ticket_id})
-                    if itsm_id:
-                        update_escalation_ticket(ticket_id, {"itsm_ticket_id": itsm_id})
+                    itsm_result = await create_itsm_ticket({**ticket_data, "ticket_id": ticket_id})
+                    if itsm_result:
+                        update_escalation_ticket(ticket_id, {
+                            "itsm_ticket_id":     itsm_result["itsm_id"],
+                            "itsm_ticket_number": itsm_result["ticket_number"],
+                        })
                         logger.info(
-                            "[FIX] ITSM ticket created: %s for incident: %s",
-                            itsm_id, incident_id,
+                            "[FIX] ITSM ticket created: %s (%s) for incident: %s",
+                            itsm_result["ticket_number"], itsm_result["itsm_id"], incident_id,
                         )
                     else:
                         logger.warning(
@@ -1473,12 +1480,15 @@ Rules:
                     "environment":   os.getenv("CPI_ENVIRONMENT", "production"),
                 }
                 _exc_ticket_id = create_escalation_ticket(_exc_ticket_data)
-                _exc_itsm_id = await create_itsm_ticket({**_exc_ticket_data, "ticket_id": _exc_ticket_id})
-                if _exc_itsm_id:
-                    update_escalation_ticket(_exc_ticket_id, {"itsm_ticket_id": _exc_itsm_id})
+                _exc_itsm_result = await create_itsm_ticket({**_exc_ticket_data, "ticket_id": _exc_ticket_id})
+                if _exc_itsm_result:
+                    update_escalation_ticket(_exc_ticket_id, {
+                        "itsm_ticket_id":     _exc_itsm_result["itsm_id"],
+                        "itsm_ticket_number": _exc_itsm_result["ticket_number"],
+                    })
                     logger.info(
-                        "[FIX] ITSM ticket created: %s for incident: %s",
-                        _exc_itsm_id, incident_id,
+                        "[FIX] ITSM ticket created: %s (%s) for incident: %s",
+                        _exc_itsm_result["ticket_number"], _exc_itsm_result["itsm_id"], incident_id,
                     )
                 else:
                     logger.warning(

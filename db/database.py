@@ -232,13 +232,14 @@ def _migrate_escalation_tickets_table(conn) -> None:
       - Adding any column that is completely missing (unquoted → uppercase)
     """
     _NEEDED = [
-        ("TICKET_SOURCE",    "ticket_source",    "NVARCHAR(50)"),
-        ("ITSM_TICKET_ID",   "itsm_ticket_id",   "NVARCHAR(200)"),
-        ("MESSAGE_GUID",     "message_guid",      "NVARCHAR(200)"),
-        ("HUMAN_FIX_SUMMARY","human_fix_summary", "NCLOB"),
-        ("HUMAN_FIX_STEPS",  "human_fix_steps",   "NCLOB"),
-        ("HUMAN_RESOLVED_AT","human_resolved_at", "NVARCHAR(64)"),
-        ("PATTERN_STORED",   "pattern_stored",    "INTEGER DEFAULT 0"),
+        ("TICKET_SOURCE",      "ticket_source",      "NVARCHAR(50)"),
+        ("ITSM_TICKET_ID",     "itsm_ticket_id",     "NVARCHAR(200)"),
+        ("ITSM_TICKET_NUMBER", "itsm_ticket_number", "NVARCHAR(100)"),
+        ("MESSAGE_GUID",       "message_guid",        "NVARCHAR(200)"),
+        ("HUMAN_FIX_SUMMARY",  "human_fix_summary",  "NCLOB"),
+        ("HUMAN_FIX_STEPS",    "human_fix_steps",    "NCLOB"),
+        ("HUMAN_RESOLVED_AT",  "human_resolved_at",  "NVARCHAR(64)"),
+        ("PATTERN_STORED",     "pattern_stored",     "INTEGER DEFAULT 0"),
     ]
     schema_q = os.getenv("HANA_SCHEMA", "")
     cur = conn.cursor()

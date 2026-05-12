@@ -2216,17 +2216,19 @@ async def itsm_create_test_ticket():
         "requester_id":    os.getenv("ITSM_REQUESTER_ID", ""),
     }
 
-    itsm_id = await create_itsm_ticket(test_payload)
-    if itsm_id:
+    itsm_result = await create_itsm_ticket(test_payload)
+    if itsm_result:
         return {
-            "success":   True,
-            "itsm_id":   itsm_id,
-            "message":   f"Test ticket created in OhZone. ID={itsm_id}. Delete it manually after verifying.",
+            "success":       True,
+            "itsm_id":       itsm_result["itsm_id"],
+            "ticket_number": itsm_result["ticket_number"],
+            "message":       f"Test ticket created. Number={itsm_result['ticket_number']} ID={itsm_result['itsm_id']}. Delete it manually after verifying.",
         }
     return {
-        "success": False,
-        "itsm_id": None,
-        "message": "create_itsm_ticket() returned None — check app logs for the error detail.",
+        "success":       False,
+        "itsm_id":       None,
+        "ticket_number": None,
+        "message":       "create_itsm_ticket() returned None — check app logs for the error detail.",
     }
 
 
