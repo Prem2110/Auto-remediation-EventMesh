@@ -1680,54 +1680,57 @@ export default function Observability() {
                     )}
                   </div>
                   
-                  <div className={styles.ticketFooter}>
-                    <span>Created: {new Date(ticket.created_at).toLocaleString()}</span>
-                    <span>Updated: {new Date(ticket.updated_at).toLocaleString()}</span>
-                    <div className={styles.approvalActions} style={{ marginLeft: "auto" }}>
+                  <div className={`${styles.ticketFooter} ${confirmingTicketId === ticket.ticket_id ? styles.ticketFooterConfirming : ""}`}>
+                    <div className={styles.ticketFooterMeta}>
+                      <span>Created: {new Date(ticket.created_at).toLocaleString()}</span>
+                      <span>Updated: {new Date(ticket.updated_at).toLocaleString()}</span>
                       {(ticket.status || "").toUpperCase() === "RESOLVED" ? (
-                        <span style={{ color: "#16a34a", fontSize: "0.82rem", fontWeight: 600 }}>✓ Resolved</span>
-                      ) : confirmingTicketId === ticket.ticket_id ? (
-                        <div className={styles.resolveConfirm}>
-                          <span className={styles.resolveConfirmLabel}>
-                            ✏ Resolution notes
-                          </span>
-                          <textarea
-                            className={styles.resolveNotesInput}
-                            placeholder="Describe what was done to fix this issue (optional)…"
-                            rows={3}
-                            value={resolveNotes[ticket.ticket_id] ?? ""}
-                            onChange={(e) =>
-                              setResolveNotes((prev) => ({ ...prev, [ticket.ticket_id]: e.target.value }))
-                            }
-                            autoFocus
-                          />
-                          <div className={styles.resolveConfirmActions}>
-                            <button
-                              className={styles.btnCancelResolve}
-                              onClick={() => setConfirmingTicketId(null)}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              className={styles.btnConfirmResolve}
-                              disabled={resolvingTicketId === ticket.ticket_id}
-                              onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status, resolveNotes[ticket.ticket_id] ?? "")}
-                            >
-                              {resolvingTicketId === ticket.ticket_id ? "Resolving…" : "✓ Confirm Resolve"}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
+                        <span style={{ color: "#16a34a", fontSize: "0.82rem", fontWeight: 600, marginLeft: "auto" }}>✓ Resolved</span>
+                      ) : confirmingTicketId !== ticket.ticket_id ? (
                         <button
                           className={`${styles.btn} ${styles.btnApprove}`}
+                          style={{ flex: "none", padding: "0.4rem 1rem", fontSize: "0.82rem", marginLeft: "auto" }}
                           disabled={resolvingTicketId === ticket.ticket_id}
                           onClick={() => setConfirmingTicketId(ticket.ticket_id)}
                           title="Mark this ticket as resolved"
                         >
                           ✓ Mark Resolved
                         </button>
-                      )}
+                      ) : null}
                     </div>
+
+                    {confirmingTicketId === ticket.ticket_id && (
+                      <div className={styles.resolveConfirm}>
+                        <span className={styles.resolveConfirmLabel}>
+                          ✏ Resolution notes
+                        </span>
+                        <textarea
+                          className={styles.resolveNotesInput}
+                          placeholder="Describe what was done to fix this issue (optional)…"
+                          rows={3}
+                          value={resolveNotes[ticket.ticket_id] ?? ""}
+                          onChange={(e) =>
+                            setResolveNotes((prev) => ({ ...prev, [ticket.ticket_id]: e.target.value }))
+                          }
+                          autoFocus
+                        />
+                        <div className={styles.resolveConfirmActions}>
+                          <button
+                            className={styles.btnCancelResolve}
+                            onClick={() => setConfirmingTicketId(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className={styles.btnConfirmResolve}
+                            disabled={resolvingTicketId === ticket.ticket_id}
+                            onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status, resolveNotes[ticket.ticket_id] ?? "")}
+                          >
+                            {resolvingTicketId === ticket.ticket_id ? "Resolving…" : "✓ Confirm Resolve"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
