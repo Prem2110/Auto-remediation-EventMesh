@@ -1678,31 +1678,90 @@
 .resolveConfirm {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  width: 320px;
+  gap: 0.6rem;
+  width: 340px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  animation: resolveSlideIn 0.18s ease both;
+}
+
+@keyframes resolveSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+.resolveConfirmLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #166534;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .resolveNotesInput {
   width: 100%;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 0.8rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #86efac;
+  border-radius: 7px;
+  font-size: 0.82rem;
   font-family: inherit;
   color: #111827;
   background: #fff;
   resize: vertical;
   outline: none;
   box-sizing: border-box;
-  transition: border-color 0.15s;
+  line-height: 1.5;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.resolveNotesInput:focus { border-color: #3b82f6; }
+.resolveNotesInput:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+}
+.resolveNotesInput::placeholder { color: #9ca3af; }
 
 .resolveConfirmActions {
   display: flex;
   gap: 0.5rem;
   justify-content: flex-end;
 }
+
+.btnConfirmResolve {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.38rem 0.9rem;
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.btnConfirmResolve:hover    { background: #15803d; box-shadow: 0 2px 8px rgba(22,163,74,0.3); }
+.btnConfirmResolve:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.btnCancelResolve {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.38rem 0.85rem;
+  background: #fff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btnCancelResolve:hover { background: #f3f4f6; }
 
 /* Approval Card Specific */
 .approvalSection {

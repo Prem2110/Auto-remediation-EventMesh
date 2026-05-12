@@ -1688,28 +1688,32 @@ export default function Observability() {
                         <span style={{ color: "#16a34a", fontSize: "0.82rem", fontWeight: 600 }}>✓ Resolved</span>
                       ) : confirmingTicketId === ticket.ticket_id ? (
                         <div className={styles.resolveConfirm}>
+                          <span className={styles.resolveConfirmLabel}>
+                            ✏ Resolution notes
+                          </span>
                           <textarea
                             className={styles.resolveNotesInput}
-                            placeholder="Describe what was done to fix this (optional)…"
+                            placeholder="Describe what was done to fix this issue (optional)…"
                             rows={3}
                             value={resolveNotes[ticket.ticket_id] ?? ""}
                             onChange={(e) =>
                               setResolveNotes((prev) => ({ ...prev, [ticket.ticket_id]: e.target.value }))
                             }
+                            autoFocus
                           />
                           <div className={styles.resolveConfirmActions}>
                             <button
-                              className={`${styles.btn} ${styles.btnApprove}`}
+                              className={styles.btnCancelResolve}
+                              onClick={() => setConfirmingTicketId(null)}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              className={styles.btnConfirmResolve}
                               disabled={resolvingTicketId === ticket.ticket_id}
                               onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status, resolveNotes[ticket.ticket_id] ?? "")}
                             >
                               {resolvingTicketId === ticket.ticket_id ? "Resolving…" : "✓ Confirm Resolve"}
-                            </button>
-                            <button
-                              className={`${styles.btn} ${styles.btnReject}`}
-                              onClick={() => setConfirmingTicketId(null)}
-                            >
-                              Cancel
                             </button>
                           </div>
                         </div>
