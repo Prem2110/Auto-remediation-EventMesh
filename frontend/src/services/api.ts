@@ -267,8 +267,12 @@ export async function searchKnowledge(
   return { query: errorMessage, results: scored, count: scored.length };
 }
 
-export async function fetchTickets(): Promise<{ tickets: unknown[] }> {
-  return request(`${_BASE}/autonomous/tickets`);
+export async function fetchTickets(
+  page = 1,
+  pageSize = 10,
+): Promise<{ tickets: unknown[]; total: number }> {
+  const offset = (page - 1) * pageSize;
+  return request(`${_BASE}/autonomous/tickets?limit=${pageSize}&offset=${offset}`);
 }
 
 export async function updateTicket(
@@ -297,10 +301,12 @@ export async function approveIncident(
 }
 
 export async function fetchPipelineTrace(
-  limit = 20
+  page = 1,
+  pageSize = 15,
 ): Promise<{ incidents: unknown[]; total: number }> {
+  const offset = (page - 1) * pageSize;
   const data = await request<{ incidents: unknown[]; total: number }>(
-    `${_BASE}/autonomous/incidents?limit=${limit}`,
+    `${_BASE}/autonomous/incidents?limit=${pageSize}&offset=${offset}`,
   );
   const incidents = (data.incidents ?? []).map((inc) => normalizeIncidentForUi(inc as Record<string, unknown>));
   return { incidents, total: data.total ?? incidents.length };

@@ -947,7 +947,7 @@ async def list_messages(
     Fetch incidents from the local DB — no SAP CPI OData API calls.
     All incidents originate from the Event Mesh queue via the autonomous pipeline.
     """
-    incidents = get_all_incidents(limit=limit * 3)
+    incidents = get_all_incidents(limit=limit * 3)["incidents"]
 
     messages: List[Dict] = []
     for inc in incidents:
@@ -1010,7 +1010,7 @@ async def list_messages_paginated(
     if page_size < 1 or page_size > 500:
         raise HTTPException(status_code=400, detail="Page size must be between 1 and 500")
 
-    incidents = get_all_incidents(limit=0)
+    incidents = get_all_incidents(limit=0)["incidents"]
 
     filtered_messages: List[Dict] = []
     for inc in incidents:
@@ -1836,8 +1836,9 @@ async def get_stats(mcp=Depends(_get_mcp)):
     Aggregate statistics for the Smart Monitoring dashboard header.
     """
     try:
-        all_incidents = get_all_incidents(limit=500)
-        total    = len(all_incidents)
+        _r            = get_all_incidents(limit=500)
+        all_incidents = _r["incidents"]
+        total    = _r["total"]
         resolved = sum(1 for i in all_incidents if i.get("status") in {"FIX_VERIFIED", "HUMAN_INITIATED_FIX", "RETRIED"})
         pending  = sum(1 for i in all_incidents if i.get("status") in {"AWAITING_APPROVAL", "AWAITING_HUMAN_REVIEW"})
         failed   = sum(
@@ -1882,8 +1883,8 @@ async def list_sm_incidents(
     (same data as /autonomous/incidents).
     """
     try:
-        incidents = get_all_incidents(status=status, limit=limit)
-        return {"incidents": incidents, "total": len(incidents)}
+        result = get_all_incidents(status=status, limit=limit)
+        return {"incidents": result["incidents"], "total": result["total"]}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -2059,8 +2060,8 @@ async def list_escalation_tickets(
     limit: int = 50,
 ):
     """List internal escalation tickets, optionally filtered by status or incident."""
-    tickets = get_escalation_tickets(status=status, incident_id=incident_id, limit=limit)
-    return {"tickets": tickets, "count": len(tickets)}
+    result = get_escalation_tickets(status=status, incident_id=incident_id, limit=limit)
+    return {"tickets": result["tickets"], "count": result["total"]}
 
 
 @router.get("/escalations/{ticket_id}")

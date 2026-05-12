@@ -570,11 +570,13 @@ export default function Observability() {
   const [approvalActionError, setApprovalActionError] = useState<string | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState<"approving" | "rejecting" | null>(null);
 
-  // Ticket resolution state
+  // Ticket resolution + pagination state
   const [resolvingTicketId,  setResolvingTicketId]  = useState<string | null>(null);
   const [confirmingTicketId, setConfirmingTicketId] = useState<string | null>(null);
   const [resolveNotes,       setResolveNotes]       = useState<Record<string, string>>({});
   const [ticketActionError,  setTicketActionError]  = useState<string | null>(null);
+  const [ticketPage,         setTicketPage]         = useState(1);
+  const TICKET_PAGE_SIZE = 10;
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["monitor-messages"],
@@ -585,8 +587,8 @@ export default function Observability() {
 
   // Fetch tickets
   const { data: ticketsData, isLoading: ticketsLoading, refetch: refetchTickets } = useQuery({
-    queryKey: ["escalation-tickets"],
-    queryFn: fetchTickets,
+    queryKey: ["escalation-tickets", ticketPage],
+    queryFn: () => fetchTickets(ticketPage, TICKET_PAGE_SIZE),
     refetchInterval: 30_000,
     enabled: mainTab === "tickets",
   });
@@ -639,7 +641,9 @@ export default function Observability() {
     return result;
   }, [data]);
 
-  const tickets = (ticketsData?.tickets || []) as Ticket[];
+  const tickets      = (ticketsData?.tickets || []) as Ticket[];
+  const ticketsTotal = (ticketsData?.total   ?? 0) as number;
+  const ticketPages  = Math.max(1, Math.ceil(ticketsTotal / TICKET_PAGE_SIZE));
   const approvals = (approvalsData?.pending || []) as Approval[];
 
   /* ── Approval actions ──────────────────────────────────────────────── */
@@ -712,6 +716,7 @@ export default function Observability() {
       }
       await updateTicket(ticketId, { status: "RESOLVED", resolution_notes: notes.trim() || undefined });
       setResolveNotes((prev) => { const n = { ...prev }; delete n[ticketId]; return n; });
+      setTicketPage(1);
       refetchTickets();
     } catch (e) {
       setTicketActionError(e instanceof Error ? e.message : "Failed to update ticket");
@@ -1741,6 +1746,55 @@ export default function Observability() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* ── pagination ── */}
+          {!ticketsLoading && ticketsTotal > TICKET_PAGE_SIZE && (
+            <div className={styles.ticketPagination}>
+              <span className={styles.ticketPaginationInfo}>
+                {((ticketPage - 1) * TICKET_PAGE_SIZE) + 1}–{Math.min(ticketPage * TICKET_PAGE_SIZE, ticketsTotal)} of {ticketsTotal} tickets
+              </span>
+              <div className={styles.ticketPaginationControls}>
+                <button
+                  className={styles.pageBtn}
+                  onClick={() => setTicketPage(1)}
+                  disabled={ticketPage === 1}
+                >«</button>
+                <button
+                  className={styles.pageBtn}
+                  onClick={() => setTicketPage((p) => Math.max(1, p - 1))}
+                  disabled={ticketPage === 1}
+                >‹ Prev</button>
+                {Array.from({ length: ticketPages }, (_, i) => i + 1)
+                  .filter((p) => p === 1 || p === ticketPages || Math.abs(p - ticketPage) <= 1)
+                  .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+                    acc.push(p);
+                    return acc;
+                  }, [])
+                  .map((p, i) =>
+                    p === "…" ? (
+                      <span key={`ellipsis-${i}`} className={styles.pageDots}>…</span>
+                    ) : (
+                      <button
+                        key={p}
+                        className={`${styles.pageBtn} ${ticketPage === p ? styles.pageBtnActive : ""}`}
+                        onClick={() => setTicketPage(p as number)}
+                      >{p}</button>
+                    )
+                  )}
+                <button
+                  className={styles.pageBtn}
+                  onClick={() => setTicketPage((p) => Math.min(ticketPages, p + 1))}
+                  disabled={ticketPage === ticketPages}
+                >Next ›</button>
+                <button
+                  className={styles.pageBtn}
+                  onClick={() => setTicketPage(ticketPages)}
+                  disabled={ticketPage === ticketPages}
+                >»</button>
+              </div>
             </div>
           )}
         </div>

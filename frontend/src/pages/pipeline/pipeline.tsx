@@ -38,10 +38,13 @@ interface TraceIncident {
   proposed_fix?: string;
 }
 
+const TRACE_PAGE_SIZE = 15;
+
 export default function Pipeline() {
   const qc = useQueryClient();
   const [toggling, setToggling] = useState(false);
   const [togglingAutoFix, setTogglingAutoFix] = useState(false);
+  const [tracePage, setTracePage] = useState(1);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: pipelineData } = useQuery({
@@ -57,9 +60,9 @@ export default function Pipeline() {
   });
 
   const { data: traceData } = useQuery({
-    queryKey: ["pipeline-trace"],
-    queryFn: () => fetchPipelineTrace(30),
-    refetchInterval: 15_000,   // was 6s
+    queryKey: ["pipeline-trace", tracePage],
+    queryFn: () => fetchPipelineTrace(tracePage, TRACE_PAGE_SIZE),
+    refetchInterval: 15_000,
   });
 
   // ── Pipeline control ─────────────────────────────────────────────────────
@@ -90,7 +93,9 @@ export default function Pipeline() {
   const autoFixOn = autoFixData?.auto_fix_enabled ?? true;
   const running = pipelineData?.pipeline_running ?? false;
   const agentStatuses = pipelineData?.agents ?? {};
-  const incidents: TraceIncident[] = (traceData?.incidents ?? []) as TraceIncident[];
+  const incidents: TraceIncident[]  = (traceData?.incidents ?? []) as TraceIncident[];
+  const traceTotal  = (traceData?.total ?? 0) as number;
+  const tracePages  = Math.max(1, Math.ceil(traceTotal / TRACE_PAGE_SIZE));
   const AGENT_META = SPECIALIST_AGENTS;
   const STAGE_ORDER = SPECIALIST_ORDER;
 
@@ -213,6 +218,39 @@ export default function Pipeline() {
           </table>
         )}
       </div>
+
+      {/* ── pagination ── */}
+      {traceTotal > TRACE_PAGE_SIZE && (
+        <div className={styles.pagination}>
+          <span className={styles.paginationInfo}>
+            {((tracePage - 1) * TRACE_PAGE_SIZE) + 1}–{Math.min(tracePage * TRACE_PAGE_SIZE, traceTotal)} of {traceTotal} incidents
+          </span>
+          <div className={styles.paginationControls}>
+            <button className={styles.pageBtn} onClick={() => setTracePage(1)} disabled={tracePage === 1}>«</button>
+            <button className={styles.pageBtn} onClick={() => setTracePage((p) => Math.max(1, p - 1))} disabled={tracePage === 1}>‹ Prev</button>
+            {Array.from({ length: tracePages }, (_, i) => i + 1)
+              .filter((p) => p === 1 || p === tracePages || Math.abs(p - tracePage) <= 1)
+              .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+                acc.push(p);
+                return acc;
+              }, [])
+              .map((p, i) =>
+                p === "…" ? (
+                  <span key={`ellipsis-${i}`} className={styles.pageDots}>…</span>
+                ) : (
+                  <button
+                    key={p}
+                    className={`${styles.pageBtn} ${tracePage === p ? styles.pageBtnActive : ""}`}
+                    onClick={() => setTracePage(p as number)}
+                  >{p}</button>
+                )
+              )}
+            <button className={styles.pageBtn} onClick={() => setTracePage((p) => Math.min(tracePages, p + 1))} disabled={tracePage === tracePages}>Next ›</button>
+            <button className={styles.pageBtn} onClick={() => setTracePage(tracePages)} disabled={tracePage === tracePages}>»</button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

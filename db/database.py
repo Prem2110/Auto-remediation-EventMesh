@@ -778,21 +778,30 @@ def update_incident(incident_id: str, updates: Dict):
         raise
 
 
-def get_all_incidents(status: Optional[str] = None, limit: int = 50) -> List[Dict]:
+def get_all_incidents(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Dict:
+    """Returns {"incidents": [...], "total": int}."""
     try:
         conn = get_connection()
         cur  = conn.cursor()
-        src = f'SELECT * FROM "{_INCIDENTS_TABLE}"'
-        if status:
-            if limit and limit > 0:
-                cur.execute(f"{src} WHERE status=? ORDER BY created_at DESC LIMIT ?", (status, limit))
-            else:
-                cur.execute(f"{src} WHERE status=? ORDER BY created_at DESC", (status,))
+        src   = f'"{_INCIDENTS_TABLE}"'
+        where = "WHERE status=?" if status else ""
+        base_params: list = [status] if status else []
+
+        cur.execute(f"SELECT COUNT(*) FROM {src} {where}", base_params)
+        total = int(cur.fetchone()[0])
+
+        if limit and limit > 0:
+            cur.execute(
+                f"SELECT * FROM {src} {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (*base_params, limit, offset),
+            )
         else:
-            if limit and limit > 0:
-                cur.execute(f"{src} ORDER BY created_at DESC LIMIT ?", (limit,))
-            else:
-                cur.execute(f"{src} ORDER BY created_at DESC")
+            cur.execute(f"SELECT * FROM {src} {where} ORDER BY created_at DESC", base_params)
+
         rows = []
         for d in _rows_to_dicts(cur):
             if isinstance(d.get("tags"), str):
@@ -802,7 +811,7 @@ def get_all_incidents(status: Optional[str] = None, limit: int = 50) -> List[Dic
                     pass
             rows.append(d)
         conn.close()
-        return rows
+        return {"incidents": rows, "total": total}
     except Exception as e:
         logger.error(f"get_all_incidents: {e}")
         return []
@@ -1236,8 +1245,10 @@ def create_escalation_ticket(data: Dict) -> str:
 def get_escalation_tickets(
     status: Optional[str] = None,
     incident_id: Optional[str] = None,
-    limit: int = 50,
-) -> List[Dict]:
+    limit: int = 20,
+    offset: int = 0,
+) -> Dict:
+    """Returns {"tickets": [...], "total": int}."""
     try:
         conn       = get_connection()
         cur        = conn.cursor()
@@ -1250,16 +1261,20 @@ def get_escalation_tickets(
             conditions.append("incident_id=?")
             params.append(incident_id)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        cur.execute(f'SELECT COUNT(*) FROM "{_TICKETS_TABLE}" {where}', params)
+        total = int(cur.fetchone()[0])
+
         cur.execute(
-            f'SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY created_at DESC LIMIT ?',
-            (*params, limit),
+            f'SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            (*params, limit, offset),
         )
         rows = _rows_to_dicts(cur)
         conn.close()
-        return rows
+        return {"tickets": rows, "total": total}
     except Exception as e:
         logger.error(f"get_escalation_tickets: {e}")
-        return []
+        return {"tickets": [], "total": 0}
 
 
 def get_escalation_ticket_by_id(ticket_id: str) -> Optional[Dict]:

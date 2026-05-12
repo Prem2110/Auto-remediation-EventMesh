@@ -214,7 +214,7 @@ async def _run_pending_deploy_sweeper() -> None:
             logger.info("[SWEEPER] Cancelled - stopping.")
             raise
         try:
-            pending = get_all_incidents(status="FIX_APPLIED_PENDING_VERIFICATION", limit=10)
+            pending = get_all_incidents(status="FIX_APPLIED_PENDING_VERIFICATION", limit=10)["incidents"]
             if not pending:
                 continue
             logger.info("[SWEEPER] Found %d pending-deploy incident(s) — retrying", len(pending))
@@ -450,11 +450,11 @@ async def query_endpoint(
 
         fix_triggered = False
         if _has_fix_intent(req.query):
-            pending     = get_all_incidents(status="AWAITING_APPROVAL", limit=5)
-            rca_done    = get_all_incidents(status="RCA_COMPLETE", limit=5)
-            fix_failed  = get_all_incidents(status="FIX_FAILED", limit=5)
-            fix_failed_deploy = get_all_incidents(status="FIX_FAILED_DEPLOY", limit=3)
-            fix_failed_update = get_all_incidents(status="FIX_FAILED_UPDATE", limit=3)
+            pending     = get_all_incidents(status="AWAITING_APPROVAL",              limit=5)["incidents"]
+            rca_done    = get_all_incidents(status="RCA_COMPLETE",                   limit=5)["incidents"]
+            fix_failed  = get_all_incidents(status="FIX_FAILED",                     limit=5)["incidents"]
+            fix_failed_deploy = get_all_incidents(status="FIX_FAILED_DEPLOY",        limit=3)["incidents"]
+            fix_failed_update = get_all_incidents(status="FIX_FAILED_UPDATE",        limit=3)["incidents"]
             candidates  = pending + rca_done + fix_failed + fix_failed_deploy + fix_failed_update
 
             matched_incident = None
@@ -864,13 +864,11 @@ async def list_loaded_tools(server: Optional[str] = None):
 # ─────────────────────────────────────────────
 
 @app.get("/autonomous/incidents")
-async def get_incidents(status: Optional[str] = None, limit: int = 50):
+async def get_incidents(status: Optional[str] = None, limit: int = 20, offset: int = 0):
     try:
-        incidents = get_all_incidents(status=status, limit=limit)
+        result = get_all_incidents(status=status, limit=limit, offset=offset)
+        incidents = result["incidents"]
         def _is_sap_guid(value: str) -> bool:
-            # SAP artifact GUIDs are 20+ char alphanumeric strings with no spaces,
-            # underscores, or hyphens — e.g. "AGeNKJ3Th6DlBzQ2v9X1". Human-readable
-            # iFlow names always contain at least one underscore, hyphen, or space.
             import re
             return bool(value) and len(value) >= 18 and bool(re.fullmatch(r"[A-Za-z0-9]{18,}", value))
 
@@ -880,7 +878,7 @@ async def get_incidents(status: Optional[str] = None, limit: int = 50):
                 inc["iflow_name"] = (
                     "" if _is_sap_guid(raw_id) else raw_id
                 ) or inc.get("integration_flow_name") or ""
-        return {"incidents": incidents, "total": len(incidents)}
+        return {"incidents": incidents, "total": result["total"]}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -1059,7 +1057,7 @@ def _auto_create_ticket(
 ) -> None:
     """Create an EM_ESCALATION_TICKETS row after a fix failure, idempotently."""
     try:
-        existing = get_escalation_tickets(incident_id=incident_id, limit=1)
+        existing = get_escalation_tickets(incident_id=incident_id, limit=1)["tickets"]
         if existing:
             return
         error_type = (incident.get("error_type") or "UNKNOWN").upper()
@@ -1094,10 +1092,14 @@ def _auto_create_ticket(
 
 
 @app.get("/autonomous/tickets")
-async def list_escalation_tickets(status: Optional[str] = None, limit: int = 50):
+async def list_escalation_tickets(
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+):
     try:
-        tickets = get_escalation_tickets(status=status, limit=limit)
-        return {"tickets": tickets}
+        result = get_escalation_tickets(status=status, limit=limit, offset=offset)
+        return {"tickets": result["tickets"], "total": result["total"]}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -1753,7 +1755,7 @@ async def db_test():
         })
         fetched = get_incident_by_id(test_id)
         return {"create": "OK" if fetched else "FAILED", "fetch": fetched,
-                "total": len(get_all_incidents())}
+                "total": get_all_incidents(limit=1)["total"]}
     except Exception as exc:
         return {"error": str(exc), "traceback": traceback.format_exc()}
 

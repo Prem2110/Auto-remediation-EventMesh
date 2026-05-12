@@ -1503,6 +1503,54 @@
   gap: 1rem;
 }
 
+/* ── ticket pagination ── */
+.ticketPagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.ticketPaginationInfo {
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+.ticketPaginationControls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pageBtn {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pageBtn:hover:not(:disabled) { background: #f3f4f6; border-color: #d1d5db; }
+.pageBtn:disabled              { opacity: 0.4; cursor: not-allowed; }
+.pageBtnActive                 { background: #1e3a5f !important; color: #fff !important; border-color: #1e3a5f !important; }
+
+.pageDots {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  padding: 0 0.25rem;
+}
+
 .ticketCard,
 .approvalCard {
   background: #fff;
