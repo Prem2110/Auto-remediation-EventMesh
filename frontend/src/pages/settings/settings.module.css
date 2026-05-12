@@ -1,0 +1,425 @@
+/* ── page shell ── */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem 2rem;
+  animation: fadeIn 0.25s ease both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* ── header ── */
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.pageTitle {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--orbit-gray-900, #111827);
+  margin: 0 0 0.25rem;
+  display: flex;
+  align-items: center;
+}
+
+.pageSubtitle {
+  font-size: 0.82rem;
+  color: var(--orbit-gray-500, #6b7280);
+  margin: 0;
+}
+
+/* ── impact legend ── */
+.impactLegend {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── toast ── */
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  width: fit-content;
+  animation: fadeIn 0.2s ease;
+}
+.toastOk  { background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; }
+.toastErr { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; }
+
+/* ── disclaimer ── */
+.disclaimer {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.85rem 1.1rem;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 9px;
+  font-size: 0.8rem;
+  color: #78350f;
+  line-height: 1.55;
+}
+.disclaimer strong { color: #92400e; }
+.disclaimer code   { font-size: 0.75rem; background: #fef3c7; padding: 0.1rem 0.35rem; border-radius: 4px; }
+
+/* ── effective note inside row meta ── */
+.effectiveNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.2rem;
+  color: #1d4ed8 !important;
+}
+.effectiveNote strong { color: #1e40af; }
+
+/* ── group filter tabs ── */
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.6rem;
+}
+
+.tab {
+  padding: 0.3rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--orbit-gray-500, #6b7280);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tab:hover    { background: #f3f4f6; color: #111827; }
+.tabActive    { background: #1e3a5f; color: #fff; border-color: #1e3a5f; }
+
+/* ── loading / error state ── */
+.state      { padding: 2rem; text-align: center; color: #6b7280; font-size: 0.9rem; }
+.stateError { color: #b91c1c; }
+
+/* ── settings list ── */
+.settingsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ── individual row ── */
+.row {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  transition: border-color 0.15s;
+}
+.row:hover       { border-color: #93c5fd; }
+.rowOverridden   { border-left: 3px solid #3b82f6; }
+
+.rowLeft {
+  flex: 1;
+  min-width: 0;
+}
+
+.rowHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.2rem;
+}
+
+.rowLabel {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.rowKey {
+  display: block;
+  font-size: 0.73rem;
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  color: #6b7280;
+  margin-bottom: 0.4rem;
+}
+
+.rowDesc {
+  font-size: 0.82rem;
+  color: #374151;
+  line-height: 1.5;
+  margin: 0 0 0.5rem;
+}
+
+.rowMeta {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.metaItem {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+.metaItem strong { color: #6b7280; }
+
+/* ── right column ── */
+.rowRight {
+  flex-shrink: 0;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ── value display ── */
+.valueBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.currentValue code {
+  display: block;
+  padding: 0.35rem 0.6rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: #111827;
+  word-break: break-all;
+}
+
+.jsonPreview {
+  display: block;
+  white-space: pre;
+  overflow: auto;
+  max-height: 160px;
+  font-size: 0.72rem !important;
+  padding: 0.5rem !important;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  color: #111827;
+}
+
+.valueActions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+/* ── edit block ── */
+.editBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.input {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: #111827;
+  background: #fff;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input:focus { border-color: #3b82f6; }
+
+.textarea {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  color: #111827;
+  background: #fff;
+  box-sizing: border-box;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.textarea:focus  { border-color: #3b82f6; }
+.inputError      { border-color: #f87171 !important; }
+
+.errorMsg {
+  font-size: 0.72rem;
+  color: #b91c1c;
+}
+
+.editActions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+/* ── buttons ── */
+.btnEdit, .btnReset, .btnSave, .btnCancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+.btnEdit   { background: #f3f4f6; color: #374151; border-color: #e5e7eb; }
+.btnEdit:hover   { background: #e5e7eb; }
+.btnReset  { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.btnReset:hover  { background: #fde68a; }
+.btnSave   { background: #1e3a5f; color: #fff; }
+.btnSave:hover   { background: #1e4070; }
+.btnCancel { background: #f3f4f6; color: #374151; border-color: #e5e7eb; }
+.btnCancel:hover { background: #e5e7eb; }
+button:disabled  { opacity: 0.5; cursor: not-allowed; }
+
+/* ── impact badges ── */
+.impactBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.impactHigh   { background: #fee2e2; color: #991b1b; }
+.impactMedium { background: #fef3c7; color: #92400e; }
+.impactLow    { background: #e0f2fe; color: #0369a1; }
+
+.overriddenBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+/* ── remediation policies section ── */
+.section {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.sectionTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.3rem;
+}
+
+.sectionDesc {
+  font-size: 0.8rem;
+  color: #374151;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.policyControls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+/* ── policy table ── */
+.policyTable {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.policyHeader {
+  display: grid;
+  grid-template-columns: 1fr 180px 120px;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.policyRow {
+  display: grid;
+  grid-template-columns: 1fr 180px 120px;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 0.82rem;
+}
+.policyRow:last-child { border-bottom: none; }
+.policyRow:hover { background: #f9fafb; }
+
+.errorTypeLabel {
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  font-size: 0.76rem;
+  color: #374151;
+  font-weight: 600;
+}
+
+.policySelect {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  color: #111827;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+}
+.policySelect:focus { border-color: #3b82f6; }
+
+.toggleLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: #374151;
+}
+
+.toggleText { font-weight: 600; }

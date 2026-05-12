@@ -8,6 +8,7 @@ import MigrationWizard from "./pages/migration-wizard/migration-wizard.tsx";
 import PipoList from "./pages/pipo-list/pipo-list.tsx";
 import Dashboard from "./pages/dashboard/dashboard.tsx";
 import Pipeline from "./pages/pipeline/pipeline.tsx";
+import Settings from "./pages/settings/settings.tsx";
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/migration" element={<MigrationWizard />} />
         <Route path="/pipo" element={<PipoList />} />
         <Route path="/pipeline" element={<Pipeline />} />
+        <Route path="/settings" element={<Settings />} />
       </Routes>
     </ShellLayout>
   );

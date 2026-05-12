@@ -39,6 +39,7 @@ flowchart LR
 | Lock handling | Detects "iFlow is locked" and auto-unlocks before retrying |
 | Rollback-ready snapshots | Captures iFlow XML before any change for rollback reference |
 | AEM event streaming | Publishes fix lifecycle events to SAP Event Mesh |
+| **Runtime Settings UI** | Operator-facing settings page to tune all fix behaviour, thresholds, and remediation policies live — no restart or code change required |
 
 ---
 
@@ -55,6 +56,47 @@ flowchart LR
 | Async | `asyncio` / `httpx` |
 | Python | `>=3.13` |
 | Logging | `structlog` + rotating file handlers |
+
+---
+
+---
+
+## Runtime Settings
+
+All key operational constants can now be changed live through the **Settings** page in the Orbit UI (`/settings`) or directly via the REST API — no restart or code deployment required.
+
+### How it works
+
+A `RuntimeConfig` singleton (`core/runtime_config.py`) sits on top of the compiled constants. At startup it reads any persisted overrides from the `EM_RUNTIME_SETTINGS` HANA table. Every agent and the fix pipeline reads from this singleton at call time, so a change takes effect on the next incident, cycle, or tool call.
+
+### Settings available
+
+| Setting | Default | Impact | Takes Effect |
+|---|---|---|---|
+| Auto-Fix Confidence Threshold | `0.90` | High | Next fix-gate decision |
+| Suggest-Fix Confidence Threshold | `0.70` | High | Next fix-gate decision |
+| Enable Autonomous Fixing | `true` | High | **Immediate** |
+| Auto-Deploy After Fix | `true` | High | Next fix reaching deploy step |
+| Circuit Breaker Threshold | `5` | High | Next error on an existing iFlow |
+| MCP Tool Retry Attempts | `3` | Medium | Next failed MCP tool call |
+| Failed Message Fetch Limit | `100` | Medium | Next poll cycle |
+| Max Unique Errors Per Cycle | `25` | Medium | Next poll cycle |
+| Detail Fetch Concurrency | `8` | Low | Next poll cycle |
+| Burst Dedup Window (seconds) | `60` | Medium | Next incoming event |
+| Approval Timeout (hours) | `24` | Medium | Next approval sweep |
+| Remediation Policies (per error type) | see defaults | High | Next fix-gate decision |
+
+### API endpoints
+
+```
+GET    /settings          — return all settings with current values and schema metadata
+PATCH  /settings          — update one or more settings   body: { "KEY": value, ... }
+DELETE /settings/{key}    — reset a single setting to its compiled default
+```
+
+### Database
+
+Overrides are persisted in the `EM_RUNTIME_SETTINGS` HANA table (auto-created on first startup). Each row stores the key, serialised value, data type, and who last updated it.
 
 ---
 

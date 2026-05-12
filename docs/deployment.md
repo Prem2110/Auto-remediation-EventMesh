@@ -146,14 +146,76 @@ A `/metrics` endpoint is available if `prometheus-client` is installed. Scrape i
 
 ---
 
+## Runtime Settings
+
+The application ships with a live settings system that lets operators tune all key constants without restarting or redeploying.
+
+### What is auto-created on startup
+
+On every startup the application calls `ensure_settings_schema()`, which creates the `EM_RUNTIME_SETTINGS` HANA table if it does not exist:
+
+```sql
+CREATE TABLE "EM_RUNTIME_SETTINGS" (
+    SETTING_KEY   NVARCHAR(100) PRIMARY KEY,
+    SETTING_VALUE NCLOB,
+    DATA_TYPE     NVARCHAR(20),
+    UPDATED_AT    NVARCHAR(64),
+    UPDATED_BY    NVARCHAR(200)
+)
+```
+
+No manual migration is needed. The table name can be overridden with `HANA_TABLE_EM_SETTINGS` environment variable.
+
+### Configuring settings after deployment
+
+Use the UI settings page (`/settings`) or the REST API directly:
+
+```bash
+# View all settings
+curl https://<backend-url>/settings
+
+# Update the circuit breaker threshold
+curl -X PATCH https://<backend-url>/settings \
+  -H "Content-Type: application/json" \
+  -d '{"MAX_CONSECUTIVE_FAILURES": 3}'
+
+# Turn off autonomous fixing immediately (takes effect at once, no restart)
+curl -X PATCH https://<backend-url>/settings \
+  -H "Content-Type: application/json" \
+  -d '{"AUTO_FIX_ALL_CPI_ERRORS": false}'
+
+# Reset a setting to its compiled default
+curl -X DELETE https://<backend-url>/settings/MAX_CONSECUTIVE_FAILURES
+```
+
+### Settings that do NOT require environment variables
+
+The following values were previously only configurable via `.env` restage. They can now be changed live:
+
+| Setting key | Previous mechanism | Now |
+|---|---|---|
+| `AUTO_FIX_CONFIDENCE` | `.env` / CF env var | UI / API (live) |
+| `SUGGEST_FIX_CONFIDENCE` | `.env` / CF env var | UI / API (live) |
+| `AUTO_FIX_ALL_CPI_ERRORS` | `.env` / CF env var | UI / API (**immediate**) |
+| `AUTO_DEPLOY_AFTER_FIX` | `.env` / CF env var | UI / API (live) |
+| `MAX_CONSECUTIVE_FAILURES` | `.env` / CF env var | UI / API (live) |
+| `BURST_DEDUP_WINDOW_SECONDS` | `.env` / CF env var | UI / API (live) |
+| `PENDING_APPROVAL_TIMEOUT_HRS` | `.env` / CF env var | UI / API (live) |
+| `REMEDIATION_POLICIES` | code change + redeploy | UI / API (live) |
+
+Environment variables in `.env` or CF still work and serve as the compiled default. DB overrides take precedence at runtime.
+
+---
+
 ## Security Checklist
 
 - [ ] All secrets in environment variables — `.env` is not committed to git
 - [ ] MCP server connections use `verify=True` (SSL)
 - [ ] `AUTONOMOUS_ENABLED` is explicitly set (not accidentally left `true` in dev)
-- [ ] `AUTO_FIX_CONFIDENCE` set to `0.90` or higher for production
+- [ ] `AUTO_FIX_CONFIDENCE` set to `0.90` or higher for production (via UI Settings or env var)
 - [ ] Log level set to `INFO` (not `DEBUG`) in production to avoid leaking payloads
 - [ ] `.env.example` committed; `.env` in `.gitignore`
+- [ ] Access to `PATCH /settings` and `DELETE /settings/{key}` restricted to authorised operators (add auth middleware if the app is publicly reachable)
 
 ---
 

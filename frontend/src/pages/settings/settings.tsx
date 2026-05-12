@@ -1,0 +1,456 @@
+import { useState, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  fetchSettings,
+  patchSettings,
+  resetSetting,
+  type SettingSchema,
+} from "../../services/api.ts";
+import SvgIcon from "../../components/icons/SvgIcon.tsx";
+import styles from "./settings.module.css";
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function impactColor(impact: string) {
+  if (impact === "high")   return styles.impactHigh;
+  if (impact === "medium") return styles.impactMedium;
+  return styles.impactLow;
+}
+
+function formatDefault(v: unknown, type: string): string {
+  if (type === "json") return JSON.stringify(v, null, 2);
+  if (type === "bool") return String(v);
+  return String(v);
+}
+
+// ── per-setting row ───────────────────────────────────────────────────────────
+
+interface SettingRowProps {
+  setting: SettingSchema;
+  onSave: (key: string, value: unknown) => Promise<void>;
+  onReset: (key: string) => Promise<void>;
+  saving: string | null;
+}
+
+function SettingRow({ setting, onSave, onReset, saving }: SettingRowProps) {
+  const [editing, setEditing]   = useState(false);
+  const [localVal, setLocalVal] = useState<string>("");
+  const [jsonError, setJsonError] = useState<string>("");
+
+  const isBusy = saving === setting.key;
+
+  function startEdit() {
+    setLocalVal(
+      setting.type === "json"
+        ? JSON.stringify(setting.current_value, null, 2)
+        : String(setting.current_value)
+    );
+    setJsonError("");
+    setEditing(true);
+  }
+
+  function cancel() {
+    setEditing(false);
+    setJsonError("");
+  }
+
+  async function save() {
+    let parsed: unknown = localVal;
+    if (setting.type === "int")   { parsed = parseInt(localVal, 10); if (isNaN(parsed as number)) return; }
+    if (setting.type === "float") { parsed = parseFloat(localVal);   if (isNaN(parsed as number)) return; }
+    if (setting.type === "bool")  { parsed = localVal.toLowerCase() === "true"; }
+    if (setting.type === "json")  {
+      try { parsed = JSON.parse(localVal); } catch { setJsonError("Invalid JSON"); return; }
+    }
+    await onSave(setting.key, parsed);
+    setEditing(false);
+  }
+
+  const displayValue =
+    setting.type === "json"
+      ? "[object]"
+      : setting.type === "bool"
+      ? String(setting.current_value)
+      : String(setting.current_value);
+
+  return (
+    <div className={`${styles.row} ${setting.is_overridden ? styles.rowOverridden : ""}`}>
+      {/* left: label + badges + description */}
+      <div className={styles.rowLeft}>
+        <div className={styles.rowHeader}>
+          <span className={styles.rowLabel}>{setting.label}</span>
+          <span className={`${styles.impactBadge} ${impactColor(setting.impact)}`}>
+            {setting.impact} impact
+          </span>
+          {setting.is_overridden && (
+            <span className={styles.overriddenBadge}>customised</span>
+          )}
+        </div>
+        <span className={styles.rowKey}>{setting.key}</span>
+        <p className={styles.rowDesc}>{setting.description}</p>
+        <div className={styles.rowMeta}>
+          <span className={styles.metaItem}>
+            <strong>Default:</strong> {formatDefault(setting.default, setting.type)}
+          </span>
+          <span className={`${styles.metaItem} ${styles.effectiveNote}`}>
+            <SvgIcon name="lightning" size={11} style={{ marginRight: 3 }} />
+            <strong>Takes effect:</strong> {setting.when_effective}
+          </span>
+        </div>
+      </div>
+
+      {/* right: value + controls */}
+      <div className={styles.rowRight}>
+        {editing ? (
+          <div className={styles.editBlock}>
+            {setting.type === "bool" ? (
+              <select
+                className={styles.input}
+                value={localVal}
+                onChange={(e) => setLocalVal(e.target.value)}
+              >
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            ) : setting.type === "json" ? (
+              <>
+                <textarea
+                  className={`${styles.textarea} ${jsonError ? styles.inputError : ""}`}
+                  value={localVal}
+                  onChange={(e) => { setLocalVal(e.target.value); setJsonError(""); }}
+                  rows={10}
+                  spellCheck={false}
+                />
+                {jsonError && <span className={styles.errorMsg}>{jsonError}</span>}
+              </>
+            ) : (
+              <input
+                className={styles.input}
+                type={setting.type === "float" ? "number" : setting.type === "int" ? "number" : "text"}
+                step={setting.type === "float" ? "0.01" : undefined}
+                value={localVal}
+                onChange={(e) => setLocalVal(e.target.value)}
+              />
+            )}
+            <div className={styles.editActions}>
+              <button
+                className={styles.btnSave}
+                onClick={save}
+                disabled={isBusy}
+              >
+                {isBusy ? "Saving…" : "Save"}
+              </button>
+              <button className={styles.btnCancel} onClick={cancel}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.valueBlock}>
+            <span className={styles.currentValue}>
+              {setting.type === "json" ? (
+                <code className={styles.jsonPreview}>
+                  {JSON.stringify(setting.current_value, null, 2)}
+                </code>
+              ) : (
+                <code>{displayValue}</code>
+              )}
+            </span>
+            <div className={styles.valueActions}>
+              <button className={styles.btnEdit} onClick={startEdit} disabled={isBusy}>
+                <SvgIcon name="wrench" size={13} /> Edit
+              </button>
+              {setting.is_overridden && (
+                <button
+                  className={styles.btnReset}
+                  onClick={() => onReset(setting.key)}
+                  disabled={isBusy}
+                  title="Reset to default"
+                >
+                  <SvgIcon name="refresh" size={13} /> Reset
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── policy table editor ────────────────────────────────────────────────────────
+
+const POLICY_ACTIONS = ["AUTO_FIX", "APPROVAL", "RETRY", "TICKET_CREATED"] as const;
+
+interface PolicyEditorProps {
+  policies: Record<string, { action: string; replay_after_fix: boolean }>;
+  onChange: (updated: Record<string, { action: string; replay_after_fix: boolean }>) => void;
+}
+
+function PolicyEditor({ policies, onChange }: PolicyEditorProps) {
+  return (
+    <div className={styles.policyTable}>
+      <div className={styles.policyHeader}>
+        <span>Error Type</span>
+        <span>Action</span>
+        <span>Replay After Fix</span>
+      </div>
+      {Object.entries(policies).map(([errorType, policy]) => (
+        <div key={errorType} className={styles.policyRow}>
+          <span className={styles.errorTypeLabel}>{errorType}</span>
+          <select
+            className={styles.policySelect}
+            value={policy.action}
+            onChange={(e) =>
+              onChange({ ...policies, [errorType]: { ...policy, action: e.target.value } })
+            }
+          >
+            {POLICY_ACTIONS.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+          <label className={styles.toggleLabel}>
+            <input
+              type="checkbox"
+              checked={policy.replay_after_fix}
+              onChange={(e) =>
+                onChange({ ...policies, [errorType]: { ...policy, replay_after_fix: e.target.checked } })
+              }
+            />
+            <span className={styles.toggleText}>{policy.replay_after_fix ? "Yes" : "No"}</span>
+          </label>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── main page ─────────────────────────────────────────────────────────────────
+
+export default function Settings() {
+  const qc = useQueryClient();
+  const [saving,   setSaving]   = useState<string | null>(null);
+  const [toast,    setToast]    = useState<{ msg: string; ok: boolean } | null>(null);
+  const [filter,   setFilter]   = useState<string>("All");
+
+  // policy editor local state (separate because it has its own inline editor)
+  const [editingPolicies, setEditingPolicies] = useState(false);
+  const [localPolicies,   setLocalPolicies]   = useState<Record<string, { action: string; replay_after_fix: boolean }>>({});
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["settings"],
+    queryFn: fetchSettings,
+    staleTime: 60_000,
+  });
+
+  const allSettings = data?.settings ?? [];
+
+  const groups = useMemo(
+    () => ["All", ...Array.from(new Set(allSettings.map((s) => s.group)))],
+    [allSettings]
+  );
+
+  const visible = filter === "All"
+    ? allSettings
+    : allSettings.filter((s) => s.group === filter);
+
+  // separate policy setting from the rest
+  const nonPolicies = visible.filter((s) => s.key !== "REMEDIATION_POLICIES");
+  const policySetting = allSettings.find((s) => s.key === "REMEDIATION_POLICIES");
+
+  function showToast(msg: string, ok: boolean) {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3500);
+  }
+
+  async function handleSave(key: string, value: unknown) {
+    setSaving(key);
+    try {
+      const result = await patchSettings({ [key]: value });
+      if (result.errors.length > 0) {
+        showToast(`Error: ${result.errors[0].error}`, false);
+      } else {
+        await qc.invalidateQueries({ queryKey: ["settings"] });
+        showToast(`${key} updated`, true);
+      }
+    } catch (e) {
+      showToast(String(e), false);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function handleReset(key: string) {
+    setSaving(key);
+    try {
+      await resetSetting(key);
+      await qc.invalidateQueries({ queryKey: ["settings"] });
+      showToast(`${key} reset to default`, true);
+    } catch (e) {
+      showToast(String(e), false);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  function startPolicyEdit() {
+    const current = (policySetting?.current_value ?? policySetting?.default) as Record<
+      string,
+      { action: string; replay_after_fix: boolean }
+    >;
+    setLocalPolicies(JSON.parse(JSON.stringify(current)));
+    setEditingPolicies(true);
+  }
+
+  async function savePolicies() {
+    await handleSave("REMEDIATION_POLICIES", localPolicies);
+    setEditingPolicies(false);
+  }
+
+  return (
+    <div className={styles.page}>
+      {/* ── header ── */}
+      <div className={styles.pageHeader}>
+        <div>
+          <h1 className={styles.pageTitle}>
+            <SvgIcon name="settings" size={22} style={{ marginRight: 8 }} />
+            Runtime Settings
+          </h1>
+          <p className={styles.pageSubtitle}>
+            Changes apply immediately — no restart required. All overrides are persisted to the database.
+          </p>
+        </div>
+        <div className={styles.impactLegend}>
+          <span className={`${styles.impactBadge} ${styles.impactHigh}`}>high impact</span>
+          <span className={`${styles.impactBadge} ${styles.impactMedium}`}>medium impact</span>
+          <span className={`${styles.impactBadge} ${styles.impactLow}`}>low impact</span>
+        </div>
+      </div>
+
+      {/* ── disclaimer ── */}
+      <div className={styles.disclaimer}>
+        <SvgIcon name="warning" size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+        <div>
+          <strong>When do changes take effect?</strong> Every setting is saved to the database
+          immediately and loaded into memory. However, most changes only apply to the{" "}
+          <em>next</em> incident, cycle, or tool call — they do not interrupt work already in
+          progress. The only exception is <code>Enable Autonomous Fixing</code>, which takes
+          effect instantly across all agents. Each setting row shows its specific timing below
+          the description.
+        </div>
+      </div>
+
+      {/* ── toast ── */}
+      {toast && (
+        <div className={`${styles.toast} ${toast.ok ? styles.toastOk : styles.toastErr}`}>
+          <SvgIcon name={toast.ok ? "check-circle" : "warning"} size={15} />
+          {toast.msg}
+        </div>
+      )}
+
+      {/* ── group filter tabs ── */}
+      <div className={styles.tabs}>
+        {groups.map((g) => (
+          <button
+            key={g}
+            className={`${styles.tab} ${filter === g ? styles.tabActive : ""}`}
+            onClick={() => setFilter(g)}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
+
+      {/* ── loading / error ── */}
+      {isLoading && <div className={styles.state}>Loading settings…</div>}
+      {error   && <div className={`${styles.state} ${styles.stateError}`}>Failed to load settings.</div>}
+
+      {/* ── non-policy settings ── */}
+      {!isLoading && !error && (
+        <div className={styles.settingsList}>
+          {nonPolicies.map((s) => (
+            <SettingRow
+              key={s.key}
+              setting={s}
+              onSave={handleSave}
+              onReset={handleReset}
+              saving={saving}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── remediation policies ── */}
+      {!isLoading && !error && policySetting && (filter === "All" || filter === "Remediation Policies") && (
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h2 className={styles.sectionTitle}>Remediation Policies</h2>
+              <p className={styles.sectionDesc}>
+                {policySetting.description}
+              </p>
+              <p className={styles.sectionDesc} style={{ marginTop: 6 }}>
+                <strong>Action meanings:</strong>{" "}
+                <span><code>AUTO_FIX</code> — agent applies fix automatically. </span>
+                <span><code>APPROVAL</code> — fix is staged and waits for human approval. </span>
+                <span><code>RETRY</code> — the failed message is retried without changing the iFlow. </span>
+                <span><code>TICKET_CREATED</code> — a support ticket is raised; no fix is attempted. </span>
+                <strong>Replay After Fix</strong> — when enabled, the original failed message is
+                re-submitted to the iFlow after a successful fix.
+              </p>
+            </div>
+            <div className={styles.policyControls}>
+              <span className={`${styles.impactBadge} ${styles.impactHigh}`}>high impact</span>
+              {policySetting.is_overridden && (
+                <span className={styles.overriddenBadge}>customised</span>
+              )}
+              {!editingPolicies ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className={styles.btnEdit} onClick={startPolicyEdit}>
+                    <SvgIcon name="wrench" size={13} /> Edit policies
+                  </button>
+                  {policySetting.is_overridden && (
+                    <button
+                      className={styles.btnReset}
+                      onClick={() => handleReset("REMEDIATION_POLICIES")}
+                      disabled={saving === "REMEDIATION_POLICIES"}
+                    >
+                      <SvgIcon name="refresh" size={13} /> Reset
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className={styles.btnSave}
+                    onClick={savePolicies}
+                    disabled={saving === "REMEDIATION_POLICIES"}
+                  >
+                    {saving === "REMEDIATION_POLICIES" ? "Saving…" : "Save policies"}
+                  </button>
+                  <button className={styles.btnCancel} onClick={() => setEditingPolicies(false)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {editingPolicies ? (
+            <PolicyEditor policies={localPolicies} onChange={setLocalPolicies} />
+          ) : (
+            <PolicyEditor
+              policies={
+                (policySetting.current_value ?? policySetting.default) as Record<
+                  string,
+                  { action: string; replay_after_fix: boolean }
+                >
+              }
+              onChange={() => {}}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

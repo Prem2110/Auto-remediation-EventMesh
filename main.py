@@ -64,6 +64,7 @@ from core.constants import (
     SUGGEST_FIX_CONFIDENCE,
 )
 from core.mcp_manager import MultiMCP
+from core.runtime_config import cfg as _runtime_cfg, SETTINGS_SCHEMA
 from core.state import FIX_PROGRESS, RUNTIME_FLAGS, get_fix_progress
 
 # ─────────────────────────────────────────────
@@ -110,6 +111,10 @@ from db.database import (
     increment_incident_occurrence,
     ensure_em_schema,
     ensure_fix_patterns_schema,
+    ensure_settings_schema,
+    get_all_settings,
+    upsert_setting,
+    delete_setting,
     set_db_source,
 )
 from storage.storage import upload_multiple_files
@@ -249,6 +254,8 @@ async def lifespan(app: FastAPI):
     # Create Event Mesh tables on startup (no-op if they already exist)
     ensure_em_schema()
     ensure_fix_patterns_schema()
+    ensure_settings_schema()
+    _runtime_cfg.load_from_db()
 
     # Register in-process pipeline fallback handlers.
     # These fire via _dispatch_local ONLY when EventMesh REST publish fails or is disabled,
@@ -723,6 +730,79 @@ async def autonomous_status():
     }
 
 
+# ─────────────────────────────────────────────
+# RUNTIME SETTINGS
+# ─────────────────────────────────────────────
+
+@app.get("/settings")
+async def get_settings():
+    """Return all tunable runtime settings with their current values and schema metadata."""
+    return {"settings": _runtime_cfg.all_with_schema()}
+
+
+@app.patch("/settings")
+async def patch_settings(payload: dict):
+    """
+    Update one or more runtime settings immediately (no restart needed).
+    Body: { "key": value, ... }
+    Unknown keys or keys not in SETTINGS_SCHEMA are ignored.
+    """
+    import json as _json
+    schema_index = {s["key"]: s for s in SETTINGS_SCHEMA}
+    updated: list[dict] = []
+    errors:  list[dict] = []
+
+    for key, raw_value in payload.items():
+        schema = schema_index.get(key)
+        if schema is None:
+            errors.append({"key": key, "error": "unknown setting key"})
+            continue
+        dtype = schema["type"]
+        try:
+            if dtype == "int":
+                coerced = int(raw_value)
+            elif dtype == "float":
+                coerced = float(raw_value)
+            elif dtype == "bool":
+                coerced = bool(raw_value) if isinstance(raw_value, bool) else str(raw_value).lower() in ("true", "1", "yes")
+            elif dtype == "json":
+                coerced = raw_value if isinstance(raw_value, dict) else _json.loads(str(raw_value))
+            else:
+                coerced = str(raw_value)
+
+            _runtime_cfg.set(key, coerced)
+
+            db_value = _json.dumps(coerced) if dtype == "json" else str(coerced).lower() if dtype == "bool" else str(coerced)
+            upsert_setting(key, db_value, dtype, updated_by="api")
+
+            # Sync AUTO_FIX_ALL_CPI_ERRORS into RUNTIME_FLAGS so orchestrator picks it up
+            if key == "AUTO_FIX_ALL_CPI_ERRORS":
+                RUNTIME_FLAGS["auto_fix_enabled"] = coerced
+
+            updated.append({"key": key, "value": coerced})
+            logger.info("[Settings] Updated %s = %r", key, coerced)
+        except Exception as exc:
+            errors.append({"key": key, "error": str(exc)})
+
+    return {"updated": updated, "errors": errors}
+
+
+@app.delete("/settings/{key}")
+async def reset_setting(key: str):
+    """Reset a single setting to its compiled default by removing the DB override."""
+    schema_index = {s["key"]: s for s in SETTINGS_SCHEMA}
+    if key not in schema_index:
+        raise HTTPException(status_code=404, detail=f"Unknown setting key: {key}")
+    _runtime_cfg.reset(key)
+    try:
+        delete_setting(key)
+    except Exception:
+        pass
+    if key == "AUTO_FIX_ALL_CPI_ERRORS":
+        RUNTIME_FLAGS["auto_fix_enabled"] = schema_index[key]["default"]
+    return {"reset": key, "default": schema_index[key]["default"]}
+
+
 @app.post("/autonomous/start")
 async def autonomous_start():
     """No-op in event-driven mode — always returns current readiness state."""
@@ -1051,9 +1131,25 @@ async def update_ticket_status(ticket_id: str, body: Dict[str, Any]):
     try:
         update_escalation_ticket(ticket_id, updates)
         updated = get_escalation_ticket_by_id(ticket_id)
-        return {"ticket": updated}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+    # Push status change to ITSM tool (fire-and-forget; local update already succeeded)
+    new_status     = updates.get("status", "")
+    itsm_ticket_id = (ticket.get("itsm_ticket_id") or "").strip()
+    if new_status and itsm_ticket_id:
+        from integrations.itsm_client import patch_itsm_ticket as _patch_itsm
+        asyncio.create_task(
+            _patch_itsm(
+                itsm_ticket_id,
+                status=new_status,
+                resolution_notes=updates.get("resolution_notes", ""),
+                updated_by=body.get("updated_by", "Orbit UI"),
+            ),
+            name=f"itsm_patch_{ticket_id}",
+        )
+
+    return {"ticket": updated}
 
 
 # ─────────────────────────────────────────────
@@ -1241,7 +1337,7 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
 
         # Burst dedup — absorb rapid repeat errors within the dedup window
         _group_key = orchestrator.incident_group_key(normalized)  # type: ignore[union-attr]
-        _recent    = get_recent_incident_by_group_key(_group_key, within_seconds=BURST_DEDUP_WINDOW_SECONDS)
+        _recent    = get_recent_incident_by_group_key(_group_key, within_seconds=_runtime_cfg.get("BURST_DEDUP_WINDOW_SECONDS"))
         if _recent:
             increment_incident_occurrence(
                 _recent["incident_id"],
@@ -1468,7 +1564,7 @@ async def _run_fixer_task(event: Dict[str, Any]) -> None:
             return
 
         # ── RETRY policy ──────────────────────────────────────────────────────
-        if policy["action"] == "RETRY" and confidence >= SUGGEST_FIX_CONFIDENCE:
+        if policy["action"] == "RETRY" and confidence >= _runtime_cfg.get("SUGGEST_FIX_CONFIDENCE"):
             retry_result = await orchestrator._verifier.retry_failed_message(dict(incident))  # type: ignore[union-attr]
             if retry_result["success"]:
                 update_incident(incident_id, {
@@ -1489,7 +1585,7 @@ async def _run_fixer_task(event: Dict[str, Any]) -> None:
         should_fix = orchestrator.should_auto_fix(dict(incident), rca, policy, confidence) or effective_auto_fix  # type: ignore[union-attr]
 
         if not should_fix:
-            if confidence >= SUGGEST_FIX_CONFIDENCE:
+            if confidence >= _runtime_cfg.get("SUGGEST_FIX_CONFIDENCE"):
                 update_incident(incident_id, {
                     "status":        "AWAITING_APPROVAL",
                     "pending_since": get_hana_timestamp(),
@@ -1672,8 +1768,8 @@ async def autonomous_debug():
             "SAP_HUB_CLIENT_SECRET": "SET" if os.getenv("SAP_HUB_CLIENT_SECRET") else "NOT SET",
         },
         "webhook_mode": True,
-        "auto_fix_all":       AUTO_FIX_ALL_CPI_ERRORS,
-        "auto_deploy":        AUTO_DEPLOY_AFTER_FIX,
+        "auto_fix_all":       _runtime_cfg.get("AUTO_FIX_ALL_CPI_ERRORS"),
+        "auto_deploy":        _runtime_cfg.get("AUTO_DEPLOY_AFTER_FIX"),
         "fetch_test":  None,
         "fetch_error": None,
     }

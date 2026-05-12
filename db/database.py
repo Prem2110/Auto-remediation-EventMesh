@@ -398,6 +398,98 @@ def ensure_em_schema():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# RUNTIME SETTINGS
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SETTINGS_TABLE = os.getenv("HANA_TABLE_EM_SETTINGS", "EM_RUNTIME_SETTINGS")
+
+
+def ensure_settings_schema() -> None:
+    """Create EM_RUNTIME_SETTINGS if it doesn't exist."""
+    try:
+        conn     = get_connection()
+        cur      = conn.cursor()
+        schema_q = os.getenv("HANA_SCHEMA", "")
+        check    = (
+            "SELECT COUNT(*) FROM SYS.TABLES WHERE TABLE_NAME=? AND SCHEMA_NAME=?"
+            if schema_q else
+            "SELECT COUNT(*) FROM SYS.TABLES WHERE TABLE_NAME=?"
+        )
+        cur.execute(
+            check,
+            (_SETTINGS_TABLE.upper(), schema_q) if schema_q else (_SETTINGS_TABLE.upper(),),
+        )
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(f"""CREATE TABLE "{_SETTINGS_TABLE}" (
+                SETTING_KEY   NVARCHAR(100) PRIMARY KEY,
+                SETTING_VALUE NCLOB,
+                DATA_TYPE     NVARCHAR(20),
+                UPDATED_AT    NVARCHAR(64),
+                UPDATED_BY    NVARCHAR(200)
+            )""")
+            logger.info("[DB] Created table %s", _SETTINGS_TABLE)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning("ensure_settings_schema: %s", e)
+
+
+def get_all_settings() -> List[Dict]:
+    """Return all rows from EM_RUNTIME_SETTINGS as a list of dicts."""
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(f'SELECT SETTING_KEY, SETTING_VALUE, DATA_TYPE, UPDATED_AT, UPDATED_BY FROM "{_SETTINGS_TABLE}"')
+        rows = _rows_to_dicts(cur)
+        conn.close()
+        return rows
+    except Exception as e:
+        logger.warning("get_all_settings: %s", e)
+        return []
+
+
+def upsert_setting(key: str, value: str, data_type: str, updated_by: str = "system") -> None:
+    """Insert or update a single setting row."""
+    from utils.utils import get_hana_timestamp  # late import — avoids circular at module level
+    now = get_hana_timestamp()
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            f'SELECT COUNT(*) FROM "{_SETTINGS_TABLE}" WHERE SETTING_KEY=?', (key,)
+        )
+        exists = int(cur.fetchone()[0]) > 0
+        if exists:
+            cur.execute(
+                f'UPDATE "{_SETTINGS_TABLE}" SET SETTING_VALUE=?, DATA_TYPE=?, UPDATED_AT=?, UPDATED_BY=? WHERE SETTING_KEY=?',
+                (value, data_type, now, updated_by, key),
+            )
+        else:
+            cur.execute(
+                f'INSERT INTO "{_SETTINGS_TABLE}" (SETTING_KEY, SETTING_VALUE, DATA_TYPE, UPDATED_AT, UPDATED_BY) VALUES (?,?,?,?,?)',
+                (key, value, data_type, now, updated_by),
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("upsert_setting key=%s: %s", key, e)
+        raise
+
+
+def delete_setting(key: str) -> None:
+    """Remove a setting override, reverting it to the compiled default."""
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(f'DELETE FROM "{_SETTINGS_TABLE}" WHERE SETTING_KEY=?', (key,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("delete_setting key=%s: %s", key, e)
+        raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # QUERY HISTORY
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1205,13 +1297,17 @@ def update_escalation_ticket(ticket_id: str, updates: Dict):
 
 
 def get_open_itsm_tickets() -> List[Dict]:
-    """Return tickets with status='OPEN' that have an itsm_ticket_id (for polling)."""
+    """Return unresolved tickets that have an itsm_ticket_id (for polling).
+
+    Includes IN_PROGRESS so tickets moved forward by the UI are still
+    tracked until ITSM closes them.
+    """
     try:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
             f"""SELECT * FROM "{_TICKETS_TABLE}"
-               WHERE status = 'OPEN'
+               WHERE status IN ('OPEN', 'IN_PROGRESS')
                  AND itsm_ticket_id IS NOT NULL
                  AND itsm_ticket_id != ''""",
         )

@@ -30,6 +30,7 @@ from core.constants import (
     PENDING_APPROVAL_TIMEOUT_HRS,
     BURST_DEDUP_WINDOW_SECONDS,
 )
+from core.runtime_config import cfg as _cfg
 from db.database import (
     get_all_incidents,
     get_incident_by_message_guid,
@@ -126,8 +127,10 @@ class SAPErrorFetcher:
     # ── Public API ───────────────────────────────────────────────────────────
 
     async def fetch_failed_messages(
-        self, limit: int = FAILED_MESSAGE_FETCH_LIMIT
+        self, limit: int = 0
     ) -> List[Dict]:
+        if limit == 0:
+            limit = _cfg.get("FAILED_MESSAGE_FETCH_LIMIT")
         try:
             data = await self._get_json(
                 "/api/v1/MessageProcessingLogs",
@@ -342,9 +345,11 @@ class SAPErrorFetcher:
 
     async def fetch_cpi_error_inventory(
         self,
-        message_limit: int = FAILED_MESSAGE_FETCH_LIMIT,
+        message_limit: int = 0,
         artifact_limit: int = RUNTIME_ERROR_FETCH_LIMIT,
     ) -> Dict[str, Any]:
+        if message_limit == 0:
+            message_limit = _cfg.get("FAILED_MESSAGE_FETCH_LIMIT")
         failed_messages   = await self.fetch_failed_messages(limit=message_limit)
         runtime_artifacts = await self.fetch_runtime_artifact_errors(limit=artifact_limit)
 
@@ -448,8 +453,10 @@ class ObserverAgent:
     def dedupe_raw_failed_messages(
         self,
         raw_errors: List[Dict[str, Any]],
-        max_unique: int = MAX_UNIQUE_MESSAGE_ERRORS_PER_CYCLE,
+        max_unique: int = 0,
     ) -> List[Dict[str, Any]]:
+        if max_unique == 0:
+            max_unique = _cfg.get("MAX_UNIQUE_MESSAGE_ERRORS_PER_CYCLE")
         deduped:   List[Dict[str, Any]] = []
         seen_keys: set[str]             = set()
         for raw in raw_errors:
@@ -468,7 +475,7 @@ class ObserverAgent:
         """Escalate AWAITING_APPROVAL incidents that have exceeded the timeout threshold."""
         try:
             from datetime import datetime, timedelta, UTC  # noqa: PLC0415
-            cutoff = (datetime.now(UTC) - timedelta(hours=PENDING_APPROVAL_TIMEOUT_HRS)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(hours=_cfg.get("PENDING_APPROVAL_TIMEOUT_HRS"))).isoformat()
             stale = [
                 inc for inc in get_all_incidents(status="AWAITING_APPROVAL", limit=200)
                 if (inc.get("pending_since") or inc.get("created_at") or "") < cutoff

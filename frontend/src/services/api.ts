@@ -408,3 +408,39 @@ export async function fetchActiveIncidentsPaginated(
 
   return request(`${_BASE}/dashboard/incidents/paginated?${params}`);
 }
+
+// ── Runtime Settings ──────────────────────────────────────────────────────────
+
+export interface SettingSchema {
+  key: string;
+  type: "int" | "float" | "bool" | "json" | "string";
+  default: unknown;
+  label: string;
+  description: string;
+  impact: "high" | "medium" | "low";
+  group: string;
+  when_effective: string;
+  current_value: unknown;
+  is_overridden: boolean;
+}
+
+export interface SettingsResponse {
+  settings: SettingSchema[];
+}
+
+export async function fetchSettings(): Promise<SettingsResponse> {
+  return request(`${_BASE}/settings`);
+}
+
+export async function patchSettings(
+  updates: Record<string, unknown>
+): Promise<{ updated: { key: string; value: unknown }[]; errors: { key: string; error: string }[] }> {
+  return request(`${_BASE}/settings`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function resetSetting(key: string): Promise<{ reset: string; default: unknown }> {
+  return request(`${_BASE}/settings/${key}`, { method: "DELETE" });
+}

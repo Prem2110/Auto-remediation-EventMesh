@@ -34,7 +34,7 @@ from core.constants import (
     MCP_SERVERS,
     TRANSPORT_OPTIONS,
     SERVER_ROUTING_GUIDE,
-    MAX_RETRIES,
+    MAX_RETRIES as _MAX_RETRIES_DEFAULT,
     MEMORY_LIMIT,
     MEMORY_SESSION_TTL_SECONDS,
     MAX_MEMORY_SESSIONS,
@@ -309,7 +309,9 @@ class MultiMCP:
         _update_timeout = float(os.getenv("UPDATE_IFLOW_TIMEOUT", "120.0"))
         _log_args = _sanitize_args_for_log(args)
         logger.info("[MCP→] server=%s tool=%s args=%s", server, tool, json.dumps(_log_args))
-        for attempt in range(MAX_RETRIES):
+        from core.runtime_config import cfg as _cfg  # noqa: PLC0415
+        _max_retries = _cfg.get("MAX_RETRIES", _MAX_RETRIES_DEFAULT)
+        for attempt in range(_max_retries):
             try:
                 async with client:
                     if tool == "update-iflow":
@@ -334,13 +336,13 @@ class MultiMCP:
             except asyncio.TimeoutError:
                 logger.warning(
                     "[MCP] update-iflow timed out after %.0fs (attempt %d/%d): iflow=%s",
-                    _update_timeout, attempt + 1, MAX_RETRIES, args.get("id", "?"),
+                    _update_timeout, attempt + 1, _max_retries, args.get("id", "?"),
                 )
-                if attempt == MAX_RETRIES - 1:
+                if attempt == _max_retries - 1:
                     return f"ERROR: update-iflow timed out after {_update_timeout:.0f}s"
                 await asyncio.sleep(2)
             except Exception as e:
-                if attempt == MAX_RETRIES - 1:
+                if attempt == _max_retries - 1:
                     return f"ERROR: {e}"
                 await asyncio.sleep(1)
 

@@ -569,8 +569,10 @@ export default function Observability() {
   const [bulkActionLoading, setBulkActionLoading] = useState<"approving" | "rejecting" | null>(null);
 
   // Ticket resolution state
-  const [resolvingTicketId, setResolvingTicketId] = useState<string | null>(null);
-  const [ticketActionError, setTicketActionError] = useState<string | null>(null);
+  const [resolvingTicketId,  setResolvingTicketId]  = useState<string | null>(null);
+  const [confirmingTicketId, setConfirmingTicketId] = useState<string | null>(null);
+  const [resolveNotes,       setResolveNotes]       = useState<Record<string, string>>({});
+  const [ticketActionError,  setTicketActionError]  = useState<string | null>(null);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["monitor-messages"],
@@ -698,14 +700,16 @@ export default function Observability() {
   }, [approvalsData, refetchApprovals]);
 
   /* ── Mark ticket resolved ─────────────────────────────────────────── */
-  const handleMarkResolved = useCallback(async (ticketId: string, currentStatus: string) => {
+  const handleMarkResolved = useCallback(async (ticketId: string, currentStatus: string, notes: string) => {
+    setConfirmingTicketId(null);
     setResolvingTicketId(ticketId);
     setTicketActionError(null);
     try {
       if (currentStatus.toUpperCase() === "OPEN") {
         await updateTicket(ticketId, { status: "IN_PROGRESS" });
       }
-      await updateTicket(ticketId, { status: "RESOLVED" });
+      await updateTicket(ticketId, { status: "RESOLVED", resolution_notes: notes.trim() || undefined });
+      setResolveNotes((prev) => { const n = { ...prev }; delete n[ticketId]; return n; });
       refetchTickets();
     } catch (e) {
       setTicketActionError(e instanceof Error ? e.message : "Failed to update ticket");
@@ -1680,17 +1684,44 @@ export default function Observability() {
                     <span>Created: {new Date(ticket.created_at).toLocaleString()}</span>
                     <span>Updated: {new Date(ticket.updated_at).toLocaleString()}</span>
                     <div className={styles.approvalActions} style={{ marginLeft: "auto" }}>
-                      {(ticket.status || "").toUpperCase() !== "RESOLVED" ? (
+                      {(ticket.status || "").toUpperCase() === "RESOLVED" ? (
+                        <span style={{ color: "#16a34a", fontSize: "0.82rem", fontWeight: 600 }}>✓ Resolved</span>
+                      ) : confirmingTicketId === ticket.ticket_id ? (
+                        <div className={styles.resolveConfirm}>
+                          <textarea
+                            className={styles.resolveNotesInput}
+                            placeholder="Describe what was done to fix this (optional)…"
+                            rows={3}
+                            value={resolveNotes[ticket.ticket_id] ?? ""}
+                            onChange={(e) =>
+                              setResolveNotes((prev) => ({ ...prev, [ticket.ticket_id]: e.target.value }))
+                            }
+                          />
+                          <div className={styles.resolveConfirmActions}>
+                            <button
+                              className={`${styles.btn} ${styles.btnApprove}`}
+                              disabled={resolvingTicketId === ticket.ticket_id}
+                              onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status, resolveNotes[ticket.ticket_id] ?? "")}
+                            >
+                              {resolvingTicketId === ticket.ticket_id ? "Resolving…" : "✓ Confirm Resolve"}
+                            </button>
+                            <button
+                              className={`${styles.btn} ${styles.btnReject}`}
+                              onClick={() => setConfirmingTicketId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
                         <button
                           className={`${styles.btn} ${styles.btnApprove}`}
                           disabled={resolvingTicketId === ticket.ticket_id}
-                          onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status)}
+                          onClick={() => setConfirmingTicketId(ticket.ticket_id)}
                           title="Mark this ticket as resolved"
                         >
-                          {resolvingTicketId === ticket.ticket_id ? "Resolving…" : "✓ Mark Resolved"}
+                          ✓ Mark Resolved
                         </button>
-                      ) : (
-                        <span style={{ color: "#16a34a", fontSize: "0.82rem", fontWeight: 600 }}>✓ Resolved</span>
                       )}
                     </div>
                   </div>

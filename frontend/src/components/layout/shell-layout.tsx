@@ -21,6 +21,7 @@ const NAV_ITEMS: { key: string; label: string; icon: IconName }[] = [
   // { key: "/test-suite",    label: "Test Suite",    icon: "test-suite"    },  // hidden
   { key: "/observability", label: "Observability", icon: "observability" },
   { key: "/pipeline",      label: "Pipeline",      icon: "pipeline"      },
+  { key: "/settings",      label: "Settings",      icon: "settings"      },
 ];
 
 interface ShellLayoutProps {

@@ -56,6 +56,7 @@ from core.constants import (
     TRANSIENT_ERROR_MARKERS,
     _STATUS_ACTION_HINTS,
 )
+from core.runtime_config import cfg as _cfg
 from core.state import FIX_PROGRESS, RUNTIME_FLAGS, cleanup_fix_progress
 from db.database import (
     create_escalation_ticket,
@@ -257,7 +258,8 @@ Rules:
 
     def get_remediation_policy(self, incident: Dict, rca: Dict) -> Dict[str, Any]:
         error_type = rca.get("error_type") or incident.get("error_type") or "UNKNOWN_ERROR"
-        policy     = dict(REMEDIATION_POLICIES.get(error_type, REMEDIATION_POLICIES["UNKNOWN_ERROR"]))
+        _policies  = _cfg.get("REMEDIATION_POLICIES")
+        policy     = dict(_policies.get(error_type, _policies.get("UNKNOWN_ERROR", REMEDIATION_POLICIES["UNKNOWN_ERROR"])))
         if error_type in {"BACKEND_ERROR", "CONNECTIVITY_ERROR"} and self.is_transient_error(
             incident.get("error_message", "")
         ):
@@ -297,7 +299,7 @@ Rules:
         if not RUNTIME_FLAGS["auto_fix_enabled"]:
             return False
         if policy["action"] in {"AUTO_FIX", "RETRY"}:
-            threshold = SUGGEST_FIX_CONFIDENCE if RUNTIME_FLAGS["auto_fix_enabled"] else AUTO_FIX_CONFIDENCE
+            threshold = _cfg.get("SUGGEST_FIX_CONFIDENCE") if RUNTIME_FLAGS["auto_fix_enabled"] else _cfg.get("AUTO_FIX_CONFIDENCE")
             return confidence >= threshold
         return False
 
@@ -519,10 +521,10 @@ Rules:
             "[GATE_ENTRY] iflow=%s error_type=%s confidence=%.2f policy=%s "
             "auto_fix_all=%s has_actionable_fix=%s",
             incident.get("iflow_id", ""), rca.get("error_type", ""), confidence,
-            policy["action"], AUTO_FIX_ALL_CPI_ERRORS, self.has_actionable_fix(rca),
+            policy["action"], _cfg.get("AUTO_FIX_ALL_CPI_ERRORS"), self.has_actionable_fix(rca),
         )
 
-        if policy["action"] == "RETRY" and confidence >= SUGGEST_FIX_CONFIDENCE:
+        if policy["action"] == "RETRY" and confidence >= _cfg.get("SUGGEST_FIX_CONFIDENCE"):
             logger.info("[Gate] POLICY RETRY (%.2f) → %s", confidence, incident["iflow_id"])
             retry_result = await self._verifier.retry_failed_message(incident)
             if retry_result["success"]:
@@ -622,7 +624,7 @@ Rules:
                 if _lock and _lock.locked():
                     _lock.release()
 
-        if confidence >= SUGGEST_FIX_CONFIDENCE:
+        if confidence >= _cfg.get("SUGGEST_FIX_CONFIDENCE"):
             logger.info("[Gate] MEDIUM (%.2f) → awaiting approval: %s", confidence, incident["iflow_id"])
             update_incident(incident["incident_id"], {
                 "status":        "AWAITING_APPROVAL",
@@ -780,7 +782,7 @@ Rules:
         )
         if existing_sig:
             consec = int(existing_sig.get("consecutive_failures") or 0)
-            if consec >= MAX_CONSECUTIVE_FAILURES and not existing_sig.get("auto_escalated"):
+            if consec >= _cfg.get("MAX_CONSECUTIVE_FAILURES") and not existing_sig.get("auto_escalated"):
                 logger.warning(
                     "[Autonomous] Circuit breaker: %d consecutive failures for %s — escalating.",
                     consec, existing_sig.get("iflow_id"),
@@ -818,7 +820,7 @@ Rules:
         # ── Burst deduplication ───────────────────────────────────────────────
         _group_key = self.incident_group_key(normalized)
         _recent    = get_recent_incident_by_group_key(
-            _group_key, within_seconds=BURST_DEDUP_WINDOW_SECONDS
+            _group_key, within_seconds=_cfg.get("BURST_DEDUP_WINDOW_SECONDS")
         )
         if _recent:
             increment_incident_occurrence(

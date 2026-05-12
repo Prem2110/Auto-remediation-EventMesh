@@ -206,3 +206,62 @@ async def get_itsm_ticket(itsm_ticket_id: str) -> Optional[Dict]:
         return None
 
 
+# Maps Orbit local status → ITSM OData status string
+_ORBIT_TO_ITSM_STATUS: Dict[str, str] = {
+    "IN_PROGRESS": "Assigned",
+    "RESOLVED":    "Resolved",
+}
+
+
+async def patch_itsm_ticket(
+    itsm_ticket_id: str,
+    status: str,
+    resolution_notes: str = "",
+    updated_by: str = "Orbit UI",
+) -> bool:
+    """
+    PATCH /odata/v4/ticket/Tickets/{id}
+    Called when an operator updates a ticket status from the Orbit UI so the
+    change is reflected in ITSM without waiting for the next poll cycle.
+
+    Maps Orbit statuses (IN_PROGRESS, RESOLVED) to ITSM status strings.
+    Returns True on success, False on failure (never raises).
+    """
+    itsm_status = _ORBIT_TO_ITSM_STATUS.get(status.upper())
+    if not itsm_status:
+        logger.debug("[ITSM] patch_itsm_ticket: no ITSM mapping for status=%s — skipping", status)
+        return False
+
+    dest = await _resolve_itsm_destination()
+    if not dest:
+        return False
+
+    payload: Dict[str, Any] = {"status": itsm_status}
+    if resolution_notes:
+        payload["resolutionNotes"] = resolution_notes
+
+    try:
+        url = f"{dest['base_url']}{_TICKETS_ENDPOINT}/{itsm_ticket_id}"
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.patch(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {dest['token']}",
+                    "Content-Type":  "application/json",
+                    "Accept":        "application/json",
+                },
+            )
+        if resp.status_code in (401, 403):
+            _invalidate_cache()
+        resp.raise_for_status()
+        logger.info(
+            "[ITSM] Ticket %s updated in ITSM → status=%s by %s",
+            itsm_ticket_id, itsm_status, updated_by,
+        )
+        return True
+    except Exception as exc:
+        logger.error("[ITSM] patch_itsm_ticket failed for ID=%s: %s", itsm_ticket_id, exc)
+        return False
+
+

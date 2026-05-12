@@ -220,8 +220,12 @@ https://orbit-integration-suite-ui.cfapps.<region>.hana.ondemand.com
 Test these scenarios:
 - [ ] App loads without a blank screen
 - [ ] Navigating to `/pipeline` and refreshing does **not** give a 404
+- [ ] Navigating to `/settings` and refreshing does **not** give a 404
 - [ ] API calls reach the backend (check the browser Network tab)
 - [ ] No CORS errors in the browser console
+- [ ] Settings page loads and displays all 12 tunable settings
+- [ ] Editing a numeric value and saving shows a success toast
+- [ ] The Remediation Policies table renders with all 12 error types
 
 ---
 
@@ -274,3 +278,17 @@ That's it — CF replaces the running instance with the new `dist/` content.
 | API calls going to `localhost` | `VITE_API_BASE_URL` not set | Check `manifest.yaml` env section |
 | Chunk size warning during build | Large dependency not split | Add to `manualChunks` in `vite.config.ts` |
 | Icons not showing | Missing icon import | Add the specific `@ui5/webcomponents-icons/dist/<name>.js` to `main.tsx` |
+| Settings page shows "Failed to load" | Backend `GET /settings` returning error | Check that `EM_RUNTIME_SETTINGS` table was created (startup log: `[DB] Created table EM_RUNTIME_SETTINGS`) |
+| Saving a setting shows no toast | PATCH request blocked or 422 | Check browser Network tab; ensure the key name matches exactly (case-sensitive) |
+
+---
+
+## Runtime Settings Page
+
+The `/settings` route added in this release requires no additional CF configuration. It calls:
+
+- `GET  /api/settings` — reads all tunable constants and their current values
+- `PATCH /api/settings` — saves one or more values; changes persist to `EM_RUNTIME_SETTINGS` in HANA
+- `DELETE /api/settings/{key}` — resets a setting to its compiled default
+
+The backend auto-creates the `EM_RUNTIME_SETTINGS` HANA table on startup. If the table is missing after a fresh deploy, check the backend startup logs for `ensure_settings_schema` warnings.

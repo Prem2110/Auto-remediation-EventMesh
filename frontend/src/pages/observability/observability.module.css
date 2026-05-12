@@ -1667,10 +1667,41 @@
 .ticketFooter {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   padding-top: 0.75rem;
   border-top: 1px solid var(--orbit-gray-100, #f3f4f6);
   font-size: 0.72rem;
   color: var(--orbit-gray-500, #6b7280);
+}
+
+/* ── inline resolve confirm panel ── */
+.resolveConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 320px;
+}
+
+.resolveNotesInput {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  color: #111827;
+  background: #fff;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.resolveNotesInput:focus { border-color: #3b82f6; }
+
+.resolveConfirmActions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 /* Approval Card Specific */
