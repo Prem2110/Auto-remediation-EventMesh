@@ -72,6 +72,7 @@ interface Ticket {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+  itsm_ticket_id: string | null;
 }
 
 interface Approval {
@@ -1632,6 +1633,11 @@ export default function Observability() {
                       <span><strong>iFlow:</strong> {ticket.iflow_id}</span>
                       <span><strong>Error Type:</strong> {ticket.error_type}</span>
                       {ticket.assigned_to && <span><strong>Assigned To:</strong> {ticket.assigned_to}</span>}
+                      {ticket.itsm_ticket_id && (
+                        <span className={styles.itsmIdBadge}>
+                          <strong>ITSM #</strong> {ticket.itsm_ticket_id}
+                        </span>
+                      )}
                     </div>
 
                     {(() => {

@@ -1610,6 +1610,23 @@
   font-weight: 500;
 }
 
+.itsmIdBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.55rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: #1d4ed8;
+  font-weight: 500;
+}
+.itsmIdBadge strong {
+  color: #1e40af;
+  font-weight: 700;
+}
+
 .ticketDescription {
   color: var(--orbit-gray-700, #374151);
   line-height: 1.6;
