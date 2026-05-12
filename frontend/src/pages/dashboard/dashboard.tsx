@@ -212,11 +212,11 @@ export default function Dashboard() {
   // ─ Tickets (always fetched for tab count badge) ───────────────────────────────
   const { data: ticketsData, isLoading: ticketsLoading } = useQuery({
     queryKey: ["dash-tickets"],
-    queryFn: fetchTickets,
+    queryFn: () => fetchTickets(1, 50),
     refetchInterval: 60_000,
     retry: 2,
   });
-  const tickets = (ticketsData?.tickets ?? []) as Ticket[];
+  const tickets = ((ticketsData as { tickets?: unknown[] } | undefined)?.tickets ?? []) as Ticket[];
   const openTickets = tickets.filter((t) => (t.status || "").toUpperCase() === "OPEN");
 
   async function handleMarkResolved(ticketId: string, currentStatus: string) {
