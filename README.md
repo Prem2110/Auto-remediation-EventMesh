@@ -22,6 +22,7 @@ all without human intervention.
 10. [Database](#10-database)
 11. [Frontend](#11-frontend)
 12. [What's New](#12-whats-new)
+13. [ITSM Integration](#13-itsm-integration)
 
 ---
 
@@ -437,26 +438,7 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `LLM_DEPLOYMENT_ID_RCA` | Per-agent override for RCA (optional; falls back to `LLM_DEPLOYMENT_ID`) |
 | `LLM_DEPLOYMENT_ID_FIX` | Per-agent override for Fixer (optional) |
 | `EMBEDDING_DEPLOYMENT_ID` | Embedding model deployment ID |
-| `EMBEDDING_MODEL_NAME` | Embedding model name (e.g. `text-embedding-3-large`) |
 | `VECTOR_DIMENSION` | Embedding vector size (e.g. `3072`) |
-
-### SAP Integration Suite — Runtime API
-
-| Variable | Description |
-|---|---|
-| `API_BASE_URL` | CPI API base: `https://<tenant>.it-cpi<n>.cfapps.<region>.hana.ondemand.com/api/v1` |
-| `API_OAUTH_CLIENT_ID` | Client ID for CPI API |
-| `API_OAUTH_CLIENT_SECRET` | Client secret |
-| `API_OAUTH_TOKEN_URL` | Token endpoint URL |
-
-### SAP Integration Suite — CPI Runtime Monitor
-
-| Variable | Description |
-|---|---|
-| `CPI_BASE_URL` | CPI runtime base: `https://<tenant>.it-cpi<n>-rt.cfapps.<region>.hana.ondemand.com` |
-| `CPI_OAUTH_CLIENT_ID` | Client ID for CPI runtime |
-| `CPI_OAUTH_CLIENT_SECRET` | Client secret |
-| `CPI_OAUTH_TOKEN_URL` | Token endpoint URL |
 
 ### SAP Hub — CPI OData Polling (CPI Monitor + Observer agent)
 
@@ -507,6 +489,7 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `HANA_TABLE_EM_INCIDENTS` | `EM_AUTONOMOUS_INCIDENTS` | Incidents table |
 | `HANA_TABLE_EM_FIX_PATTERNS` | `EM_FIX_PATTERNS` | Fix patterns table |
 | `HANA_TABLE_EM_ESCALATION_TICKETS` | `EM_ESCALATION_TICKETS` | Escalation tickets table |
+| `HANA_TABLE_EM_SETTINGS` | `EM_RUNTIME_SETTINGS` | Runtime settings table |
 | `HANA_TABLE_VECTOR` | `SAP_HELP_DOCS` | HANA vector store table for SAP Notes retrieval |
 
 ### AWS S3 Object Store
@@ -527,7 +510,7 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 |---|---|---|
 | `AUTO_FIX_CONFIDENCE` | `0.90` | Min RCA confidence to auto-apply a fix |
 | `SUGGEST_FIX_CONFIDENCE` | `0.70` | Min confidence to suggest (not apply) a fix |
-| `AUTO_FIX_ALL_CPI_ERRORS` | `false` | `true` = auto-fix every fixable error regardless of per-type policy |
+| `AUTO_FIX_ALL_CPI_ERRORS` | `true` | `true` = auto-fix every fixable error regardless of per-type policy |
 | `AUTO_DEPLOY_AFTER_FIX` | `true` | Automatically deploy the iFlow after a successful fix update |
 | `MAX_CONSECUTIVE_FAILURES` | `5` | Circuit breaker: escalate after N consecutive failures |
 | `PENDING_APPROVAL_TIMEOUT_HRS` | `24` | Hours before pending approval auto-escalates |
@@ -539,12 +522,13 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 
 | Variable | Default | Description |
 |---|---|---|
-| `API_HOST` | `0.0.0.0` | Server bind address |
-| `API_PORT` | `8080` | Server port |
+| `PORT` | `8080` | Server port (used by CF and local `__main__` entrypoint) |
 | `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `ENABLE_CONSOLE_LOGS` | `true` | Mirror structured logs to stdout |
 | `WEB_SEARCH_ENABLED` | `false` | Enable DuckDuckGo search tool for agents |
 | `UPLOAD_ROOT` | `user` | Root prefix for S3 file uploads |
+| `TICKET_DEFAULT_ASSIGNEE` | — | Default assignee written to new escalation tickets |
+| `PENDING_DEPLOY_SWEEP_INTERVAL_SECONDS` | `300` | Seconds between background sweeps that retry pending deploys |
 
 ---
 
@@ -593,8 +577,7 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 | `POST` | `/autonomous/incidents/{id}/retry_rca` | Re-run RCA on an existing incident |
 | `GET` | `/autonomous/pending_approvals` | Incidents awaiting human approval |
 | `GET` | `/autonomous/tickets` | Escalation tickets |
-| `POST` | `/autonomous/manual_trigger` | Push a raw error through the pipeline manually |
-| `POST` | `/autonomous/test_incident` | Create a synthetic test incident |
+| `POST` | `/autonomous/test_incident` | Create a synthetic test incident (iFlow and error are hardcoded) |
 
 ### CPI Error Fetch
 
@@ -688,10 +671,11 @@ curl http://localhost:8080/cpi-monitor/status
 Test the full pipeline with a synthetic incident:
 
 ```bash
-curl -X POST http://localhost:8080/autonomous/test_incident \
-  -H "Content-Type: application/json" \
-  -d '{"iflow_id": "MyTestFlow", "error_message": "Mapping failed: field not found"}'
+curl -X POST http://localhost:8080/autonomous/test_incident
 ```
+
+> **Note:** This endpoint takes no request body. The iFlow ID and error message are
+> hardcoded in the server for smoke-testing purposes.
 
 ### Run with SAP Event Mesh (`EM_ENABLED=true`)
 
@@ -1099,6 +1083,244 @@ After each poll cycle the result count is also logged:
 
 ---
 
+## 13. ITSM Integration
+
+Orbit integrates with an in-house ITSM system (OhZone) via its OData v4 REST API,
+accessed through an SAP BTP Destination named **`ITSM-sierra`**.  The integration
+covers three flows:
+
+1. **Orbit → ITSM** — auto-creates a ticket when escalation is triggered
+2. **Orbit UI → ITSM** — operator status updates are immediately PATCHed to ITSM
+3. **ITSM → Orbit** — a background poller detects resolved tickets and syncs status back
+
+---
+
+### 13.1 SAP BTP Destination Setup
+
+The ITSM API is not called directly.  All calls are routed through the SAP BTP
+Destination service so credentials never touch application code.
+
+**Steps:**
+
+1. In SAP BTP Cockpit → your subaccount → **Destinations**, create a destination:
+
+   | Field | Value |
+   |---|---|
+   | Name | `ITSM-sierra` |
+   | Type | `HTTP` |
+   | URL | Base URL of the ITSM OData service |
+   | Authentication | `OAuth2ClientCredentials` |
+   | Client ID | ITSM OAuth client ID |
+   | Client Secret | ITSM OAuth client secret |
+   | Token Service URL | `https://<itsm-oauth-host>/oauth/token` |
+
+2. Bind the **Destination** service instance to the Orbit CF application so
+   `VCAP_SERVICES` is populated automatically.
+
+3. Set `ITSM_REQUESTER_ID` to the SAP user UUID that owns the tickets
+   (see [Environment Variables](#6-environment-variables)).
+
+---
+
+### 13.2 Authentication Flow
+
+`integrations/itsm_client.py` resolves credentials in three steps on every cache
+miss:
+
+```
+Step 1  POST <destination-service-token-url>/oauth/token
+        grant_type=client_credentials  →  dest_token
+
+Step 2  GET  <destination-uri>/destination-configuration/v1/destinations/ITSM-sierra
+        Authorization: Bearer <dest_token>
+        →  {destinationConfiguration: {URL}, authTokens: [{value, expires_in}]}
+
+Step 3  Cache base_url + itsm_token until (now + expires_in - 60s)
+        Subsequent calls use the cached values without re-resolving.
+```
+
+Cache is stored in the module-level `_itsm_cache` dict.  A 401 or 403 response
+from any ITSM call invalidates the cache immediately and forces re-resolution on
+the next request.
+
+---
+
+### 13.3 When Tickets Are Created
+
+The orchestrator creates an ITSM ticket in two situations:
+
+| Trigger | Condition | `ticket_source` value |
+|---|---|---|
+| **Non-fixable error** | `is_iflow_fixable(error_type)` returns `False` AND `REMEDIATION_POLICIES[error_type].action == TICKET_CREATED` | `CLASSIFIER_ESCALATION` |
+| **Fix failed** | Fixer or verifier reports failure after exhausting retries | `FIX_FAILED_ESCALATION` |
+
+The orchestrator calls `create_itsm_ticket()` which posts to:
+
+```
+POST /odata/v4/ticket/Tickets
+```
+
+**Mandatory fields sent:**
+
+| ITSM Field | Source |
+|---|---|
+| `title` | `"<error_type> in <iflow_id>"` |
+| `type_code` | `"incident"` |
+| `source` | `"Orbit Monitor app"` |
+| `requester_ID` | `ITSM_REQUESTER_ID` env var |
+| `description` | LLM-generated root cause + proposed fix |
+| `priority` / `severity_code` | LLM-assigned (default `medium`) |
+| `environment` | `CPI_ENVIRONMENT` env var |
+
+On success ITSM returns `{ID: <uuid>, ticketNumber: "TCK-YYYY-NNNNN"}`.  Both
+values are written to `EM_ESCALATION_TICKETS.itsm_ticket_id` so the poller and UI
+can reference them.
+
+---
+
+### 13.4 Orbit UI → ITSM (Operator Updates)
+
+When an operator changes ticket status in the Orbit UI, the
+`PATCH /tickets/{ticket_id}` endpoint in `main.py` calls
+`patch_itsm_ticket()` **immediately** (fire-and-forget `asyncio.create_task`) so
+the change is reflected in ITSM without waiting for the next poll cycle.
+
+**Status mapping:**
+
+| Orbit status | ITSM `status` string |
+|---|---|
+| `IN_PROGRESS` | `Assigned` |
+| `RESOLVED` | `Resolved` |
+
+The PATCH request:
+
+```
+PATCH /odata/v4/ticket/Tickets/{itsm_ticket_id}
+Authorization: Bearer <token>
+Content-Type:  application/json
+Accept:        application/json
+If-Match:      *          ← required by OData v4 for unconditional PATCH
+
+{"status": "Resolved", "resolutionNotes": "<operator comment>"}
+```
+
+> **Note:** `If-Match: *` is mandatory for OData v4 PATCH.  Without it the server
+> returns HTTP 400.
+
+---
+
+### 13.5 ITSM → Orbit (Background Poller)
+
+`jobs/itsm_poller.py` runs as a long-lived `asyncio` task started in `main.py`
+on application startup.
+
+**Poll cycle (`poll_itsm_tickets_once`):**
+
+```
+1. db.get_open_itsm_tickets()
+   → all EM_ESCALATION_TICKETS where status NOT IN ('RESOLVED','CANCELLED')
+     AND itsm_ticket_id IS NOT NULL
+
+2. For each ticket:
+   GET /odata/v4/ticket/Tickets/{itsm_ticket_id}
+   → read "status" field
+
+3. If status ∈ {"resolved", "cancelled"}:
+   a. UPDATE EM_ESCALATION_TICKETS → status=RESOLVED, resolution_notes, resolved_at
+   b. UPDATE EM_AUTONOMOUS_INCIDENTS → status=HUMAN_RESOLVED, fix_summary, resolved_at
+   c. If resolution_notes present AND pattern not yet stored:
+      → classifier.error_signature() → upsert_fix_pattern()  (agents reuse this fix)
+      → UPDATE EM_ESCALATION_TICKETS pattern_stored=1        (prevents duplicate insert)
+
+4. If ticket ID returns 404:
+   → WARNING log with ticket_id + incident_id — ticket may be stale test data
+     or was manually deleted from ITSM
+```
+
+**Timing:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `ITSM_POLL_INTERVAL` | `300` s | Seconds between full poll cycles |
+
+**ITSM GET response fields used:**
+
+| ITSM field | Mapped to |
+|---|---|
+| `status` | Compared against `{"resolved", "cancelled"}` |
+| `resolutionNotes` | `resolution_notes` / `fix_summary` |
+| `modifiedBy` | `resolved_by` (logged only) |
+| `modifiedAt` | `resolved_at` timestamp |
+| `ticketNumber` | Human-readable ID in log messages |
+
+---
+
+### 13.6 Database Table — `EM_ESCALATION_TICKETS`
+
+| Column | Type | Description |
+|---|---|---|
+| `ticket_id` | `NVARCHAR(100)` PK | Internal Orbit ticket UUID |
+| `incident_id` | `NVARCHAR(100)` | FK → `EM_AUTONOMOUS_INCIDENTS` |
+| `iflow_id` | `NVARCHAR(200)` | SAP CPI iFlow identifier |
+| `error_type` | `NVARCHAR(100)` | Classifier output (e.g. `ODATA_ERROR`) |
+| `title` | `NVARCHAR(500)` | Ticket title sent to ITSM |
+| `description` | `NCLOB` | Full ticket description |
+| `priority` | `NVARCHAR(20)` | `low` / `medium` / `high` / `critical` |
+| `status` | `NVARCHAR(20)` | `OPEN` → `IN_PROGRESS` → `RESOLVED` |
+| `assigned_to` | `NVARCHAR(200)` | Assignee (optional) |
+| `resolution_notes` | `NCLOB` | Engineer's resolution notes from ITSM |
+| `created_at` | `NVARCHAR(64)` | ISO-8601 UTC |
+| `updated_at` | `NVARCHAR(64)` | ISO-8601 UTC |
+| `resolved_at` | `NVARCHAR(64)` | ISO-8601 UTC (set by poller) |
+| `ticket_source` | `NVARCHAR(50)` | `CLASSIFIER_ESCALATION` or `FIX_FAILED_ESCALATION` |
+| `itsm_ticket_id` | `NVARCHAR(200)` | UUID returned by ITSM on creation |
+| `itsm_ticket_number` | `NVARCHAR(100)` | Human-readable ticket number (e.g. `TCK-2026-00045`) |
+| `message_guid` | `NVARCHAR(200)` | CPI failed-message GUID |
+| `human_fix_summary` | `NCLOB` | Summary of how engineer resolved it |
+| `human_fix_steps` | `NCLOB` | Step-by-step resolution detail from engineer |
+| `human_resolved_at` | `NVARCHAR(64)` | ISO-8601 UTC — when engineer marked it resolved |
+| `pattern_stored` | `INTEGER` | `1` once fix is written to `EM_FIX_PATTERNS` |
+
+---
+
+### 13.7 Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `ITSM_REQUESTER_ID` | ✅ | — | SAP user UUID stamped as `requester_ID` on every auto-created ticket |
+| `ITSM_POLL_INTERVAL` | ✗ | `300` | Seconds between poller cycles |
+| `CPI_ENVIRONMENT` | ✗ | `production` | Environment tag written to `environment` field on ticket |
+
+The ITSM base URL and bearer token are **not** set via env vars — they are resolved
+at runtime from the `ITSM-sierra` SAP BTP Destination bound to the app via
+`VCAP_SERVICES`.
+
+---
+
+### 13.8 Debug & Health Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/itsm/status` | Token cache state, open ticket count, destination config |
+| `GET` | `/itsm/verify` | 7-step destination diagnostic (connectivity, token, endpoint reachability) |
+| `GET` | `/itsm/tickets` | Fetch live tickets from ITSM OData API |
+| `POST` | `/itsm/test-ticket` | Fire a test ticket creation (smoke test) |
+| `POST` | `/itsm/poll` | Manually trigger one poll cycle and return resolved count |
+
+---
+
+### 13.9 Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `PATCH` returns HTTP 400 | Missing `If-Match: *` header | Already fixed — header is now always sent |
+| Ticket created in Orbit but not in ITSM | `ITSM_REQUESTER_ID` not set or `ITSM-sierra` destination misconfigured | Check `/itsm/status` endpoint and CF env vars |
+| Status update from UI not reaching ITSM | `itsm_ticket_id` not stored in DB (ticket was created before ITSM was wired up) | Warning logged: `Skipping PATCH — ticket has no itsm_ticket_id stored in DB` |
+| Poller logs `404` for every ticket | Test/demo `ITSM-TKT-XXXX` IDs in DB from development data | IDs are fake — delete those rows from `EM_ESCALATION_TICKETS` or ignore; real IDs are UUIDs |
+| 401 / 403 on ITSM call | Cached token expired between cache expiry check and API call | Cache is invalidated automatically on 401/403 — next call will re-resolve |
+
+---
+
 ## Project Structure
 
 ```
@@ -1107,7 +1329,6 @@ auto-remediation - EventMesh/
 │                                    #   starts CPI Monitor background task on startup
 ├── smart_monitoring.py              # /smart-monitoring/* router
 ├── smart_monitoring_dashboard.py    # /dashboard/* router
-├── generate_dashboard_pdf.py        # PDF export utility
 ├── manifest.yml                     # CF deployment manifest (EVENT_MESH_DESTINATION_NAME,
 │                                    #   CPI_POLL_INTERVAL_SECONDS, destination-service binding)
 │
@@ -1140,8 +1361,17 @@ auto-remediation - EventMesh/
 │                                    #   Destination service, publish / publish_to_next /
 │                                    #   in-process fallback (EM_ENABLED=false)
 │
+├── integrations/
+│   └── itsm_client.py               # ITSM OData client — create/get/patch tickets via
+│                                    #   SAP BTP Destination (ITSM-sierra), token caching
+│
+├── jobs/
+│   └── itsm_poller.py               # Background asyncio task — polls ITSM for resolved
+│                                    #   tickets and syncs status back to Orbit DB
+│
 ├── core/
 │   ├── constants.py                 # Tuning constants, prompt templates, error rules
+│   ├── runtime_config.py            # Live settings store — loaded from DB, in-memory overrides
 │   ├── mcp_manager.py               # MultiMCP — connects to 3 MCP servers
 │   ├── state.py                     # In-memory fix progress tracking
 │   ├── validators.py                # iFlow XML validation helpers
