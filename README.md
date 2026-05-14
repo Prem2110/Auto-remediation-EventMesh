@@ -354,23 +354,49 @@ binding (`VCAP_SERVICES` on CF). The app must have the Destination service insta
 | Namespace | `default/sierra.automation/1` |
 | Region | `us10` |
 
+### How message routing works
+
+Each queue requires **two independent subscriptions** — both must be present for the
+pipeline to function:
+
+| Subscription type | What it does | Where to configure |
+|---|---|---|
+| **Queue Topic Subscription** | Routes published EM topic messages *into* the queue | EM admin → Queues → click queue → **Queue Subscriptions** tab |
+| **Webhook Subscription** | Pushes messages *out of* the queue to your HTTP endpoint | EM admin → **Webhooks** tab |
+
+> If the Queue Topic Subscription is missing, SAP Event Mesh accepts the publish with
+> HTTP 204 but the message never enters the queue — so the webhook never fires and
+> incidents stay permanently at `CLASSIFIED`.
+
 ### Queues
 
-Create the following 5 queues in the `em_automation` Event Mesh service instance:
+Create the following 5 queues in the `em_automation` Event Mesh service instance.
+Recommended settings: **Access type: Non-Exclusive**, **Message retention: 7 days**.
 
-| Queue Name | Topic Subscription | Purpose |
-|---|---|---|
-| `default/sierra.automation/1/autofix/orbit/orchestrator` | `default/sierra.automation/1/autofix/in` | Receives raw iFlow error events from CPI Monitor |
-| `default/sierra.automation/1/autofix/orbit/observer` | `default/sierra.automation/1/autofix/orbit/observer` | Receives classified incidents for enrichment |
-| `default/sierra.automation/1/autofix/orbit/rca` | `default/sierra.automation/1/autofix/orbit/rca` | Receives enriched incidents for RCA |
-| `default/sierra.automation/1/autofix/orbit/fixer` | `default/sierra.automation/1/autofix/orbit/fixer` | Receives RCA-complete incidents for fix |
-| `default/sierra.automation/1/autofix/orbit/verifier` | `default/sierra.automation/1/autofix/orbit/verifier` | Receives deployed fixes for verification |
+| Queue Name | Purpose |
+|---|---|
+| `default/sierra.automation/1/autofix/orbit/orchestrator` | Receives raw iFlow error events from CPI Monitor |
+| `default/sierra.automation/1/autofix/orbit/observer` | Receives classified incidents for enrichment |
+| `default/sierra.automation/1/autofix/orbit/rca` | Receives enriched incidents for RCA |
+| `default/sierra.automation/1/autofix/orbit/fixer` | Receives RCA-complete incidents for fix |
+| `default/sierra.automation/1/autofix/orbit/verifier` | Receives deployed fixes for verification |
 
-Recommended queue settings: **Access type: Exclusive**, **Message retention: 7 days**
+### Queue Topic Subscriptions
+
+For each queue, go to **EM admin → Queues → click the queue name → Queue Subscriptions tab → + Add**
+and add the exact topic path shown below:
+
+| Queue | Topic subscription to add |
+|---|---|
+| `default/sierra.automation/1/autofix/orbit/orchestrator` | `default/sierra.automation/1/autofix/in` |
+| `default/sierra.automation/1/autofix/orbit/observer` | `default/sierra.automation/1/autofix/orbit/observer` |
+| `default/sierra.automation/1/autofix/orbit/rca` | `default/sierra.automation/1/autofix/orbit/rca` |
+| `default/sierra.automation/1/autofix/orbit/fixer` | `default/sierra.automation/1/autofix/orbit/fixer` |
+| `default/sierra.automation/1/autofix/orbit/verifier` | `default/sierra.automation/1/autofix/orbit/verifier` |
 
 ### Webhook Subscriptions
 
-Create one REST delivery webhook per queue:
+Create one REST delivery webhook per queue in **EM admin → Webhooks tab**:
 
 | Subscription Name | Source Queue | Webhook URL |
 |---|---|---|
@@ -903,6 +929,35 @@ backend application.
 ---
 
 ## 12. What's New
+
+### Non-fixable error types short-circuit to TICKET_CREATED at orchestrator stage
+
+Error types that cannot be resolved by modifying iFlow XML (e.g. `BACKEND_ERROR`,
+`SFTP_ERROR`, `SSL_ERROR`, `CONNECTIVITY_ERROR`) now skip the full
+observer → RCA → fixer → verifier pipeline entirely. The orchestrator creates an
+external ticket immediately after incident creation, provided:
+
+1. `is_iflow_fixable(error_type)` returns `False`
+2. Classifier confidence is ≥ 0.80
+3. The `REMEDIATION_POLICIES` setting for that error type has `action: TICKET_CREATED`
+
+The policy check reads `_runtime_cfg.get("REMEDIATION_POLICIES")` at runtime so any
+override configured in the Settings page is always respected.
+
+### Event Mesh topic URL encoding fix
+
+`event_mesh/event_bus.py` was calling `quote(topic, safe="")` which encoded forward
+slashes as `%2F` in the REST publish URL. SAP Event Mesh requires real slashes in the
+topic path segment. Changed to `quote(topic, safe="/")` in both `_publish_rest` and
+`publish_to_next`.
+
+### Pipeline tab UI — 3-dot loader and per-stage progress popup
+
+- In-progress incidents (`CLASSIFIED`, `OBSERVED`, `RCA_IN_PROGRESS`, `RCA_COMPLETE`,
+  `FIX_IN_PROGRESS`) now show an animated 3-dot bouncing loader next to the status chip.
+- Clicking any row opens a modal showing all 4 pipeline stages (Observer, RCA, Fixer,
+  Verifier) with animated state indicators (Done / Running / Waiting / Failed), plus
+  root cause and proposed fix when available.
 
 ### Fix pipeline refactored into a supervised multi-strategy engine
 
