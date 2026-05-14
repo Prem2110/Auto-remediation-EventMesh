@@ -196,6 +196,35 @@ Rules:
     async def test_iflow_after_fix(self, incident: Dict[str, Any]) -> Dict[str, Any]:
         has_test_tool = any("test_iflow_with_payload" in t.name for t in self._mcp.tools)
         if not has_test_tool:
+            # Fall back to a direct runtime status check so a missing test tool
+            # never causes a successfully deployed fix to be marked FIX_FAILED_RUNTIME.
+            _iflow_fb = (
+                incident.get("designtime_artifact_id")
+                or incident.get("iflow_id", "")
+            )
+            if self.error_fetcher is not None and _iflow_fb:
+                try:
+                    _detail = await self.error_fetcher.fetch_runtime_artifact_detail(_iflow_fb)
+                    _status = (
+                        _detail.get("Status")
+                        or _detail.get("DeployState")
+                        or _detail.get("RuntimeStatus")
+                        or "UNKNOWN"
+                    )
+                    _passed = _status.upper() not in ("ERROR", "STOPPED", "UNKNOWN")
+                    logger.info(
+                        "[TEST_AFTER_FIX] no test tool — fallback runtime check iflow=%s status=%s passed=%s",
+                        _iflow_fb, _status, _passed,
+                    )
+                    return {
+                        "success": _passed,
+                        "skipped": False,
+                        "summary": f"test_iflow_with_payload unavailable — runtime status: {_status}.",
+                    }
+                except Exception as _fb_exc:
+                    logger.warning(
+                        "[TEST_AFTER_FIX] fallback runtime check failed iflow=%s: %s", _iflow_fb, _fb_exc
+                    )
             return {
                 "success": False,
                 "skipped": True,

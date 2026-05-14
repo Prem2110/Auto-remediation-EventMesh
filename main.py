@@ -1735,6 +1735,14 @@ async def _run_verifier_task(event: Dict[str, Any]) -> None:
 
         result      = await orchestrator._verifier.test_iflow_after_fix(dict(incident))  # type: ignore[union-attr]
         test_passed = result.get("test_passed", False) or result.get("success", False)
+        # skipped=True means verification tools were unavailable — do not downgrade
+        # a FIX_VERIFIED status the fixer already set based on deploy confirmation.
+        if result.get("skipped") and not test_passed:
+            logger.info(
+                "[Agents/verifier] Verification skipped (tools unavailable) incident=%s — keeping fixer status",
+                incident_id,
+            )
+            return
         final_status = "FIX_VERIFIED" if test_passed else "FIX_FAILED_RUNTIME"
         update_incident(incident_id, {
             "status":              final_status,
