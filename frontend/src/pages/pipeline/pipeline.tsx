@@ -44,11 +44,53 @@ const IN_PROGRESS_STATUSES = new Set([
   "CLASSIFIED", "OBSERVED", "RCA_IN_PROGRESS", "RCA_COMPLETE", "FIX_IN_PROGRESS",
 ]);
 
+// ── Pipeline stage popup ──────────────────────────────────────────────────────
+const STAGE_NAMES = ["Observer", "RCA", "Fixer", "Verifier"];
+const STAGE_DESCS = [
+  "Enrich metadata from SAP OData",
+  "Root cause analysis via AI",
+  "Apply iFlow fix & deploy",
+  "Verify fix resolved the error",
+];
+
+type StageState = "done" | "active" | "pending" | "failed";
+
+function deriveStageStates(status: string): StageState[] {
+  // [doneUpToIdx, activeIdx, failedIdx] — -1 means none
+  const cfg: Record<string, [number, number, number]> = {
+    "CLASSIFIED":         [-1,  0, -1],
+    "OBSERVED":           [ 0,  1, -1],
+    "RCA_IN_PROGRESS":    [ 0,  1, -1],
+    "RCA_COMPLETE":       [ 1,  2, -1],
+    "FIX_IN_PROGRESS":    [ 1,  2, -1],
+    "AWAITING_APPROVAL":  [ 1,  2, -1],
+    "TICKET_CREATED":     [ 2, -1, -1],
+    "RETRIED":            [ 2, -1, -1],
+    "FIX_VERIFIED":       [ 3, -1, -1],
+    "REMEDIATED":         [ 3, -1, -1],
+    "OBS_FAILED":         [-1, -1,  0],
+    "RCA_FAILED":         [ 0, -1,  1],
+    "RCA_INCONCLUSIVE":   [ 0, -1,  1],
+    "FIX_FAILED":         [ 1, -1,  2],
+    "FIX_FAILED_DEPLOY":  [ 1, -1,  2],
+    "FIX_FAILED_UPDATE":  [ 1, -1,  2],
+    "FIX_FAILED_RUNTIME": [ 2, -1,  3],
+  };
+  const [doneUpTo, activeIdx, failedIdx] = cfg[status] ?? [-1, 0, -1];
+  return [0, 1, 2, 3].map((i): StageState => {
+    if (i === failedIdx)  return "failed";
+    if (i <= doneUpTo)    return "done";
+    if (i === activeIdx)  return "active";
+    return "pending";
+  });
+}
+
 export default function Pipeline() {
   const qc = useQueryClient();
   const [toggling, setToggling] = useState(false);
   const [togglingAutoFix, setTogglingAutoFix] = useState(false);
   const [tracePage, setTracePage] = useState(1);
+  const [modalIncident, setModalIncident] = useState<TraceIncident | null>(null);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: pipelineData } = useQuery({
@@ -205,7 +247,7 @@ export default function Pipeline() {
             </thead>
             <tbody>
               {incidents.map((inc) => (
-                <tr key={inc.incident_id}>
+                <tr key={inc.incident_id} className={styles.trClickable} onClick={() => setModalIncident(inc)}>
                   <td className={styles.tdIflow} title={inc.iflow_name || inc.iflow_id || inc.message_guid || ""}>
                     {inc.iflow_name || (
                       <span className={styles.tdIflowUnknown}>
@@ -267,5 +309,70 @@ export default function Pipeline() {
       )}
 
     </div>
+
+    {/* ── Stage progress popup ── */}
+    {modalIncident && (
+      <div className={styles.modalOverlay} onClick={() => setModalIncident(null)}>
+        <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+
+          {/* header */}
+          <div className={styles.modalHeader}>
+            <div className={styles.modalHeaderLeft}>
+              <div className={styles.modalIflow}>{modalIncident.iflow_name || modalIncident.message_guid || "—"}</div>
+              <div className={styles.modalMeta}>
+                <span className={styles.errorTypeBadge}>{modalIncident.error_type}</span>
+                <span className={`${styles.statusChip} ${styles[`chip-${modalIncident.status?.toLowerCase().replace(/\s+/g,"_")}`]}`}>
+                  {modalIncident.status}
+                  {IN_PROGRESS_STATUSES.has(modalIncident.status) && (
+                    <span className={styles.dotLoader}><span /><span /><span /></span>
+                  )}
+                </span>
+              </div>
+            </div>
+            <button className={styles.modalClose} onClick={() => setModalIncident(null)}>×</button>
+          </div>
+
+          {/* stage list */}
+          <div className={styles.modalBody}>
+            <div className={styles.modalSectionTitle}>Pipeline Progress</div>
+            <div className={styles.stageList}>
+              {deriveStageStates(modalIncident.status).map((state, i) => (
+                <div key={i} className={`${styles.stageRow} ${styles[`stageRow_${state}`]}`}>
+                  <span className={`${styles.stageBullet} ${styles[`stageBullet_${state}`]}`} />
+                  <div className={styles.stageInfo}>
+                    <span className={styles.stageName}>{STAGE_NAMES[i]}</span>
+                    <span className={styles.stageDesc}>{STAGE_DESCS[i]}</span>
+                  </div>
+                  <div className={styles.stageRight}>
+                    {state === "active"  && <><span className={styles.stageActiveText}>Running</span><span className={styles.dotLoader}><span /><span /><span /></span></>}
+                    {state === "done"    && <span className={styles.stageDoneText}>✓ Done</span>}
+                    {state === "failed"  && <span className={styles.stageFailedText}>✗ Failed</span>}
+                    {state === "pending" && <span className={styles.stagePendingText}>Waiting</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* root cause */}
+            {modalIncident.root_cause && (
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionTitle}>Root Cause</div>
+                <div className={styles.modalText}>{modalIncident.root_cause}</div>
+              </div>
+            )}
+
+            {/* proposed fix */}
+            {modalIncident.proposed_fix && (
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionTitle}>Proposed Fix</div>
+                <div className={styles.modalText}>{modalIncident.proposed_fix}</div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    )}
+
   );
 }
