@@ -1397,6 +1397,29 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
             incident_id, _iflow_id, clf.get("error_type", ""), clf.get("confidence", 0.0),
         )
 
+        # ── Short-circuit: definitively non-fixable errors skip observer/RCA/fixer ──
+        # BACKEND_ERROR, SFTP_ERROR, SSL_ERROR etc. need no iFlow XML inspection;
+        # create the ticket immediately at classification time.
+        _clf_type = clf.get("error_type", "UNKNOWN_ERROR")
+        _clf_conf = clf.get("confidence", 0.0)
+        if not orchestrator._classifier.is_iflow_fixable(_clf_type) and _clf_conf >= 0.80:  # type: ignore[union-attr]
+            _reason = orchestrator._classifier.fallback_root_cause(_clf_type, _error_msg)  # type: ignore[union-attr]
+            _ticket_id = await orchestrator._create_external_ticket(  # type: ignore[union-attr]
+                {**normalized, "incident_id": incident_id},
+                {"error_type": _clf_type, "confidence": _clf_conf, "root_cause": _reason, "proposed_fix": ""},
+                ticket_source="CLASSIFIER_ESCALATION",
+            )
+            update_incident(incident_id, {
+                "status":      "TICKET_CREATED",
+                "ticket_id":   _ticket_id,
+                "fix_summary": f"Error type '{_clf_type}' cannot be resolved by modifying iFlow XML. {_reason[:300]}",
+            })
+            logger.info(
+                "[Agents/orchestrator] Non-fixable '%s' (%.2f) → TICKET_CREATED incident=%s ticket=%s",
+                _clf_type, _clf_conf, incident_id, _ticket_id,
+            )
+            return
+
         # Hand off to observer — publish to observer queue topic
         await event_bus.publish_to_next(event_bus.make_topic("observer"), {
             "stage": "observer", "incident_id": incident_id,
