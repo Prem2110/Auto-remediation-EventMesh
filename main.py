@@ -1398,11 +1398,16 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
         )
 
         # ── Short-circuit: definitively non-fixable errors skip observer/RCA/fixer ──
-        # BACKEND_ERROR, SFTP_ERROR, SSL_ERROR etc. need no iFlow XML inspection;
-        # create the ticket immediately at classification time.
-        _clf_type = clf.get("error_type", "UNKNOWN_ERROR")
-        _clf_conf = clf.get("confidence", 0.0)
-        if not orchestrator._classifier.is_iflow_fixable(_clf_type) and _clf_conf >= 0.80:  # type: ignore[union-attr]
+        # Only triggers when the error is not XML-fixable AND the configured policy
+        # also says TICKET_CREATED — respects any user overrides in Settings.
+        _clf_type   = clf.get("error_type", "UNKNOWN_ERROR")
+        _clf_conf   = clf.get("confidence", 0.0)
+        _pol_action = (_runtime_cfg.get("REMEDIATION_POLICIES") or {}).get(_clf_type, {}).get("action", "")
+        if (
+            not orchestrator._classifier.is_iflow_fixable(_clf_type)  # type: ignore[union-attr]
+            and _clf_conf >= 0.80
+            and _pol_action == "TICKET_CREATED"
+        ):
             _reason = orchestrator._classifier.fallback_root_cause(_clf_type, _error_msg)  # type: ignore[union-attr]
             _ticket_id = await orchestrator._create_external_ticket(  # type: ignore[union-attr]
                 {**normalized, "incident_id": incident_id},
