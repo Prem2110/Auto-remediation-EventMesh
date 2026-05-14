@@ -308,10 +308,8 @@ export default function Pipeline() {
         </div>
       )}
 
-    </div>
-
-    {/* ── Stage progress popup ── */}
-    {modalIncident && (
+      {/* ── Stage progress popup ── */}
+      {modalIncident && (
       <div className={styles.modalOverlay} onClick={() => setModalIncident(null)}>
         <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
 
@@ -373,6 +371,6 @@ export default function Pipeline() {
         </div>
       </div>
     )}
-
+    </div>
   );
 }
