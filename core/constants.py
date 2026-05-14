@@ -84,6 +84,14 @@ REMEDIATION_POLICIES: Dict[str, Dict] = {
     "DUPLICATE_ERROR":       {"action": "TICKET_CREATED", "replay_after_fix": False},
     "PAYLOAD_SIZE_ERROR":    {"action": "TICKET_CREATED", "replay_after_fix": False},
     "UNKNOWN_ERROR":         {"action": "APPROVAL",       "replay_after_fix": False},
+    "ODATA_ERROR":           {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "GROOVY_ERROR":          {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "SCRIPT_ERROR":          {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "SOAP_ERROR":            {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "ROUTING_ERROR":         {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "PROPERTY_ERROR":        {"action": "AUTO_FIX",       "replay_after_fix": True},
+    "IDOC_ERROR":            {"action": "TICKET_CREATED", "replay_after_fix": False},
+    "RESOURCE_ERROR":        {"action": "TICKET_CREATED", "replay_after_fix": False},
 }
 
 ACTION_HINTS: Dict[str, str] = {
@@ -99,6 +107,14 @@ ACTION_HINTS: Dict[str, str] = {
     "DUPLICATE_ERROR":      "Duplicate record rejected by backend — idempotency issue requires backend or source-system fix. A ticket has been created.",
     "PAYLOAD_SIZE_ERROR":   "Message payload exceeds size limit — splitting or infrastructure change required. A ticket has been created.",
     "UNKNOWN_ERROR":        "Error could not be classified automatically — awaiting human review before any fix is applied.",
+    "ODATA_ERROR":          "OData call failed — agent is fixing the endpoint URL, entity set, or query parameters and redeploying.",
+    "GROOVY_ERROR":         "Groovy script threw an exception — agent is fixing the script logic and redeploying.",
+    "SCRIPT_ERROR":         "Script step failed — agent is fixing the script and redeploying.",
+    "SOAP_ERROR":           "SOAP call failed — agent is fixing the WSDL binding, endpoint, or headers and redeploying.",
+    "ROUTING_ERROR":        "Routing condition evaluated incorrectly — agent is fixing the routing rule and redeploying.",
+    "PROPERTY_ERROR":       "Exchange property reference is missing or mistyped — agent is fixing the property step and redeploying.",
+    "IDOC_ERROR":           "IDoc processing error — requires manual investigation of the IDoc structure or partner profile. A ticket has been created.",
+    "RESOURCE_ERROR":       "Resource limit reached (memory/threads) — infrastructure scaling or configuration change required. A ticket has been created.",
 }
 
 _STATUS_ACTION_HINTS: Dict[str, str] = {

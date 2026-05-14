@@ -68,7 +68,10 @@ async def poll_itsm_tickets_once(classifier=None) -> None:
         try:
             itsm_data = await get_itsm_ticket(itsm_id)
             if not itsm_data:
-                logger.debug("[ITSMPoller] No response for itsm_id=%s — skipping", itsm_id)
+                logger.warning(
+                    "[ITSMPoller] itsm_id=%s does not exist in ITSM (ticket_id=%s incident_id=%s) — ticket may be stale test data or was deleted",
+                    itsm_id, ticket_id, incident_id,
+                )
                 continue
 
             itsm_status = str(itsm_data.get("status", "")).lower()

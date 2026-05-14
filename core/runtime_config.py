@@ -158,6 +158,14 @@ SETTINGS_SCHEMA: list[dict] = [
             "DUPLICATE_ERROR":      {"action": "TICKET_CREATED", "replay_after_fix": False},
             "PAYLOAD_SIZE_ERROR":   {"action": "TICKET_CREATED", "replay_after_fix": False},
             "UNKNOWN_ERROR":        {"action": "APPROVAL",       "replay_after_fix": False},
+            "ODATA_ERROR":          {"action": "AUTO_FIX",       "replay_after_fix": True},
+            "GROOVY_ERROR":         {"action": "AUTO_FIX",       "replay_after_fix": True},
+            "SCRIPT_ERROR":         {"action": "AUTO_FIX",       "replay_after_fix": True},
+            "SOAP_ERROR":           {"action": "AUTO_FIX",       "replay_after_fix": True},
+            "ROUTING_ERROR":        {"action": "AUTO_FIX",       "replay_after_fix": True},
+            "PROPERTY_ERROR":       {"action": "AUTO_FIX",       "replay_after_fix": True},
+            "IDOC_ERROR":           {"action": "TICKET_CREATED", "replay_after_fix": False},
+            "RESOURCE_ERROR":       {"action": "TICKET_CREATED", "replay_after_fix": False},
         },
         "label":          "Remediation Policies",
         "description":    "Per-error-type action: AUTO_FIX, APPROVAL, RETRY, or TICKET_CREATED. Also controls whether to replay the message after a fix.",
@@ -214,7 +222,15 @@ class _RuntimeConfig:
                 if schema is None:
                     continue
                 try:
-                    self._overrides[k] = _coerce(raw, dtype)
+                    coerced = _coerce(raw, dtype)
+                    # For REMEDIATION_POLICIES, merge stored value on top of the schema
+                    # default so new error types added to the default are visible without
+                    # requiring a manual Settings reset.
+                    if k == "REMEDIATION_POLICIES" and isinstance(coerced, dict):
+                        merged = dict(schema.get("default") or {})
+                        merged.update(coerced)
+                        coerced = merged
+                    self._overrides[k] = coerced
                     loaded += 1
                 except Exception as exc:
                     logger.warning("[RuntimeConfig] Could not coerce %s=%r as %s: %s", k, raw, dtype, exc)

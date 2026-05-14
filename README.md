@@ -930,6 +930,29 @@ backend application.
 
 ## 12. What's New
 
+### All classifier error types now have Settings page entries
+
+8 error types recognised by the classifier were previously missing from
+`REMEDIATION_POLICIES`, so they never appeared in the Settings page and had no
+explicit remediation action. They are now included with the following defaults:
+
+| Error Type | Default Action | Replay After Fix |
+|---|---|---|
+| `ODATA_ERROR` | `AUTO_FIX` | Yes |
+| `GROOVY_ERROR` | `AUTO_FIX` | Yes |
+| `SCRIPT_ERROR` | `AUTO_FIX` | Yes |
+| `SOAP_ERROR` | `AUTO_FIX` | Yes |
+| `ROUTING_ERROR` | `AUTO_FIX` | Yes |
+| `PROPERTY_ERROR` | `AUTO_FIX` | Yes |
+| `IDOC_ERROR` | `TICKET_CREATED` | No |
+| `RESOURCE_ERROR` | `TICKET_CREATED` | No |
+
+**Existing deployments** — the runtime config now merges the schema defaults with any
+stored policy on startup. New error types are automatically added to your saved
+policy without resetting your existing customisations.
+
+---
+
 ### Non-fixable error types short-circuit to TICKET_CREATED at orchestrator stage
 
 Error types that cannot be resolved by modifying iFlow XML (e.g. `BACKEND_ERROR`,
