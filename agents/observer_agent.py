@@ -477,7 +477,7 @@ class ObserverAgent:
             from datetime import datetime, timedelta, UTC  # noqa: PLC0415
             cutoff = (datetime.now(UTC) - timedelta(hours=_cfg.get("PENDING_APPROVAL_TIMEOUT_HRS"))).isoformat()
             stale = [
-                inc for inc in get_all_incidents(status="AWAITING_APPROVAL", limit=200)
+                inc for inc in (get_all_incidents(status="AWAITING_APPROVAL", limit=200).get("incidents", []))
                 if (inc.get("pending_since") or inc.get("created_at") or "") < cutoff
                 and not inc.get("auto_escalated")
             ]

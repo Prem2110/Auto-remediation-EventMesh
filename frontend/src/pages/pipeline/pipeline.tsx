@@ -125,6 +125,7 @@ export default function Pipeline() {
             <span className={styles.autoFixLabel}>
               {togglingAutoFix ? "…" : autoFixOn ? "Auto-Fix" : "Manual"}
             </span>
+            {autoFixOn && !togglingAutoFix && <span className={styles.autoFixActiveDot} />}
           </div>
           <button
             className={`${styles.toggleBtn} ${running ? styles.toggleBtnStop : styles.toggleBtnStart} tooltip-below`}

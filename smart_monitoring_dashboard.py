@@ -51,9 +51,16 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 # ASYNC WRAPPERS FOR BLOCKING DATABASE CALLS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _get_incidents(status: Optional[str] = None, limit: int = 50, offset: int = 0) -> list:
+    """Unwrap get_all_incidents() dict → list so callers always iterate over rows."""
+    result = get_all_incidents(status=status, limit=limit, offset=offset)
+    if isinstance(result, dict):
+        return result.get("incidents", [])
+    return result if isinstance(result, list) else []
+
 async def _aget_all_incidents(limit: int = 50, status: Optional[str] = None):
-    """Async wrapper for get_all_incidents to avoid blocking the event loop."""
-    return await asyncio.to_thread(get_all_incidents, status, limit)
+    """Async wrapper that returns a plain list of incident dicts."""
+    return await asyncio.to_thread(_get_incidents, status, limit)
 
 async def _acount_all_incidents(status: Optional[str] = None):
     """Async wrapper for count_all_incidents to avoid blocking the event loop."""
@@ -288,7 +295,7 @@ async def get_kpi_cards(mcp=Depends(_get_mcp)):
         total_failed_messages = await mcp.error_fetcher.fetch_failed_messages_count()
         
         # Get all incidents
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         total_incidents = len(all_incidents)
         
         # Calculate status counts
@@ -366,7 +373,7 @@ async def get_error_distribution():
     Returns counts and percentages for each error type.
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         total = count_all_incidents()
         
         error_types: Dict[str, int] = defaultdict(int)
@@ -406,7 +413,7 @@ async def get_status_distribution():
     Returns counts and percentages for each status.
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         total = count_all_incidents()
         
         statuses: Dict[str, int] = defaultdict(int)
@@ -451,7 +458,7 @@ async def get_status_breakdown():
                  VERIFICATION_UNAVAILABLE
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         total = count_all_incidents()
         
         # Define all possible statuses with descriptions
@@ -718,7 +725,7 @@ async def get_active_incidents_table(limit: int = 20):
             "AWAITING_APPROVAL", "AWAITING_HUMAN_REVIEW", "FIX_IN_PROGRESS", "FIX_DEPLOYED",
         }
         
-        all_incidents = get_all_incidents(limit=500)
+        all_incidents = _get_incidents(limit=500)
         active_incidents = [
             {
                 "incident_id": inc.get("incident_id"),
@@ -765,7 +772,7 @@ async def get_incidents_paginated(
             "AWAITING_APPROVAL", "AWAITING_HUMAN_REVIEW", "FIX_IN_PROGRESS", "FIX_DEPLOYED",
         }
         
-        all_incidents = get_all_incidents(limit=0)
+        all_incidents = _get_incidents(limit=0)
         
         filtered_incidents = [
             {
@@ -826,7 +833,7 @@ async def get_recent_failures_table(limit: int = 20):
     immediately at startup and shows error previews correctly.
     """
     try:
-        rows = get_all_incidents(limit=limit)
+        rows = _get_incidents(limit=limit)
 
         recent_failures = [
             {
@@ -863,7 +870,7 @@ async def get_fix_progress_tracker():
     Returns incidents currently in FIX_IN_PROGRESS status with details.
     """
     try:
-        all_incidents = get_all_incidents(limit=500)
+        all_incidents = _get_incidents(limit=500)
         in_progress = [
             {
                 "incident_id": inc.get("incident_id"),
@@ -900,7 +907,7 @@ async def get_noisy_integrations_leaderboard(limit: int = 10):
     Returns iFlows with highest total occurrence counts.
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         
         iflow_occurrences: Dict[str, int] = defaultdict(int)
         for inc in all_incidents:
@@ -929,7 +936,7 @@ async def get_recurring_incidents_leaderboard(limit: int = 10):
     Returns individual incidents with highest occurrence counts.
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         
         # Sort by occurrence count
         recurring = sorted(
@@ -969,7 +976,7 @@ async def get_longest_open_leaderboard(limit: int = 10):
     Returns incidents that have been open the longest without resolution.
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         
         # Filter unresolved incidents
         unresolved_statuses = {
@@ -1084,7 +1091,7 @@ async def drill_down_iflow(iflow_name: str, mcp=Depends(_get_mcp)):
     """
     try:
         # Get all incidents for this iFlow
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         iflow_incidents = [
             inc for inc in all_incidents
             if inc.get("iflow_id") == iflow_name
@@ -1142,7 +1149,7 @@ async def get_health_metrics(mcp=Depends(_get_mcp)):
     - system_load: Current processing load indicators
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         
         # Fix success rate
         fix_attempted = sum(
@@ -1207,7 +1214,7 @@ async def get_sla_metrics():
     - sla_compliance_rate: Percentage of incidents meeting SLA
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         
         # Define SLA threshold (e.g., 4 hours)
         sla_threshold_hours = 4
@@ -1271,7 +1278,7 @@ async def get_rca_coverage():
     - avg_confidence: Average RCA confidence
     """
     try:
-        all_incidents = get_all_incidents(limit=1000)
+        all_incidents = _get_incidents(limit=1000)
         total = count_all_incidents()
         
         rca_complete = sum(

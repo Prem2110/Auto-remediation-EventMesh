@@ -1485,7 +1485,8 @@ async def agent_observer_webhook(event: Dict[str, Any]):
     Fetches OData metadata, updates the incident, then publishes to the RCA queue.
     """
     if orchestrator is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+        logger.warning("[Agents/observer] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
     _record_agent_webhook()
     asyncio.create_task(_run_observer_task(event))
     logger.info("[Agents/observer] Webhook received incident=%s, dispatched", event.get("incident_id"))
@@ -1547,7 +1548,8 @@ async def agent_rca_webhook(event: Dict[str, Any]):
     Runs root cause analysis, persists results, then publishes to the fixer queue.
     """
     if orchestrator is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+        logger.warning("[Agents/rca] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
     _record_agent_webhook()
     asyncio.create_task(_run_rca_task(event))
     logger.info("[Agents/rca] Webhook received incident=%s, dispatched", event.get("incident_id"))
@@ -1679,7 +1681,8 @@ async def agent_fixer_webhook(event: Dict[str, Any]):
     Applies the proposed fix, deploys the iFlow, then publishes to the verifier queue.
     """
     if orchestrator is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+        logger.warning("[Agents/fixer] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
     _record_agent_webhook()
     asyncio.create_task(_run_fixer_task(event))
     logger.info("[Agents/fixer] Webhook received incident=%s, dispatched", event.get("incident_id"))
@@ -1742,7 +1745,8 @@ async def agent_verifier_webhook(request: Request, event: Dict[str, Any]):
             pass
 
     if orchestrator is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+        logger.warning("[Agents/verifier] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
     incident_id = event.get("incident_id", "")
     _record_agent_webhook()
     asyncio.create_task(_run_verifier_task(event))
