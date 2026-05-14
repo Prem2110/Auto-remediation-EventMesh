@@ -40,6 +40,10 @@ interface TraceIncident {
 
 const TRACE_PAGE_SIZE = 15;
 
+const IN_PROGRESS_STATUSES = new Set([
+  "CLASSIFIED", "OBSERVED", "RCA_IN_PROGRESS", "RCA_COMPLETE", "FIX_IN_PROGRESS",
+]);
+
 export default function Pipeline() {
   const qc = useQueryClient();
   const [toggling, setToggling] = useState(false);
@@ -210,7 +214,16 @@ export default function Pipeline() {
                     )}
                   </td>
                   <td><span className={styles.errorTypeBadge}>{inc.error_type}</span></td>
-                  <td><span className={`${styles.statusChip} ${styles[`chip-${inc.status?.toLowerCase().replace(/\s+/g,"_")}`]}`}>{inc.status}</span></td>
+                  <td>
+                    <span className={`${styles.statusChip} ${styles[`chip-${inc.status?.toLowerCase().replace(/\s+/g,"_")}`]}`}>
+                      {inc.status}
+                      {IN_PROGRESS_STATUSES.has(inc.status) && (
+                        <span className={styles.dotLoader}>
+                          <span /><span /><span />
+                        </span>
+                      )}
+                    </span>
+                  </td>
                   <td className={styles.tdRca}>{inc.root_cause ?? "—"}</td>
                   <td className={styles.tdDate}>{new Date(inc.created_at).toLocaleString()}</td>
                 </tr>

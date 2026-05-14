@@ -257,13 +257,50 @@
 }
 
 /* dynamic status chip colours */
-.chip-new             { background: rgba(59,130,246,0.12);  color: #1d4ed8; }
-.chip-classified      { background: rgba(124,58,237,0.12);  color: #6d28d9; }
-.chip-rca_complete    { background: rgba(217,119,6,0.12);   color: #b45309; }
-.chip-knowledge_found { background: rgba(20,184,166,0.12);  color: #0f766e; }
-.chip-remediated      { background: rgba(16,185,129,0.12);  color: #047857; }
-.chip-failed          { background: rgba(239,68,68,0.12);   color: #b91c1c; }
-.chip-manual_review   { background: rgba(245,158,11,0.12);  color: #b45309; }
+.chip-new                   { background: rgba(59,130,246,0.12);  color: #1d4ed8; }
+.chip-classified            { background: rgba(124,58,237,0.12);  color: #6d28d9; }
+.chip-observed              { background: rgba(59,130,246,0.12);  color: #1d4ed8; }
+.chip-rca_in_progress       { background: rgba(217,119,6,0.12);   color: #b45309; }
+.chip-rca_complete          { background: rgba(217,119,6,0.12);   color: #b45309; }
+.chip-fix_in_progress       { background: rgba(99,102,241,0.12);  color: #4338ca; }
+.chip-awaiting_approval     { background: rgba(245,158,11,0.12);  color: #b45309; }
+.chip-ticket_created        { background: rgba(20,184,166,0.12);  color: #0f766e; }
+.chip-fix_verified          { background: rgba(16,185,129,0.12);  color: #047857; }
+.chip-remediated            { background: rgba(16,185,129,0.12);  color: #047857; }
+.chip-retried               { background: rgba(16,185,129,0.12);  color: #047857; }
+.chip-fix_failed            { background: rgba(239,68,68,0.12);   color: #b91c1c; }
+.chip-fix_failed_runtime    { background: rgba(239,68,68,0.12);   color: #b91c1c; }
+.chip-fix_failed_deploy     { background: rgba(239,68,68,0.12);   color: #b91c1c; }
+.chip-fix_failed_update     { background: rgba(239,68,68,0.12);   color: #b91c1c; }
+.chip-rca_failed            { background: rgba(239,68,68,0.12);   color: #b91c1c; }
+.chip-rca_inconclusive      { background: rgba(239,68,68,0.12);   color: #b91c1c; }
+.chip-failed                { background: rgba(239,68,68,0.12);   color: #b91c1c; }
+.chip-knowledge_found       { background: rgba(20,184,166,0.12);  color: #0f766e; }
+.chip-manual_review         { background: rgba(245,158,11,0.12);  color: #b45309; }
+
+/* ── 3-dot in-progress loader ────────────────────────────────────────────── */
+.dotLoader {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5px;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+
+.dotLoader span {
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dot-bounce 1.1s ease-in-out infinite;
+}
+.dotLoader span:nth-child(2) { animation-delay: 0.18s; }
+.dotLoader span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes dot-bounce {
+  0%, 80%, 100% { transform: translateY(0)   scale(0.65); opacity: 0.35; }
+  40%           { transform: translateY(-3px) scale(1);    opacity: 1;    }
+}
 
 @keyframes fade-in {
   from { opacity: 0; }
