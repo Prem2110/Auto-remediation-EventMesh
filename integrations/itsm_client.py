@@ -254,10 +254,16 @@ async def patch_itsm_ticket(
                     "Authorization": f"Bearer {dest['token']}",
                     "Content-Type":  "application/json",
                     "Accept":        "application/json",
+                    "If-Match":      "*",  # required by OData v4 for PATCH
                 },
             )
         if resp.status_code in (401, 403):
             _invalidate_cache()
+        if not resp.is_success:
+            logger.error(
+                "[ITSM] patch_itsm_ticket HTTP %s for ID=%s — response body: %s",
+                resp.status_code, itsm_ticket_id, resp.text[:500],
+            )
         resp.raise_for_status()
         logger.info(
             "[ITSM] Ticket %s updated in ITSM → status=%s by %s",
