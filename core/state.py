@@ -22,7 +22,7 @@ from core.runtime_config import cfg as _cfg
 # RUNTIME FLAGS  (toggled live via API, no restart needed)
 # ─────────────────────────────────────────────
 RUNTIME_FLAGS: Dict[str, Any] = {
-    "auto_fix_enabled": _cfg.get("AUTO_FIX_ALL_CPI_ERRORS"),
+    "auto_fix_enabled": AUTO_FIX_ALL_CPI_ERRORS,
 }
 
 # ─────────────────────────────────────────────
