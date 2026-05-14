@@ -197,7 +197,7 @@ class EventBus:
         await self._dispatch_local(topic, event)
 
     async def _publish_rest(self, topic: str, event: Dict[str, Any]) -> None:
-        encoded_topic = quote(topic, safe="")
+        encoded_topic = quote(topic, safe="/")
         url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
         try:
             token = await _get_bearer_token()
@@ -267,7 +267,7 @@ class EventBus:
         """
         _rest_ok = False
         if _EM_ENABLED and _EM_REST_URL:
-            encoded_topic = quote(topic, safe="")
+            encoded_topic = quote(topic, safe="/")
             url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
             try:
                 token = await _get_bearer_token()
