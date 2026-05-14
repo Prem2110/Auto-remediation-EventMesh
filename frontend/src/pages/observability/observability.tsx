@@ -1113,7 +1113,7 @@ export default function Observability() {
             {/* Message list */}
             <div className={`${styles.listCol} ${selectedGuid ? styles.listColNarrow : ""}`}>
               <div className={styles.listColHeader}>
-                <span className={styles.listColTitle}>List Heading</span>
+                <span className={styles.listColTitle}>Integration Artifact</span>
                 <div className={styles.listColControls}>
                   <div className={styles.listColSearch}>
                     <span className={styles.listColSearchIcon}>🔍</span>
