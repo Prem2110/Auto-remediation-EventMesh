@@ -231,11 +231,12 @@ async def patch_itsm_ticket(
     """
     itsm_status = _ORBIT_TO_ITSM_STATUS.get(status.upper())
     if not itsm_status:
-        logger.debug("[ITSM] patch_itsm_ticket: no ITSM mapping for status=%s — skipping", status)
+        logger.warning("[ITSM] patch_itsm_ticket: no ITSM mapping for status='%s' — skipping (mapped: %s)", status, list(_ORBIT_TO_ITSM_STATUS))
         return False
 
     dest = await _resolve_itsm_destination()
     if not dest:
+        logger.error("[ITSM] patch_itsm_ticket: could not resolve ITSM-sierra destination — PATCH aborted for ID=%s", itsm_ticket_id)
         return False
 
     payload: Dict[str, Any] = {"status": itsm_status}
@@ -244,6 +245,7 @@ async def patch_itsm_ticket(
 
     try:
         url = f"{dest['base_url']}{_TICKETS_ENDPOINT}/{itsm_ticket_id}"
+        logger.info("[ITSM] PATCH %s payload=%s", url, payload)
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.patch(
                 url,

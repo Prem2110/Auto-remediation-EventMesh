@@ -1141,6 +1141,10 @@ async def update_ticket_status(ticket_id: str, body: Dict[str, Any]):
     itsm_ticket_id = (ticket.get("itsm_ticket_id") or "").strip()
     if new_status and itsm_ticket_id:
         from integrations.itsm_client import patch_itsm_ticket as _patch_itsm
+        logger.info(
+            "[ITSM] Dispatching PATCH for ticket=%s itsm_id=%s new_status=%s",
+            ticket_id, itsm_ticket_id, new_status,
+        )
         asyncio.create_task(
             _patch_itsm(
                 itsm_ticket_id,
@@ -1149,6 +1153,16 @@ async def update_ticket_status(ticket_id: str, body: Dict[str, Any]):
                 updated_by=body.get("updated_by", "Orbit UI"),
             ),
             name=f"itsm_patch_{ticket_id}",
+        )
+    elif new_status and not itsm_ticket_id:
+        logger.warning(
+            "[ITSM] Skipping PATCH — ticket=%s has no itsm_ticket_id stored in DB",
+            ticket_id,
+        )
+    elif not new_status:
+        logger.warning(
+            "[ITSM] Skipping PATCH — no status change in update body for ticket=%s",
+            ticket_id,
         )
 
     return {"ticket": updated}
