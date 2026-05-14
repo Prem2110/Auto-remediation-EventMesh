@@ -90,7 +90,7 @@ export default function Pipeline() {
   const [toggling, setToggling] = useState(false);
   const [togglingAutoFix, setTogglingAutoFix] = useState(false);
   const [tracePage, setTracePage] = useState(1);
-  const [modalIncident, setModalIncident] = useState<TraceIncident | null>(null);
+  const [modalIncidentId, setModalIncidentId] = useState<string | null>(null);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: pipelineData } = useQuery({
@@ -140,6 +140,7 @@ export default function Pipeline() {
   const running = pipelineData?.pipeline_running ?? false;
   const agentStatuses = pipelineData?.agents ?? {};
   const incidents: TraceIncident[]  = (traceData?.incidents ?? []) as TraceIncident[];
+  const modalIncident = modalIncidentId ? (incidents.find(i => i.incident_id === modalIncidentId) ?? null) : null;
   const traceTotal  = (traceData?.total ?? 0) as number;
   const tracePages  = Math.max(1, Math.ceil(traceTotal / TRACE_PAGE_SIZE));
   const AGENT_META = SPECIALIST_AGENTS;
@@ -247,7 +248,7 @@ export default function Pipeline() {
             </thead>
             <tbody>
               {incidents.map((inc) => (
-                <tr key={inc.incident_id} className={styles.trClickable} onClick={() => setModalIncident(inc)}>
+                <tr key={inc.incident_id} className={styles.trClickable} onClick={() => setModalIncidentId(inc.incident_id)}>
                   <td className={styles.tdIflow} title={inc.iflow_name || inc.iflow_id || inc.message_guid || ""}>
                     {inc.iflow_name || (
                       <span className={styles.tdIflowUnknown}>
@@ -310,7 +311,7 @@ export default function Pipeline() {
 
       {/* ── Stage progress popup ── */}
       {modalIncident && (
-      <div className={styles.modalOverlay} onClick={() => setModalIncident(null)}>
+      <div className={styles.modalOverlay} onClick={() => setModalIncidentId(null)}>
         <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
 
           {/* header */}
@@ -327,7 +328,7 @@ export default function Pipeline() {
                 </span>
               </div>
             </div>
-            <button className={styles.modalClose} onClick={() => setModalIncident(null)}>×</button>
+            <button className={styles.modalClose} onClick={() => setModalIncidentId(null)}>×</button>
           </div>
 
           {/* stage list */}
