@@ -17,7 +17,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Literal, Optional
 
-from agents.base import StepLogger, TestExecutionTracker
+from agents.base import StepLogger, TestExecutionTracker, extract_token_counts
+from db.database import log_agent_event
 from agents.fix_context import FixContext
 from agents.fix_planner import FixStrategy
 from core.constants import (
@@ -534,12 +535,14 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 timeout=_timeout,
             )
         except asyncio.TimeoutError:
+            _corr = ctx.message_guid or ctx.iflow_id
             fatal = _find_fatal_validation(logger_cb.steps)
             if fatal:
                 logger.warning(
                     "[FixGenerator] FATAL validation block (timed out) for iflow=%s: %s",
                     ctx.iflow_id, fatal,
                 )
+                log_agent_event(_corr, "fix_generator", 0, 0)
                 return PatchSpec(
                     mode="free_xml",
                     operations=[],
@@ -547,7 +550,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     raw_answer="__VALIDATION_BLOCKED__",
                     steps=logger_cb.steps,
                 )
-            # Propagate via a sentinel answer so FixAgent can run _diagnose_timeout
+            log_agent_event(_corr, "fix_generator", 0, 0)
             return PatchSpec(
                 mode="free_xml",
                 operations=[],
@@ -556,6 +559,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 steps=logger_cb.steps,
             )
         except Exception as exc:
+            _corr = ctx.message_guid or ctx.iflow_id
             exc_type = type(exc).__name__
             # GraphRecursionError means the agent ran out of steps, not that it crashed.
             # Treat it like a timeout so the supervisor can retry with a different strategy.
@@ -570,6 +574,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                         "[FixGenerator] FATAL validation block (recursion limit) for iflow=%s: %s",
                         ctx.iflow_id, fatal,
                     )
+                    log_agent_event(_corr, "fix_generator", 0, 0)
                     return PatchSpec(
                         mode="free_xml",
                         operations=[],
@@ -581,6 +586,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     "[FixGenerator] Recursion limit reached for iflow=%s — will retry with simpler strategy.",
                     ctx.iflow_id,
                 )
+                log_agent_event(_corr, "fix_generator", 0, 0)
                 return PatchSpec(
                     mode="free_xml",
                     operations=[],
@@ -589,6 +595,7 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     steps=logger_cb.steps,
                 )
             logger.error("[FixGenerator] agent error: %s", exc)
+            log_agent_event(_corr, "fix_generator", 0, 0)
             return PatchSpec(
                 mode="free_xml",
                 operations=[],
@@ -596,6 +603,9 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                 raw_answer=f"__ERROR__:{exc}",
                 steps=logger_cb.steps,
             )
+
+        _ti, _to = extract_token_counts(_result.get("messages", []))
+        log_agent_event(ctx.message_guid or ctx.iflow_id, "fix_generator", _ti, _to)
 
         final_msg = _result["messages"][-1]
         answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)

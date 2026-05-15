@@ -81,6 +81,22 @@ def formatjson(input: Any) -> Any:
         return {}
 
 
+def extract_token_counts(messages: list) -> tuple[int, int]:
+    """Return (tokens_in, tokens_out) summed across all AI messages in a LangChain agent result."""
+    tokens_in = tokens_out = 0
+    for msg in (messages or []):
+        um = getattr(msg, "usage_metadata", None) or {}
+        if um:
+            tokens_in  += int(um.get("input_tokens",  0) or 0)
+            tokens_out += int(um.get("output_tokens", 0) or 0)
+        else:
+            rm = getattr(msg, "response_metadata", None) or {}
+            tu = rm.get("token_usage") or rm.get("tokenUsage") or {}
+            tokens_in  += int(tu.get("prompt_tokens",     0) or 0)
+            tokens_out += int(tu.get("completion_tokens", 0) or 0)
+    return tokens_in, tokens_out
+
+
 # ─────────────────────────────────────────────
 # TEST EXECUTION TRACKER
 # ─────────────────────────────────────────────

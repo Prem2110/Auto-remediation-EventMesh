@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 # TABLE NAMES — SAP Event Mesh app (EM tables only, no legacy AEM tables)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_INCIDENTS_TABLE = os.getenv("HANA_TABLE_EM_INCIDENTS",         "EM_AUTONOMOUS_INCIDENTS")
-_FIX_TABLE       = os.getenv("HANA_TABLE_EM_FIX_PATTERNS",      "EM_FIX_PATTERNS")
-_TICKETS_TABLE   = os.getenv("HANA_TABLE_EM_ESCALATION_TICKETS", "EM_ESCALATION_TICKETS")
+_INCIDENTS_TABLE  = os.getenv("HANA_TABLE_EM_INCIDENTS",         "EM_AUTONOMOUS_INCIDENTS")
+_FIX_TABLE        = os.getenv("HANA_TABLE_EM_FIX_PATTERNS",      "EM_FIX_PATTERNS")
+_TICKETS_TABLE    = os.getenv("HANA_TABLE_EM_ESCALATION_TICKETS", "EM_ESCALATION_TICKETS")
+_EVENT_LOG_TABLE  = os.getenv("HANA_TABLE_EM_AGENT_EVENTS",       "EM_AGENT_EVENT_LOG")
 
 
 def set_db_source(source: str) -> None:
@@ -392,10 +393,57 @@ def ensure_em_schema():
             logger.info("[DB] Created table %s", _TICKETS_TABLE)
         _migrate_escalation_tickets_table(conn)
 
+        # ── EM_AGENT_EVENT_LOG ───────────────────────────────────────────────
+        cur.execute(check, (_EVENT_LOG_TABLE.upper(), schema_q) if schema_q else (_EVENT_LOG_TABLE.upper(),))
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute(f"""CREATE TABLE "{_EVENT_LOG_TABLE}" (
+                EVENT_ID       NVARCHAR(100) PRIMARY KEY,
+                CORRELATION_ID NVARCHAR(200),
+                ACTIVITY_NAME  NVARCHAR(100),
+                TIMESTAMP      NVARCHAR(64),
+                TOKENS_IN      INTEGER DEFAULT 0,
+                TOKENS_OUT     INTEGER DEFAULT 0
+            )""")
+            logger.info("[DB] Created table %s", _EVENT_LOG_TABLE)
+
         conn.commit()
         conn.close()
     except Exception as e:
         logger.warning(f"ensure_em_schema: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AGENT EVENT LOG
+# ─────────────────────────────────────────────────────────────────────────────
+
+def log_agent_event(
+    correlation_id: str,
+    activity_name: str,
+    tokens_in: int,
+    tokens_out: int,
+) -> None:
+    """Insert one execution record into EM_AGENT_EVENT_LOG. Never raises."""
+    from utils.utils import get_hana_timestamp  # late import — avoids circular at module level
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            f'INSERT INTO "{_EVENT_LOG_TABLE}" '
+            f'(EVENT_ID, CORRELATION_ID, ACTIVITY_NAME, TIMESTAMP, TOKENS_IN, TOKENS_OUT) '
+            f'VALUES (?,?,?,?,?,?)',
+            (
+                str(uuid.uuid4()),
+                correlation_id or "",
+                activity_name,
+                get_hana_timestamp(),
+                int(tokens_in or 0),
+                int(tokens_out or 0),
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("log_agent_event activity=%s: %s", activity_name, e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

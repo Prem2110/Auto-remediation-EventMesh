@@ -18,8 +18,10 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+from agents.base import extract_token_counts
 from agents.fix_context import FixContext
 from core.constants import FIX_OPERATION_PROMPT_TEMPLATE
+from db.database import log_agent_event
 
 logger = logging.getLogger(__name__)
 
@@ -554,9 +556,13 @@ class FixPlanner:
                 "[FixPlanner] Diagnosis agent returned %d op(s) for iflow=%s",
                 len(ops), ctx.iflow_id,
             )
+            _ti, _to = extract_token_counts(result.get("messages", []))
+            log_agent_event(ctx.message_guid or ctx.iflow_id, "fix_planner", _ti, _to)
             return ops
         except asyncio.TimeoutError:
+            log_agent_event(ctx.message_guid or ctx.iflow_id, "fix_planner", 0, 0)
             logger.warning("[FixPlanner] Diagnosis agent timed out for iflow=%s — falling back.", ctx.iflow_id)
         except Exception as exc:
+            log_agent_event(ctx.message_guid or ctx.iflow_id, "fix_planner", 0, 0)
             logger.warning("[FixPlanner] _get_fix_operation failed for iflow=%s: %s", ctx.iflow_id, exc)
         return []

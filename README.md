@@ -490,6 +490,7 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env`.**
 | `HANA_TABLE_EM_FIX_PATTERNS` | `EM_FIX_PATTERNS` | Fix patterns table |
 | `HANA_TABLE_EM_ESCALATION_TICKETS` | `EM_ESCALATION_TICKETS` | Escalation tickets table |
 | `HANA_TABLE_EM_SETTINGS` | `EM_RUNTIME_SETTINGS` | Runtime settings table |
+| `HANA_TABLE_EM_AGENT_EVENTS` | `EM_AGENT_EVENT_LOG` | Agent execution event log (tokens, timing) |
 | `HANA_TABLE_VECTOR` | `SAP_HELP_DOCS` | HANA vector store table for SAP Notes retrieval |
 
 ### AWS S3 Object Store
@@ -812,6 +813,7 @@ Connections use TLS (`encrypt=True`) on port 443.
 | `EM_AUTONOMOUS_INCIDENTS` | `HANA_TABLE_EM_INCIDENTS` | One row per incident; tracks status, RCA, fix, verification |
 | `EM_FIX_PATTERNS` | `HANA_TABLE_EM_FIX_PATTERNS` | Successful fix signatures for pattern-matching |
 | `EM_ESCALATION_TICKETS` | `HANA_TABLE_EM_ESCALATION_TICKETS` | External tickets created on escalation |
+| `EM_AGENT_EVENT_LOG` | `HANA_TABLE_EM_AGENT_EVENTS` | One row per agent LLM invocation — correlation ID, activity, tokens |
 
 ### Incident Status Flow
 
@@ -913,6 +915,48 @@ backend application.
 ---
 
 ## 12. What's New
+
+### Agent execution event log — token tracking per pipeline run
+
+Every LLM invocation in the autonomous pipeline now writes a row to `EM_AGENT_EVENT_LOG`.
+The table is auto-created by `ensure_em_schema()` on startup alongside the other EM tables.
+
+**Schema:**
+
+| Column | Type | Description |
+|---|---|---|
+| `EVENT_ID` | `NVARCHAR(100)` PK | UUID generated per invocation |
+| `CORRELATION_ID` | `NVARCHAR(200)` | SAP message GUID (`message_guid`) — ties all agent rows back to the originating CPI failure |
+| `ACTIVITY_NAME` | `NVARCHAR(100)` | Agent that fired: `rca_agent`, `fix_planner`, `fix_generator` |
+| `TIMESTAMP` | `NVARCHAR(64)` | ISO-8601 UTC at invocation start |
+| `TOKENS_IN` | `INTEGER` | Prompt tokens consumed |
+| `TOKENS_OUT` | `INTEGER` | Completion tokens returned |
+
+**Coverage:**
+
+| Agent | Source file | Logged on |
+|---|---|---|
+| RCA | `agents/rca_agent.py` | Success (real tokens), timeout, exception |
+| Fix Planner | `agents/fix_planner.py` | Success (real tokens), timeout, exception |
+| Fix Generator | `agents/fix_generator.py` | Success (real tokens), all 5 early-return sentinels (TIMEOUT, RECURSION_LIMIT, VALIDATION_BLOCKED × 2, ERROR) |
+
+Timeout and error rows are logged with `TOKENS_IN=0, TOKENS_OUT=0` so pipeline failures
+are still visible in the log.
+
+Token counts are extracted by `extract_token_counts()` in `agents/base.py`, which reads
+`usage_metadata` (LangChain ≥ 0.2) and falls back to `response_metadata["token_usage"]`
+for older model wrappers.
+
+To query total tokens consumed by a pipeline run:
+
+```sql
+SELECT ACTIVITY_NAME, SUM(TOKENS_IN) AS prompt, SUM(TOKENS_OUT) AS completion
+FROM "EM_AGENT_EVENT_LOG"
+WHERE CORRELATION_ID = '<message_guid>'
+GROUP BY ACTIVITY_NAME;
+```
+
+---
 
 ### All classifier error types now have Settings page entries
 
@@ -1340,7 +1384,7 @@ auto-remediation - EventMesh/
 │                                    #   REST publish (x-qos:1), 30-min in-memory dedup
 │
 ├── agents/
-│   ├── base.py                      # StepLogger, TestExecutionTracker base classes
+│   ├── base.py                      # StepLogger, TestExecutionTracker, extract_token_counts
 │   ├── classifier_agent.py          # Rule-based + LLM error classifier
 │   ├── observer_agent.py            # SAP CPI OData polling + metadata enrichment
 │   ├── rca_agent.py                 # LLM root cause analysis; outputs fixes[] list + scalar fields
@@ -1381,7 +1425,7 @@ auto-remediation - EventMesh/
 │   └── config.py                    # Settings class + runtime auto-fix override
 │
 ├── db/
-│   └── database.py                  # HANA Cloud CRUD, auto-schema, dedup queries
+│   └── database.py                  # HANA Cloud CRUD, auto-schema, dedup queries, log_agent_event()
 │
 ├── storage/
 │   ├── storage.py                   # File upload + XSD detection

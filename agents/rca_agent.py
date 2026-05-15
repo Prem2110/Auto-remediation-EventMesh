@@ -21,10 +21,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from agents.base import StepLogger, TestExecutionTracker
+from agents.base import StepLogger, TestExecutionTracker, extract_token_counts
 from agents.classifier_agent import ClassifierAgent
 from core.constants import FALLBACK_FIX_BY_ERROR_TYPE
-from db.database import get_similar_patterns
+from db.database import get_similar_patterns, log_agent_event
 from utils.utils import clean_error_message, get_hana_timestamp
 from utils.vector_store import get_vector_store
 
@@ -685,6 +685,8 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                         rca = json.loads(match.group(0)) if match else {}
                     except Exception:
                         rca = {}
+                _ti, _to = extract_token_counts(result.get("messages", []))
+                log_agent_event(message_guid, "rca_agent", _ti, _to)
                 break
             except asyncio.TimeoutError:
                 logger.warning("[RCA] agent timed out on attempt %d/3 for iflow=%s", attempt + 1, iflow_id)
@@ -692,7 +694,7 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                     await asyncio.sleep(2)
                     continue
                 logger.error("[RCA] All 3 attempts timed out for iflow=%s — using fallback", iflow_id)
-                # Return a fallback so the pipeline can still attempt a fix
+                log_agent_event(message_guid, "rca_agent", 0, 0)
                 _clf = self._classifier.classify_error(error_message)
                 _fallback_fix = FALLBACK_FIX_BY_ERROR_TYPE.get(
                     _clf.get("error_type", "UNKNOWN_ERROR"),
@@ -716,6 +718,7 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                     await asyncio.sleep(2)
                     continue
                 logger.error("[RCA] agent error: %s", exc)
+                log_agent_event(message_guid, "rca_agent", 0, 0)
                 return {
                     "root_cause":   str(exc),
                     "proposed_fix": "",
