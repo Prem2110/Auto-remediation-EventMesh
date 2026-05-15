@@ -79,7 +79,7 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
           {!collapsed && (
             <span className={styles.logoText}>
               <span className={styles.logoTitle}>Orbit</span>
-              <span className={styles.logoSub}>Integration Suite</span>
+              <span className={styles.logoSub}>Autonomous Integration Monitor</span>
             </span>
           )}
         </span>

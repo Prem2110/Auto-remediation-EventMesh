@@ -69,27 +69,27 @@
   width: 5rem;
   height: 5rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  background: linear-gradient(135deg, var(--orbit-primary, #3b82f6) 0%, var(--orbit-primary-hover, #8b5cf6) 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 2.25rem;
   margin-bottom: 1.25rem;
-  box-shadow: 0 0 0 8px rgba(59,130,246,0.12), 0 8px 30px rgba(59,130,246,0.3);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--orbit-primary, #3b82f6) 12%, transparent), 0 8px 30px color-mix(in srgb, var(--orbit-primary, #3b82f6) 30%, transparent);
   animation: glow-pulse 2.5s ease-in-out infinite;
 }
 
 .welcomeTitle {
   font-size: 1.5rem;
   font-weight: 800;
-  color: var(--orbit-gray-900, #111827);
+  color: var(--orbit-text-primary, #111827);
   text-align: center;
   margin-bottom: 0.5rem;
 }
 
 .welcomeHint {
   font-size: 0.875rem;
-  color: var(--orbit-gray-600, #4b5563);
+  color: var(--orbit-text-muted, #4b5563);
   text-align: center;
   max-width: 28rem;
   line-height: 1.6;
@@ -105,20 +105,20 @@
 }
 
 .quickBtn {
-  border: 1px solid var(--orbit-gray-200, #e5e7eb);
-  background: #fff;
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e5e7eb);
+  background: var(--orbit-card-bg, #fff);
   border-radius: 2rem;
   padding: 0.4rem 0.875rem;
   font-size: 0.8rem;
   cursor: pointer;
-  color: var(--orbit-gray-700, #374151);
+  color: var(--orbit-text-secondary, #374151);
   transition: background var(--orbit-transition), border-color var(--orbit-transition), transform var(--orbit-transition);
   box-shadow: var(--orbit-shadow-sm);
 }
 .quickBtn:hover {
-  background: var(--orbit-blue-dim, #dbeafe);
-  border-color: var(--orbit-blue, #2563eb);
-  color: var(--orbit-blue, #2563eb);
+  background: var(--orbit-primary-dim, #dbeafe);
+  border-color: var(--orbit-primary, #2563eb);
+  color: var(--orbit-primary, #2563eb);
   transform: translateY(-1px);
 }
 
@@ -141,11 +141,11 @@
 
 .userBubble {
   max-width: 62%;
-  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+  background: linear-gradient(135deg, var(--orbit-primary, #2563eb) 0%, var(--orbit-primary-hover, #4f46e5) 100%);
   color: #fff;
   padding: 0.75rem 1rem;
   border-radius: 1.125rem 1.125rem 0.25rem 1.125rem;
-  box-shadow: 0 4px 14px rgba(37,99,235,0.3);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--orbit-primary, #2563eb) 30%, transparent);
 }
 
 .userText {
@@ -167,20 +167,20 @@
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  background: linear-gradient(135deg, var(--orbit-primary, #3b82f6), var(--orbit-primary-hover, #8b5cf6));
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 0.9rem;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--orbit-primary, #3b82f6) 30%, transparent);
   margin-top: 0.1rem;
 }
 
 .botBubble {
   max-width: 72%;
-  background: #fff;
-  border: 1px solid var(--orbit-gray-200, #e5e7eb);
+  background: var(--orbit-card-bg, #fff);
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e5e7eb);
   padding: 0.75rem 1rem;
   border-radius: 0.25rem 1.125rem 1.125rem 1.125rem;
   box-shadow: var(--orbit-shadow-sm);
@@ -189,7 +189,7 @@
 .botText {
   font-size: 0.875rem;
   line-height: 1.7;
-  color: var(--orbit-gray-900, #111827);
+  color: var(--orbit-text-primary, #111827);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -199,7 +199,7 @@
 }
 .botText ul { padding-left: 1.25rem; margin: 0.25rem 0; }
 .botText code {
-  background: var(--orbit-gray-100, #f3f4f6);
+  background: var(--orbit-bg-hover, #f3f4f6);
   padding: 0.15em 0.35em;
   border-radius: 3px;
   font-family: "Fira Code", "Courier New", monospace;
@@ -246,7 +246,7 @@
 .tsBot {
   display: block;
   font-size: 0.68rem;
-  color: var(--orbit-gray-600, #4b5563);
+  color: var(--orbit-text-muted, #4b5563);
   margin-top: 0.3rem;
 }
 
@@ -260,7 +260,7 @@
 .thinking span {
   width: 7px;
   height: 7px;
-  background: var(--orbit-blue, #2563eb);
+  background: var(--orbit-primary, #2563eb);
   border-radius: 50%;
   animation: fade-pulse 1.4s ease-in-out infinite;
   opacity: 0.4;
@@ -273,8 +273,8 @@
 .inputArea {
   flex-shrink: 0;
   padding: 0.75rem 1.25rem 1rem;
-  background: #fff;
-  border-top: 1px solid var(--orbit-gray-200, #e5e7eb);
+  background: var(--orbit-card-bg, #fff);
+  border-top: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e5e7eb);
 }
 
 .attachRow {
@@ -288,12 +288,12 @@
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  background: var(--orbit-blue-dim, #dbeafe);
-  border: 1px solid #bfdbfe;
+  background: var(--orbit-primary-dim, #dbeafe);
+  border: 1px solid var(--orbit-input-border, #bfdbfe);
   border-radius: 1rem;
   padding: 0.2rem 0.5rem;
   font-size: 0.75rem;
-  color: var(--orbit-blue, #2563eb);
+  color: var(--orbit-primary, #2563eb);
   font-weight: 500;
   max-width: 12rem;
 }
@@ -308,7 +308,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--orbit-blue, #2563eb);
+  color: var(--orbit-primary, #2563eb);
   font-size: 0.9rem;
   line-height: 1;
   padding: 0;
@@ -322,16 +322,16 @@
   display: flex;
   gap: 0.5rem;
   align-items: flex-end;
-  background: var(--orbit-gray-50, #f9fafb);
-  border: 1px solid var(--orbit-gray-200, #e5e7eb);
+  background: var(--orbit-bg-hover, #f9fafb);
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e5e7eb);
   border-radius: var(--orbit-radius, 0.75rem);
   padding: 0.5rem;
   transition: border-color var(--orbit-transition), box-shadow var(--orbit-transition);
 }
 .inputRow:focus-within {
-  border-color: var(--orbit-blue, #2563eb);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
-  background: #fff;
+  border-color: var(--orbit-primary, #2563eb);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--orbit-primary, #2563eb) 10%, transparent);
+  background: var(--orbit-input-bg, #fff);
 }
 
 .textarea {
@@ -342,7 +342,7 @@
   background: transparent;
   font-size: 0.875rem;
   line-height: 1.5;
-  color: var(--orbit-gray-900, #111827);
+  color: var(--orbit-text-primary, #111827);
   min-height: 2.5rem;
   max-height: 8rem;
   font-family: inherit;
@@ -360,11 +360,11 @@
   align-items: center;
   justify-content: center;
   font-size: 1rem;
-  color: var(--orbit-gray-600, #4b5563);
+  color: var(--orbit-text-muted, #4b5563);
   transition: background var(--orbit-transition), color var(--orbit-transition);
   flex-shrink: 0;
 }
-.iconBtn:hover { background: var(--orbit-gray-100, #f3f4f6); color: var(--orbit-blue, #2563eb); }
+.iconBtn:hover { background: var(--orbit-bg-hover, #f3f4f6); color: var(--orbit-primary, #2563eb); }
 .iconBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .sendBtn {
@@ -372,7 +372,7 @@
   height: 2.25rem;
   border: none;
   border-radius: 0.625rem;
-  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  background: linear-gradient(135deg, var(--orbit-primary, #2563eb), var(--orbit-primary-hover, #4f46e5));
   color: #fff;
   font-size: 1rem;
   cursor: pointer;
@@ -381,7 +381,7 @@
   justify-content: center;
   flex-shrink: 0;
   transition: opacity var(--orbit-transition), transform var(--orbit-transition);
-  box-shadow: 0 2px 8px rgba(37,99,235,0.35);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--orbit-primary, #2563eb) 35%, transparent);
 }
 .sendBtn:hover:not(:disabled) { opacity: 0.88; transform: scale(0.96); }
-.sendBtn:disabled { opacity: 0.4; cursor: not-allowed; background: var(--orbit-gray-300, #d1d5db); box-shadow: none; }
+.sendBtn:disabled { opacity: 0.4; cursor: not-allowed; background: var(--orbit-card-border, #d1d5db); box-shadow: none; }
