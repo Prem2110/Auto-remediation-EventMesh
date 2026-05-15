@@ -15,10 +15,8 @@ import {
   type PaginatedIncidentsResponse,
 } from "../../services/api.ts";
 import Pagination from "../../components/pagination/Pagination";
+import { useThemeColors } from "../../hooks/useThemeColors.ts";
 import styles from "./dashboard.module.css";
-
-// ── Colour palettes ────────────────────────────────────────────────────────────
-const CHART_COLORS = ["#ff6b6b", "#4dabf7", "#ffd43b", "#69db7c", "#845ef7", "#f06595", "#74c0fc"];
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function formatISODate(value: string | null | undefined): string {
@@ -176,6 +174,9 @@ interface Ticket {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const tc = useThemeColors();
+  const chartColors = [tc.chart1, tc.chart2, tc.chart3, tc.chart4, tc.chart5, tc.chart6, tc.chart7];
+
   // Chart/KPI data auto-refreshes every 60s; paginated tables do not.
   const chartOpts = { refetchInterval: 60_000, retry: 3, retryDelay: 3_000 } as const;
   const tableOpts = { retry: 2, retryDelay: 2_000, placeholderData: keepPreviousData };
@@ -313,7 +314,7 @@ export default function Dashboard() {
               <PieChart>
                 <Pie data={statusData} dataKey="count" nameKey="status" cx="38%" label>
                   {statusData.map((_, i) => (
-                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    <Cell key={i} fill={chartColors[i % chartColors.length]} />
                   ))}
                 </Pie>
                 <Tooltip />
@@ -337,7 +338,7 @@ export default function Dashboard() {
               <PieChart>
                 <Pie data={errorData} dataKey="count" nameKey="error_type" innerRadius="38%" outerRadius="68%">
                   {errorData.map((_, i) => (
-                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    <Cell key={i} fill={chartColors[i % chartColors.length]} />
                   ))}
                 </Pie>
                 <Tooltip />
@@ -364,7 +365,7 @@ export default function Dashboard() {
                 tickFormatter={(v: string) => v.length > 25 ? `${v.slice(0, 23)}…` : v}
               />
               <Tooltip />
-              <Bar dataKey="failure_count" name="Failures" fill="#1e6bb8" radius={[0, 3, 3, 0]} />
+              <Bar dataKey="failure_count" name="Failures" fill={tc.primary} radius={[0, 3, 3, 0]} />
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -382,7 +383,7 @@ export default function Dashboard() {
                   <stop offset="95%" stopColor="#f97316" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <CartesianGrid strokeDasharray="3 3" stroke={tc.cardBorder} />
               <XAxis dataKey="time" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />

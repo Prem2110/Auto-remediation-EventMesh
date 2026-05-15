@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import ShellLayout from "./components/layout/shell-layout.tsx";
 // import AgentCards from "./pages/agent-cards/agent-cards.tsx"; // hidden
@@ -11,6 +12,21 @@ import Pipeline from "./pages/pipeline/pipeline.tsx";
 import Settings from "./pages/settings/settings.tsx";
 
 export default function App() {
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("orbit-theme") || "aurora";
+    if (savedTheme === "plain") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", savedTheme);
+    }
+
+    const fontSizeMap: Record<string, string> = { sm: "0.8rem", md: "0.875rem", lg: "0.95rem" };
+    const savedFontSize = localStorage.getItem("orbit-font-size");
+    if (savedFontSize && fontSizeMap[savedFontSize]) {
+      document.documentElement.style.setProperty("--orbit-font-size-base", fontSizeMap[savedFontSize]);
+    }
+  }, []);
+
   return (
     <ShellLayout>
       <Routes>

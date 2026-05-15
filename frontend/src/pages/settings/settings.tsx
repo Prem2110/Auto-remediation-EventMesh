@@ -225,13 +225,59 @@ function PolicyEditor({ policies, onChange }: PolicyEditorProps) {
   );
 }
 
+// ── theme picker ──────────────────────────────────────────────────────────────
+
+const THEMES = [
+  { id: "plain",   label: "Plain",       sidebar: "#ffffff",                                        primary: "#2563eb", bg: "#f5f4ff" },
+  { id: "sap",     label: "SAP Horizon",sidebar: "#f5f6f7",                                        primary: "#0070f2", bg: "#f5f6f7" },
+  { id: "aurora",  label: "Aurora",     sidebar: "linear-gradient(175deg,#1e1b4b,#1d4ed8)",        primary: "#6366f1", bg: "#f5f3ff" },
+  { id: "blossom", label: "Blossom",    sidebar: "linear-gradient(175deg,#F9C5C3,#C8D8C8)",        primary: "#F48B88", bg: "#FAFAFA" },
+  { id: "amber",   label: "Warm Amber", sidebar: "#fdf0cc",                                        primary: "#b45309", bg: "#fdf6e3" },
+  { id: "crystal", label: "Crystal",    sidebar: "#1A1A2E",                                        primary: "#A78BFA", bg: "#F4F5F9" },
+  { id: "fresh",   label: "Fresh",      sidebar: "#ffffff",                                        primary: "#16a34a", bg: "#e8f5ee" },
+  { id: "prism",   label: "Prism",      sidebar: "#ffffff",                                        primary: "#9b5de5", bg: "linear-gradient(135deg,#ffe4ec,#f3e8ff,#fff3e0)" },
+  { id: "slate",   label: "Slate",      sidebar: "#ffffff",                                        primary: "#00c49a", bg: "#e5e9ef" },
+  { id: "mono",    label: "Mono",       sidebar: "#ffffff",                                        primary: "#1a1a1a", bg: "#f2f2f2" },
+  { id: "brutal",  label: "Brutal",     sidebar: "#ffffff",                                        primary: "#ffe500", bg: "#eeeaff" },
+] as const;
+
+type ThemeId = (typeof THEMES)[number]["id"];
+
+function applyTheme(id: ThemeId) {
+  if (id === "plain") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.setAttribute("data-theme", id);
+  }
+  localStorage.setItem("orbit-theme", id);
+}
+
+const FONT_SIZES = [
+  { id: "sm",  label: "S", value: "0.8rem"  },
+  { id: "md",  label: "M", value: "0.875rem" },
+  { id: "lg",  label: "L", value: "0.95rem" },
+] as const;
+type FontSizeId = (typeof FONT_SIZES)[number]["id"];
+
+function applyFontSize(id: FontSizeId) {
+  const size = FONT_SIZES.find((f) => f.id === id)!.value;
+  document.documentElement.style.setProperty("--orbit-font-size-base", size);
+  localStorage.setItem("orbit-font-size", id);
+}
+
 // ── main page ─────────────────────────────────────────────────────────────────
 
 export default function Settings() {
   const qc = useQueryClient();
-  const [saving,   setSaving]   = useState<string | null>(null);
-  const [toast,    setToast]    = useState<{ msg: string; ok: boolean } | null>(null);
-  const [filter,   setFilter]   = useState<string>("All");
+  const [saving,      setSaving]      = useState<string | null>(null);
+  const [toast,       setToast]       = useState<{ msg: string; ok: boolean } | null>(null);
+  const [filter,      setFilter]      = useState<string>("All");
+  const [activeTheme, setActiveTheme] = useState<ThemeId>(
+    () => (localStorage.getItem("orbit-theme") as ThemeId) || "aurora"
+  );
+  const [activeFontSize, setActiveFontSize] = useState<FontSizeId>(
+    () => (localStorage.getItem("orbit-font-size") as FontSizeId) || "md"
+  );
 
   // policy editor local state (separate because it has its own inline editor)
   const [editingPolicies, setEditingPolicies] = useState(false);
@@ -337,6 +383,45 @@ export default function Settings() {
           progress. The only exception is <code>Enable Autonomous Fixing</code>, which takes
           effect instantly across all agents. Each setting row shows its specific timing below
           the description.
+        </div>
+      </div>
+
+      {/* ── appearance ── */}
+      <div className={styles.appearanceCard}>
+        <h2 className={styles.appearanceTitle}>Appearance</h2>
+        <p className={styles.appearanceDesc}>Choose a colour theme. Applied instantly and remembered across sessions.</p>
+        <div className={styles.themeGrid}>
+          {THEMES.map((t) => (
+            <button
+              key={t.id}
+              className={`${styles.themeBtn} ${activeTheme === t.id ? styles.themeBtnActive : ""}`}
+              onClick={() => { setActiveTheme(t.id); applyTheme(t.id); }}
+              title={t.label}
+            >
+              <div className={styles.themePreview} style={{ background: t.bg }}>
+                <div className={styles.themeSidebar} style={{ background: t.sidebar }} />
+                <div className={styles.themeAccent}  style={{ background: t.primary }} />
+              </div>
+              <span className={styles.themeLabel}>{t.label}</span>
+              {activeTheme === t.id && <span className={styles.themeCheck}>✓</span>}
+            </button>
+          ))}
+        </div>
+
+        <div className={styles.fontSizeRow}>
+          <span className={styles.fontSizeLabel}>Font Size</span>
+          <div className={styles.fontSizeBtns}>
+            {FONT_SIZES.map((f) => (
+              <button
+                key={f.id}
+                className={`${styles.fontSizeBtn} ${activeFontSize === f.id ? styles.fontSizeBtnActive : ""}`}
+                onClick={() => { setActiveFontSize(f.id); applyFontSize(f.id); }}
+                title={f.value}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

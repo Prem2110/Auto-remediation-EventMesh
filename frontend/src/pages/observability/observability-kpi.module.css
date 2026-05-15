@@ -7,8 +7,8 @@
 }
 
 .kpiCard {
-  background: #1f2937;
-  border: 1px solid #374151;
+  background: var(--orbit-card-bg, #1f2937);
+  border: 1px solid var(--orbit-card-border, #374151);
   border-radius: 0.5rem;
   padding: 1.25rem;
   display: flex;
@@ -32,7 +32,7 @@
 
 .kpiLabel {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--orbit-text-muted, #9ca3af);
   text-align: center;
   font-weight: 500;
 }
