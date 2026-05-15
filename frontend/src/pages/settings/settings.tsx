@@ -230,7 +230,7 @@ function PolicyEditor({ policies, onChange }: PolicyEditorProps) {
 const THEMES = [
   { id: "plain",   label: "Plain",       sidebar: "#ffffff",                                        primary: "#2563eb", bg: "#f5f4ff" },
   { id: "sap",     label: "SAP Horizon",sidebar: "#f5f6f7",                                        primary: "#0070f2", bg: "#f5f6f7" },
-  { id: "aurora",  label: "Aurora",     sidebar: "linear-gradient(175deg,#1e1b4b,#1d4ed8)",        primary: "#6366f1", bg: "#f5f3ff" },
+  { id: "aurora",  label: "Aurora (default)", sidebar: "linear-gradient(175deg,#1e1b4b,#1d4ed8)", primary: "#6366f1", bg: "#f5f3ff" },
   { id: "blossom", label: "Blossom",    sidebar: "linear-gradient(175deg,#F9C5C3,#C8D8C8)",        primary: "#F48B88", bg: "#FAFAFA" },
   { id: "amber",   label: "Warm Amber", sidebar: "#fdf0cc",                                        primary: "#b45309", bg: "#fdf6e3" },
   { id: "crystal", label: "Crystal",    sidebar: "#1A1A2E",                                        primary: "#A78BFA", bg: "#F4F5F9" },
