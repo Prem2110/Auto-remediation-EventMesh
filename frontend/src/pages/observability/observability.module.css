@@ -864,8 +864,8 @@
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(14, 165, 233, 0.3);
-  border-top-color: #0ea5e9;
+  border: 2px solid color-mix(in srgb, var(--orbit-primary) 25%, transparent);
+  border-top-color: var(--orbit-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   flex-shrink: 0;
@@ -875,20 +875,20 @@
 .fixProgressStep {
   font-size: 0.7rem;
   font-weight: 600;
-  color: #0369a1;
+  color: var(--orbit-primary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .fixProgressMessage {
-  color: #0c4a6e;
+  color: var(--orbit-text-primary);
   font-weight: 500;
   line-height: 1.4;
 }
 
 .fixProgressTrack {
   height: 4px;
-  background: #bae6fd;
+  background: var(--orbit-card-border);
   border-radius: 2px;
   overflow: hidden;
   margin-top: 0.125rem;
@@ -896,7 +896,7 @@
 
 .fixProgressFill {
   height: 100%;
-  background: #0ea5e9;
+  background: var(--orbit-primary);
   border-radius: 2px;
   transition: width 0.6s ease;
 }
@@ -1006,8 +1006,8 @@
   display: inline-block;
   width: 10px;
   height: 10px;
-  border: 2px solid rgba(79,70,229,0.3);
-  border-top-color: #4f46e5;
+  border: 2px solid color-mix(in srgb, var(--orbit-primary) 25%, transparent);
+  border-top-color: var(--orbit-primary);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
   flex-shrink: 0;
@@ -1211,8 +1211,8 @@
 .spinner {
   width: 1.75rem;
   height: 1.75rem;
-  border: 3px solid var(--orbit-gray-200, #e5e7eb);
-  border-top-color: var(--orbit-blue, #2563eb);
+  border: 3px solid var(--orbit-card-border, #e5e7eb);
+  border-top-color: var(--orbit-primary, #2563eb);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }

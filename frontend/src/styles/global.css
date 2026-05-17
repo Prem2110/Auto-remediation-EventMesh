@@ -119,46 +119,86 @@
   --orbit-hero-text-muted: rgba(255,255,255,0.55);
 }
 
+/* ── SAP Blue ────────────────────────────────────────────────────────────── */
+[data-theme="sap-blue"] {
+  --orbit-primary:           #0070f2;
+  --orbit-primary-hover:     #0057c2;
+  --orbit-primary-dim:       #e8f3ff;
+  --orbit-bg-page:           #f5f7fa;
+  --orbit-bg-surface:        #ffffff;
+  --orbit-bg-hover:          #e8f3ff;
+  --orbit-sidebar-bg:        linear-gradient(180deg, #0057c2 0%, #0070f2 100%);
+  --orbit-topbar-bg:         #0070f2;
+  --orbit-topbar-text:       #ffffff;
+  --orbit-topbar-text-muted: rgba(255,255,255,0.7);
+  --orbit-topbar-border:     rgba(255,255,255,0.15);
+  --orbit-topbar-pill-bg:    rgba(255,255,255,0.15);
+  --orbit-topbar-pill-border:rgba(255,255,255,0.25);
+  --orbit-nav-text:          #93c5fd;
+  --orbit-nav-hover-bg:      rgba(255,255,255,0.1);
+  --orbit-nav-hover-text:    #ffffff;
+  --orbit-nav-active-bg:     rgba(255,255,255,0.18);
+  --orbit-nav-active-text:   #ffffff;
+  --orbit-nav-active-bar:    #7ab8f5;
+  --orbit-card-bg:           #ffffff;
+  --orbit-card-border:       #c5d8f5;
+  --orbit-text-primary:      #32363a;
+  --orbit-text-secondary:    #515457;
+  --orbit-text-muted:        #0070f2;
+  --orbit-input-bg:          #ffffff;
+  --orbit-input-border:      #c5d8f5;
+  --orbit-font-family:       "72", "Segoe UI", system-ui, sans-serif;
+  --orbit-chart-1:           #0070f2;
+  --orbit-chart-2:           #00b4a0;
+  --orbit-chart-3:           #e3701a;
+  --orbit-chart-4:           #3cb371;
+  --orbit-chart-5:           #f0ab00;
+  --orbit-chart-6:           #c87dff;
+  --orbit-chart-7:           #e00000;
+  --orbit-hero-bg:           linear-gradient(135deg, #003d99 0%, #0057c2 55%, #0070f2 100%);
+  --orbit-hero-text:         #ffffff;
+  --orbit-hero-text-muted:   rgba(255,255,255,0.65);
+}
 
 /* ── Aurora Gradient ─────────────────────────────────────────────────────── */
 [data-theme="aurora"] {
-  --orbit-primary:           #6366f1;
-  --orbit-primary-hover:     #4f46e5;
-  --orbit-primary-dim:       #eef2ff;
-  --orbit-bg-page:           #f5f3ff;
+  --orbit-primary:           #3b82f6;
+  --orbit-primary-hover:     #2563eb;
+  --orbit-primary-dim:       #eff6ff;
+  --orbit-bg-page:           #eff6ff;
   --orbit-bg-surface:        #ffffff;
-  --orbit-bg-hover:          #ede9fe;
-  --orbit-sidebar-bg:        linear-gradient(175deg, #1e1b4b 0%, #1e3a8a 55%, #1d4ed8 100%);
-  --orbit-topbar-bg:         #1a1740;
-  --orbit-topbar-text:       #e0e7ff;
-  --orbit-topbar-text-muted: rgba(165,180,252,0.7);
-  --orbit-topbar-border:     rgba(255,255,255,0.1);
-  --orbit-topbar-pill-bg:    rgba(255,255,255,0.08);
-  --orbit-topbar-pill-border:rgba(255,255,255,0.15);
-  --orbit-nav-text:          #a5b4fc;
+  --orbit-bg-hover:          #dbeafe;
+  --orbit-sidebar-bg:        linear-gradient(175deg, #0f1f5c 0%, #1e3a8a 55%, #2563eb 100%);
+  --orbit-topbar-bg:         #1e3a8a;
+  --orbit-topbar-text:       #ffffff;
+  --orbit-topbar-text-muted: rgba(255,255,255,0.65);
+  --orbit-topbar-border:     rgba(255,255,255,0.12);
+  --orbit-topbar-pill-bg:    rgba(255,255,255,0.12);
+  --orbit-topbar-pill-border:rgba(255,255,255,0.22);
+  --orbit-nav-text:          #93c5fd;
   --orbit-nav-hover-bg:      rgba(255,255,255,0.1);
   --orbit-nav-hover-text:    #ffffff;
-  --orbit-nav-active-bg:     rgba(255,255,255,0.15);
+  --orbit-nav-active-bg:     rgba(255,255,255,0.18);
   --orbit-nav-active-text:   #ffffff;
-  --orbit-nav-active-bar:    #a5b4fc;
+  --orbit-nav-active-bar:    #93c5fd;
   --orbit-card-bg:           #ffffff;
-  --orbit-card-border:       #c4b5fd;
-  --orbit-text-primary:      #1e1b4b;
-  --orbit-text-secondary:    #3730a3;
-  --orbit-text-muted:        #6366f1;
+  --orbit-card-border:       #bfdbfe;
+  --orbit-text-primary:      #1e3a8a;
+  --orbit-text-secondary:    #1d4ed8;
+  --orbit-text-muted:        #3b82f6;
   --orbit-input-bg:          #ffffff;
-  --orbit-input-border:      #c4b5fd;
-  --orbit-font-family:       "Poppins", system-ui, sans-serif;
-  --orbit-chart-1:           #818cf8;
-  --orbit-chart-2:           #a78bfa;
-  --orbit-chart-3:           #c084fc;
+  --orbit-input-border:      #bfdbfe;
+  --orbit-font-family:       "DM Sans", system-ui, sans-serif;
+  --orbit-chart-1:           #3b82f6;
+  --orbit-chart-2:           #60a5fa;
+  --orbit-chart-3:           #93c5fd;
   --orbit-chart-4:           #38bdf8;
   --orbit-chart-5:           #34d399;
   --orbit-chart-6:           #fbbf24;
-  --orbit-chart-7:           #fb923c;
-  --orbit-hero-bg:           linear-gradient(135deg, #1e1b4b 0%, #1e3a8a 55%, #1d4ed8 100%);
+  --orbit-chart-7:           #a78bfa;
+  --orbit-hero-bg:           linear-gradient(135deg, #0f1f5c 0%, #1e3a8a 55%, #2563eb 100%);
   --orbit-hero-text:         #ffffff;
-  --orbit-hero-text-muted:   rgba(255,255,255,0.55);
+  --orbit-hero-text-muted:   rgba(255,255,255,0.6);
 }
 
 
@@ -277,41 +317,6 @@
   --orbit-hero-text-muted:   rgba(255,255,255,0.5);
 }
 
-/* ── Slate (Smart-home steel tech) ──────────────────────────────────────── */
-[data-theme="slate"] {
-  --orbit-primary:         #00c49a;
-  --orbit-primary-hover:   #00a882;
-  --orbit-primary-dim:     #e0fbf4;
-  --orbit-bg-page:         #e5e9ef;
-  --orbit-bg-surface:      #eef1f5;
-  --orbit-bg-hover:        #dde3ea;
-  --orbit-sidebar-bg:      #1c2b3a;
-  --orbit-topbar-bg:       #ffffff;
-  --orbit-nav-text:        #6e90a8;
-  --orbit-nav-hover-bg:    rgba(255,255,255,0.08);
-  --orbit-nav-hover-text:  #ffffff;
-  --orbit-nav-active-bg:   rgba(0,196,154,0.2);
-  --orbit-nav-active-text: #00c49a;
-  --orbit-nav-active-bar:  #00c49a;
-  --orbit-card-bg:         #ffffff;
-  --orbit-card-border:     #dde3ea;
-  --orbit-text-primary:    #1c2b3a;
-  --orbit-text-secondary:  #3d5166;
-  --orbit-text-muted:      #7a92a8;
-  --orbit-input-bg:        #ffffff;
-  --orbit-input-border:    #c5d0dc;
-  --orbit-font-family:     "Inter", system-ui, -apple-system, sans-serif;
-  --orbit-chart-1:         #4ade80;
-  --orbit-chart-2:         #00c49a;
-  --orbit-chart-3:         #ffb88c;
-  --orbit-chart-4:         #ff7ca3;
-  --orbit-chart-5:         #60a5fa;
-  --orbit-chart-6:         #a8eb8a;
-  --orbit-chart-7:         #fbbf24;
-  --orbit-hero-bg:         linear-gradient(135deg, #1c2b3a 0%, #0d4a3f 55%, #00c49a 100%);
-  --orbit-hero-text:       #ffffff;
-  --orbit-hero-text-muted: rgba(255,255,255,0.55);
-}
 
 /* ── Prism (Holographic Gradient) ───────────────────────────────────────── */
 [data-theme="prism"] {

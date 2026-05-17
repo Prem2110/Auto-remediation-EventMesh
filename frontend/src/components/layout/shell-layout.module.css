@@ -79,16 +79,19 @@
   flex-direction: column;
 }
 .logoTitle {
-  font-size: 0.875rem;
-  font-weight: 700;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
   color: var(--orbit-topbar-text, var(--orbit-text-primary, #1e293b));
   line-height: 1;
 }
 .logoSub {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
+  font-weight: 500;
   color: var(--orbit-topbar-text-muted, #94a3b8);
   line-height: 1;
-  margin-top: 1px;
+  margin-top: 2px;
+  letter-spacing: 0.01em;
 }
 
 .topBarSpacer { flex: 1; }
@@ -99,12 +102,12 @@
   align-items: center;
   gap: 0.35rem;
   padding: 0.25rem 0.75rem;
-  background: var(--orbit-topbar-pill-bg, #f0f5ff);
-  border: 1px solid var(--orbit-topbar-pill-border, #c7d2fe);
+  background: #ffffff;
+  border: 1px solid #c7d2fe;
   border-radius: 2rem;
   font-size: 0.72rem;
   font-weight: 700;
-  color: var(--orbit-primary, #2563eb);
+  color: #0070f2;
 }
 
 .topBarBadgeIcon {

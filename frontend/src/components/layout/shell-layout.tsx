@@ -91,14 +91,6 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
           SAP CPI
         </div>
 
-        <div className={styles.userPill}>
-          <div className={styles.userAvatar}>{initials}</div>
-          {!collapsed && (
-            <span className={styles.userName}>
-              {user.firstname} {user.lastname}
-            </span>
-          )}
-        </div>
       </header>
 
       <div className={styles.body}>

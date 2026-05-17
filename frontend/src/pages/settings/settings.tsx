@@ -228,13 +228,13 @@ function PolicyEditor({ policies, onChange }: PolicyEditorProps) {
 // ── theme picker ──────────────────────────────────────────────────────────────
 
 const THEMES = [
-  { id: "plain",   label: "Plain",            sidebar: "#ffffff",                                        primary: "#2563eb", bg: "#f0eeff" },
-  { id: "sap",     label: "SAP Horizon",      sidebar: "#354a5e",                                        primary: "#0070f2", bg: "#f5f6f7" },
-  { id: "aurora",  label: "Aurora (default)", sidebar: "linear-gradient(175deg,#1e1b4b,#1d4ed8)",        primary: "#6366f1", bg: "#f5f3ff" },
-  { id: "fresh",   label: "Fresh",            sidebar: "#f7fef9",                                        primary: "#16a34a", bg: "#e8f5ee" },
-  { id: "prism",   label: "Prism",            sidebar: "#ffffff",                                        primary: "#9b5de5", bg: "linear-gradient(135deg,#ffe4ec,#f3e8ff,#fff3e0)" },
-  { id: "slate",   label: "Slate",            sidebar: "#1c2b3a",                                        primary: "#00c49a", bg: "#e5e9ef" },
-  { id: "mono",    label: "Mono",             sidebar: "#efefef",                                        primary: "#1a1a1a", bg: "#f2f2f2" },
+  { id: "plain",    label: "Plain",            sidebar: "#ffffff",                                        primary: "#2563eb", bg: "#f0eeff" },
+  { id: "sap",      label: "SAP Horizon",      sidebar: "#354a5e",                                        primary: "#0070f2", bg: "#f5f6f7" },
+  { id: "sap-blue", label: "SAP Blue",         sidebar: "linear-gradient(180deg,#0057c2,#0070f2)",        primary: "#0070f2", bg: "#f5f7fa" },
+  { id: "aurora",   label: "Aurora (default)", sidebar: "linear-gradient(175deg,#0f1f5c,#2563eb)",        primary: "#3b82f6", bg: "#eff6ff" },
+  { id: "fresh",    label: "Fresh",            sidebar: "#f7fef9",                                        primary: "#16a34a", bg: "#e8f5ee" },
+  { id: "prism",    label: "Prism",            sidebar: "#ffffff",                                        primary: "#9b5de5", bg: "linear-gradient(135deg,#ffe4ec,#f3e8ff,#fff3e0)" },
+  { id: "mono",     label: "Mono",             sidebar: "#efefef",                                        primary: "#1a1a1a", bg: "#f2f2f2" },
   { id: "brutal",  label: "Brutal",           sidebar: "#ffffff",                                        primary: "#ffe500", bg: "#f5f5f5" },
   { id: "dark",     label: "Dark",             sidebar: "#0f172a",                                        primary: "#818cf8", bg: "#0f172a" },
   { id: "terminal", label: "Terminal",         sidebar: "#0a0a0a",                                        primary: "#00ff41", bg: "#0a0a0a" },
