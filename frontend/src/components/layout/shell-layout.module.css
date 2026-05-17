@@ -16,7 +16,7 @@
   padding: 0 1rem;
   height: 3.25rem;
   background: var(--orbit-topbar-bg, #ffffff);
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--orbit-topbar-border, #e2e8f0);
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
   z-index: 100;
 }
@@ -31,11 +31,11 @@
   width: 2rem;
   height: 2rem;
   border-radius: 0.375rem;
-  color: #64748b;
+  color: var(--orbit-topbar-text, #64748b);
   transition: background var(--orbit-transition), color var(--orbit-transition);
   flex-shrink: 0;
 }
-.menuBtn:hover { background: #f1f5f9; color: #1e293b; }
+.menuBtn:hover { background: var(--orbit-topbar-pill-bg, #f1f5f9); color: var(--orbit-topbar-text, #1e293b); }
 
 .menuBtn:focus-visible {
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
@@ -81,12 +81,12 @@
 .logoTitle {
   font-size: 0.875rem;
   font-weight: 700;
-  color: var(--orbit-text-primary, #1e293b);
+  color: var(--orbit-topbar-text, var(--orbit-text-primary, #1e293b));
   line-height: 1;
 }
 .logoSub {
   font-size: 0.65rem;
-  color: #94a3b8;
+  color: var(--orbit-topbar-text-muted, #94a3b8);
   line-height: 1;
   margin-top: 1px;
 }
@@ -99,12 +99,12 @@
   align-items: center;
   gap: 0.35rem;
   padding: 0.25rem 0.75rem;
-  background: #f0f5ff;
-  border: 1px solid #c7d2fe;
+  background: var(--orbit-topbar-pill-bg, #f0f5ff);
+  border: 1px solid var(--orbit-topbar-pill-border, #c7d2fe);
   border-radius: 2rem;
   font-size: 0.72rem;
   font-weight: 700;
-  color: #2563eb;
+  color: var(--orbit-primary, #2563eb);
 }
 
 .topBarBadgeIcon {
@@ -126,8 +126,8 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.25rem 0.625rem 0.25rem 0.25rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--orbit-topbar-pill-bg, #f8fafc);
+  border: 1px solid var(--orbit-topbar-pill-border, #e2e8f0);
   border-radius: 2rem;
 }
 .userAvatar {
@@ -145,7 +145,7 @@
 }
 .userName {
   font-size: 0.75rem;
-  color: var(--orbit-text-secondary, #374151);
+  color: var(--orbit-topbar-text, var(--orbit-text-secondary, #374151));
   white-space: nowrap;
   font-weight: 500;
 }

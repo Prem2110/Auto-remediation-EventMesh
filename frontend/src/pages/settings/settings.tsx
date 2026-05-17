@@ -228,17 +228,18 @@ function PolicyEditor({ policies, onChange }: PolicyEditorProps) {
 // ── theme picker ──────────────────────────────────────────────────────────────
 
 const THEMES = [
-  { id: "plain",   label: "Plain",       sidebar: "#ffffff",                                        primary: "#2563eb", bg: "#f5f4ff" },
-  { id: "sap",     label: "SAP Horizon",sidebar: "#f5f6f7",                                        primary: "#0070f2", bg: "#f5f6f7" },
-  { id: "aurora",  label: "Aurora (default)", sidebar: "linear-gradient(175deg,#1e1b4b,#1d4ed8)", primary: "#6366f1", bg: "#f5f3ff" },
-  { id: "blossom", label: "Blossom",    sidebar: "linear-gradient(175deg,#F9C5C3,#C8D8C8)",        primary: "#F48B88", bg: "#FAFAFA" },
-  { id: "amber",   label: "Warm Amber", sidebar: "#fdf0cc",                                        primary: "#b45309", bg: "#fdf6e3" },
-  { id: "crystal", label: "Crystal",    sidebar: "#1A1A2E",                                        primary: "#A78BFA", bg: "#F4F5F9" },
-  { id: "fresh",   label: "Fresh",      sidebar: "#ffffff",                                        primary: "#16a34a", bg: "#e8f5ee" },
-  { id: "prism",   label: "Prism",      sidebar: "#ffffff",                                        primary: "#9b5de5", bg: "linear-gradient(135deg,#ffe4ec,#f3e8ff,#fff3e0)" },
-  { id: "slate",   label: "Slate",      sidebar: "#ffffff",                                        primary: "#00c49a", bg: "#e5e9ef" },
-  { id: "mono",    label: "Mono",       sidebar: "#ffffff",                                        primary: "#1a1a1a", bg: "#f2f2f2" },
-  { id: "brutal",  label: "Brutal",     sidebar: "#ffffff",                                        primary: "#ffe500", bg: "#eeeaff" },
+  { id: "plain",   label: "Plain",            sidebar: "#ffffff",                                        primary: "#2563eb", bg: "#f0eeff" },
+  { id: "sap",     label: "SAP Horizon",      sidebar: "#354a5e",                                        primary: "#0070f2", bg: "#f5f6f7" },
+  { id: "aurora",  label: "Aurora (default)", sidebar: "linear-gradient(175deg,#1e1b4b,#1d4ed8)",        primary: "#6366f1", bg: "#f5f3ff" },
+  { id: "fresh",   label: "Fresh",            sidebar: "#f7fef9",                                        primary: "#16a34a", bg: "#e8f5ee" },
+  { id: "prism",   label: "Prism",            sidebar: "#ffffff",                                        primary: "#9b5de5", bg: "linear-gradient(135deg,#ffe4ec,#f3e8ff,#fff3e0)" },
+  { id: "slate",   label: "Slate",            sidebar: "#1c2b3a",                                        primary: "#00c49a", bg: "#e5e9ef" },
+  { id: "mono",    label: "Mono",             sidebar: "#efefef",                                        primary: "#1a1a1a", bg: "#f2f2f2" },
+  { id: "brutal",  label: "Brutal",           sidebar: "#ffffff",                                        primary: "#ffe500", bg: "#f5f5f5" },
+  { id: "dark",     label: "Dark",             sidebar: "#0f172a",                                        primary: "#818cf8", bg: "#0f172a" },
+  { id: "terminal", label: "Terminal",         sidebar: "#0a0a0a",                                        primary: "#00ff41", bg: "#0a0a0a" },
+  { id: "nord",     label: "Nord",             sidebar: "#2e3440",                                        primary: "#88c0d0", bg: "#e5e9f0" },
+  { id: "copper",   label: "Copper",           sidebar: "#141009",                                        primary: "#b87333", bg: "#1a140e" },
 ] as const;
 
 type ThemeId = (typeof THEMES)[number]["id"];

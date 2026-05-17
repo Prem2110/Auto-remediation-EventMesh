@@ -4,15 +4,15 @@
   align-items: center;
   gap: 1rem;
   padding: 1rem;
-  background-color: #f8f9fa;
+  background-color: var(--orbit-bg-hover, #f8f9fa);
   border-radius: 4px;
-  border: 1px solid #e9ecef;
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e9ecef);
   font-size: 0.9rem;
   flex-wrap: wrap;
 }
 
 .info {
-  color: #666;
+  color: var(--orbit-text-muted, #666);
   font-weight: 500;
   flex: 0 0 auto;
 }
@@ -26,19 +26,19 @@
 
 .btn {
   padding: 0.5rem 1rem;
-  background-color: #fff;
-  border: 1px solid #dee2e6;
+  background-color: var(--orbit-card-bg, #fff);
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #dee2e6);
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 500;
-  color: #333;
+  color: var(--orbit-text-primary, #333);
   transition: all 0.2s ease;
 }
 
 .btn:hover:not(:disabled) {
-  background-color: #e9ecef;
-  border-color: #adb5bd;
+  background-color: var(--orbit-bg-hover, #e9ecef);
+  border-color: var(--orbit-card-border, #adb5bd);
 }
 
 .btn:disabled {
@@ -47,7 +47,7 @@
 }
 
 .pageInfo {
-  color: #333;
+  color: var(--orbit-text-primary, #333);
   font-weight: 500;
   min-width: 100px;
   text-align: center;
@@ -56,15 +56,15 @@
 
 .pageSizeSelect {
   padding: 0.5rem;
-  border: 1px solid #dee2e6;
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-input-border, #dee2e6);
   border-radius: 4px;
-  background-color: #fff;
+  background-color: var(--orbit-input-bg, #fff);
   cursor: pointer;
   font-size: 0.9rem;
 }
 
 .pageSizeSelect:hover {
-  border-color: #adb5bd;
+  border-color: var(--orbit-card-border, #adb5bd);
 }
 
 @media (max-width: 768px) {
