@@ -55,9 +55,6 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
     return location.pathname.startsWith(key);
   }
 
-  const initials =
-    (user.firstname?.[0] ?? "A") + (user.lastname?.[0] ?? "U");
-
   return (
     <div className={styles.appShell}>
       {/* ── Top bar ── */}
