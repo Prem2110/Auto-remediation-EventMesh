@@ -183,9 +183,9 @@
   --orbit-nav-active-bar:    #93c5fd;
   --orbit-card-bg:           #ffffff;
   --orbit-card-border:       #bfdbfe;
-  --orbit-text-primary:      #1e3a8a;
-  --orbit-text-secondary:    #1d4ed8;
-  --orbit-text-muted:        #3b82f6;
+  --orbit-text-primary:      #000000;
+  --orbit-text-secondary:    #000000;
+  --orbit-text-muted:        #000000;
   --orbit-input-bg:          #ffffff;
   --orbit-input-border:      #bfdbfe;
   --orbit-font-family:       "DM Sans", system-ui, sans-serif;

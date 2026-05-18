@@ -109,8 +109,18 @@ function HeroStatsBanner({ stats, loading }: { stats: HeroStat[]; loading: boole
 }
 
 // ── Section title ─────────────────────────────────────────────────────────────
-function SectionTitle({ title }: { title: string }) {
-  return <h3 className={styles.sectionTitle}>{title}</h3>;
+function SectionTitle({ title, tooltip }: { title: string; tooltip?: string }) {
+  return (
+    <h3 className={styles.sectionTitle}>
+      {title}
+      {tooltip && (
+        <span className={styles.tooltipAnchor}>
+          <span className={styles.tooltipIcon}>ⓘ</span>
+          <span className={styles.tooltipBox}>{tooltip}</span>
+        </span>
+      )}
+    </h3>
+  );
 }
 
 // ── Two-column legend for pie charts with many categories ─────────────────────
@@ -308,7 +318,7 @@ export default function Dashboard() {
       {/* ── Status Breakdown + Error Distribution (side by side) ── */}
       <div className={styles.chartsRow}>
         <div className={styles.chartHalf}>
-          <SectionTitle title="Status Breakdown" />
+          <SectionTitle title="Status Breakdown" tooltip="Distribution of incidents by their current pipeline stage (e.g. detecting, fixing, resolved)." />
           {dashLoading ? <SkeletonChart /> : (
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
@@ -332,7 +342,7 @@ export default function Dashboard() {
         </div>
 
         <div className={styles.chartHalf}>
-          <SectionTitle title="Error Distribution" />
+          <SectionTitle title="Error Distribution" tooltip="Breakdown of incidents by error category (e.g. MAPPING_ERROR, CONNECTION_ERROR, SECURITY_ERROR)." />
           {dashLoading ? <SkeletonChart /> : (
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
@@ -351,7 +361,7 @@ export default function Dashboard() {
 
       {/* ── Top Failing Integration Artifact ── */}
       <div className={styles.chartBlock}>
-        <SectionTitle title="Top Failing Integration Artifact" />
+        <SectionTitle title="Top Failing Integration Artifact" tooltip="Ranks integration flows (iFlows) by total failure count. Helps identify which SAP CPI artifacts need the most attention." />
         {dashLoading ? <SkeletonChart /> : (
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={iflowData} layout="vertical" margin={{ left: 10, right: 30, top: 5, bottom: 5 }}>
@@ -373,7 +383,7 @@ export default function Dashboard() {
 
       {/* ── Failure Over Time ── */}
       <div className={styles.chartBlock}>
-        <SectionTitle title="Failure Over Time" />
+        <SectionTitle title="Failure Over Time" tooltip="Time-series area chart showing failure count per time interval, as reported by SAP CPI message logs. X-axis represents the timestamp; Y-axis shows the number of failures in that window." />
         {dashLoading ? <SkeletonChart /> : (
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={timelineData} margin={{ left: 10, right: 10 }}>
@@ -470,7 +480,6 @@ export default function Dashboard() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th title="Auto-generated UUID for this remediation incident">Incident ID</th>
                 <th title="SAP CPI message processing log identifier">Message GUID</th>
                 <th title="Integration flow associated with this incident">Integration Scenario</th>
                 <th title="Classified error category (e.g. MAPPING_ERROR, CONNECTION_ERROR)">Error Type</th>
@@ -485,13 +494,12 @@ export default function Dashboard() {
               {incidentsLoading ? (
                 <SkeletonRows count={5} />
               ) : activeInc.length === 0 ? (
-                <tr><td colSpan={9} className={styles.emptyCell}>No data</td></tr>
+                <tr><td colSpan={8} className={styles.emptyCell}>No data</td></tr>
               ) : (
                 activeInc.map((row, i) => {
                   const stateClass = INCIDENT_STATE[String(row.status ?? "")] ?? styles.stateNone;
                   return (
                     <tr key={i}>
-                      <td className={styles.mono}>{String(row.incident_id ?? "-")}</td>
                       <td className={styles.mono}>{String(row.message_guid ?? "-")}</td>
                       <td>{String(row.iflow_id ?? "-")}</td>
                       <td>{String(row.error_type ?? "-")}</td>

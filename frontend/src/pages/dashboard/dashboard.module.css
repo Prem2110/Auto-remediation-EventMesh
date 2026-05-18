@@ -85,6 +85,56 @@
   font-size: 1rem;
   font-weight: 600;
   color: var(--orbit-text-primary, #1e293b);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tooltipAnchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tooltipIcon {
+  font-size: 0.8rem;
+  color: var(--orbit-text-muted, #94a3b8);
+  cursor: default;
+  line-height: 1;
+}
+
+.tooltipBox {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 0.75rem;
+  font-weight: 400;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.4rem;
+  white-space: normal;
+  width: 220px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 999;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.tooltipBox::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #1e293b;
+}
+
+.tooltipAnchor:hover .tooltipBox {
+  display: block;
 }
 
 /* ── Charts ── */
