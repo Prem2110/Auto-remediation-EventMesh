@@ -58,14 +58,29 @@ def _looks_like_xml(s: str) -> bool:
     return t.startswith("<") or t.startswith("<?xml")
 
 
+def _coerce_files_to_dicts(files: list) -> list:
+    """Convert any Pydantic model instances in a files list to plain dicts."""
+    result = []
+    for f in files:
+        if isinstance(f, dict):
+            result.append(f)
+        elif hasattr(f, "model_dump"):
+            result.append(f.model_dump())
+        elif hasattr(f, "dict"):
+            result.append(f.dict())
+        else:
+            result.append({"filepath": str(getattr(f, "filepath", "")), "content": str(getattr(f, "content", ""))})
+    return result
+
+
 def _sanitize_args_for_log(args: Dict) -> Dict:
     """Return a copy of args safe to log — replaces XML/large file content with a summary."""
     sanitized: Dict[str, Any] = {}
     for k, v in args.items():
         if k == "files" and isinstance(v, list):
             sanitized[k] = []
-            for f in v:
-                if isinstance(f, dict) and "content" in f:
+            for f in _coerce_files_to_dicts(v):
+                if "content" in f:
                     raw = str(f.get("content", ""))
                     label = f"<XML len={len(raw)}>" if _looks_like_xml(raw) else f"<content len={len(raw)}>"
                     sanitized[k].append({fk: fv for fk, fv in f.items() if fk != "content"} | {"content": label})
@@ -294,6 +309,11 @@ class MultiMCP:
         Call a single MCP tool. Runs the iFlow XML validator before any
         update-iflow call. Retries up to MAX_RETRIES on transport errors.
         """
+        # Normalise files list — LangChain MCP adapter may pass Pydantic model
+        # instances instead of plain dicts, which breaks json.dumps and call_tool.
+        if isinstance(args.get("files"), list):
+            args = {**args, "files": _coerce_files_to_dicts(args["files"])}
+
         if tool == "update-iflow":
             val_errors = validate_before_update_iflow(args)
             if val_errors:
