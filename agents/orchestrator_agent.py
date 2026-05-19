@@ -61,6 +61,7 @@ from core.state import FIX_PROGRESS, RUNTIME_FLAGS, cleanup_fix_progress
 from db.database import (
     create_escalation_ticket,
     create_incident,
+    generate_orbit_id,
     get_incident_by_id,
     get_incident_by_message_guid,
     get_open_incident_by_signature,
@@ -839,7 +840,7 @@ Rules:
             return "BURST_DEDUPED"
 
         # ── New incident ──────────────────────────────────────────────────────
-        incident_id = str(uuid.uuid4())
+        incident_id = generate_orbit_id()
         incident    = {
             **normalized,
             "incident_id":        incident_id,
@@ -1935,7 +1936,7 @@ Rules:
                 try:
                     _raw = json.dumps(message)[:2000] if message else ""
                     create_incident({
-                        "incident_id":   str(uuid.uuid4()),
+                        "incident_id":   generate_orbit_id(),
                         "iflow_id":      message.get("IflowId") or message.get("iflow_id") or message.get("IntegrationFlowName") or "UNKNOWN",
                         "message_guid":  message.get("message_guid") or message.get("MessageGuid") or "",
                         "status":        "PARSE_FAILED",

@@ -743,6 +743,32 @@ def get_testsuite_log_entries(user_id: Optional[str] = None) -> List[Dict]:
 # AUTONOMOUS INCIDENTS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def generate_orbit_id() -> str:
+    """Return a sequential incident ID in ORBCPI-YYYYMMDD-XXXXXX format.
+
+    The counter resets each calendar day and is derived from MAX(incident_id)
+    for today, so it is monotonically increasing within a day without needing
+    a separate sequence object.
+    """
+    today = datetime.now(UTC).strftime("%Y%m%d")
+    prefix = f"ORBCPI-{today}-"
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            f'SELECT MAX(incident_id) FROM "{_INCIDENTS_TABLE}" WHERE incident_id LIKE ?',
+            (f"{prefix}%",),
+        )
+        row  = cur.fetchone()
+        conn.close()
+        last = row[0] if row and row[0] else None
+        counter = int(last.rsplit("-", 1)[-1]) + 1 if last else 1
+    except Exception as exc:
+        logger.warning("[DB] generate_orbit_id fallback: %s", exc)
+        counter = 1
+    return f"{prefix}{counter:06d}"
+
+
 def create_incident(incident: Dict):
     try:
         conn = get_connection()

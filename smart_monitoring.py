@@ -28,6 +28,7 @@ import re
 
 from db.database import (
     create_incident,
+    generate_orbit_id,
     update_incident,
     get_incident_by_id,
     get_incident_by_message_guid,
@@ -441,7 +442,7 @@ async def _ensure_incident_for_guid(
     classification = mcp.classify_error(normalized.get("error_message", ""))
     normalized.update(classification)
 
-    incident_id = str(uuid.uuid4())
+    incident_id = generate_orbit_id()
     incident = {
         **normalized,
         "incident_id":         incident_id,
@@ -1165,7 +1166,7 @@ async def analyze_message(
         classification = mcp.classify_error(normalized.get("error_message", ""))
         normalized.update(classification)
     if not existing:
-        incident_id = str(uuid.uuid4())
+        incident_id = generate_orbit_id()
         incident = {
             **normalized,
             "incident_id":         incident_id,

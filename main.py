@@ -112,6 +112,7 @@ from db.database import (
     ensure_em_schema,
     ensure_fix_patterns_schema,
     ensure_settings_schema,
+    generate_orbit_id,
     get_all_settings,
     upsert_setting,
     delete_setting,
@@ -541,7 +542,7 @@ async def direct_fix_endpoint(req: DirectFixRequest):
     if not proposed_fix:
         clf            = orchestrator._classifier.classify_error(req.error_message)
         fake_incident  = {
-            "incident_id":   str(uuid.uuid4()),
+            "incident_id":   generate_orbit_id(),
             "iflow_id":      req.iflow_id,
             "error_message": req.error_message,
             "error_type":    clf["error_type"],
@@ -1202,7 +1203,7 @@ async def retry_itsm_push(ticket_id: str):
 @app.post("/autonomous/test_incident")
 async def inject_test_incident(background_tasks: BackgroundTasks):
     _guard()
-    incident_id = str(uuid.uuid4())
+    incident_id = generate_orbit_id()
     _group_key  = orchestrator.incident_group_key(  # type: ignore[union-attr]
         {"iflow_id": "EH8-BPP-Material-UPSERT", "error_type": "MAPPING_ERROR"}
     ) if orchestrator else ""
@@ -1393,7 +1394,7 @@ async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
             return
 
         # Create new incident with CLASSIFIED status
-        incident_id = str(uuid.uuid4())
+        incident_id = generate_orbit_id()
         create_incident({
             **normalized,
             "incident_id":          incident_id,
@@ -1821,7 +1822,7 @@ async def agents_options_preflight(agent_name: str):
 @app.get("/autonomous/db_test")
 async def db_test():
     import traceback  # noqa: PLC0415
-    test_id = str(uuid.uuid4())
+    test_id = generate_orbit_id()
     try:
         create_incident({
             "incident_id":   test_id,

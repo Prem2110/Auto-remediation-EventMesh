@@ -480,6 +480,7 @@ export default function Dashboard() {
           <table className={styles.table}>
             <thead>
               <tr>
+                <th title="Unique incident identifier in ORB-YYYYMMDD-XXXXXX format">Incident ID</th>
                 <th title="SAP CPI message processing log identifier">Message GUID</th>
                 <th title="Integration flow associated with this incident">Integration Scenario</th>
                 <th title="Classified error category (e.g. MAPPING_ERROR, CONNECTION_ERROR)">Error Type</th>
@@ -494,12 +495,13 @@ export default function Dashboard() {
               {incidentsLoading ? (
                 <SkeletonRows count={5} />
               ) : activeInc.length === 0 ? (
-                <tr><td colSpan={8} className={styles.emptyCell}>No data</td></tr>
+                <tr><td colSpan={9} className={styles.emptyCell}>No data</td></tr>
               ) : (
                 activeInc.map((row, i) => {
                   const stateClass = INCIDENT_STATE[String(row.status ?? "")] ?? styles.stateNone;
                   return (
                     <tr key={i}>
+                      <td className={styles.mono}>{String(row.incident_id ?? "-")}</td>
                       <td className={styles.mono}>{String(row.message_guid ?? "-")}</td>
                       <td>{String(row.iflow_id ?? "-")}</td>
                       <td>{String(row.error_type ?? "-")}</td>
