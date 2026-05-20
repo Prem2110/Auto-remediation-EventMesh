@@ -23,6 +23,7 @@ Thumbs.db
 # Build
 dist/
 build/
+site/
 
 # Locks
 uv.lock
