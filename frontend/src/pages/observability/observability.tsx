@@ -452,6 +452,39 @@ function parseTicketDescription(desc: string): Record<string, string> {
   return result;
 }
 
+/* ── Error type chip ─────────────────────────────────────────────────── */
+const ERROR_TYPE_META: Record<string, { icon: string; cls: string; label: string }> = {
+  MAPPING_ERROR:        { icon: "⇄",  cls: "errMapping",    label: "Mapping"        },
+  DATA_VALIDATION:      { icon: "⊘",  cls: "errValidation", label: "Validation"     },
+  SSL_ERROR:            { icon: "⚿",  cls: "errSSL",        label: "SSL"            },
+  AUTH_CONFIG_ERROR:    { icon: "⚙",  cls: "errAuth",       label: "Auth Config"    },
+  AUTH_ERROR:           { icon: "🔑", cls: "errAuth",       label: "Auth"           },
+  DUPLICATE_ERROR:      { icon: "⊞",  cls: "errDuplicate",  label: "Duplicate"      },
+  PAYLOAD_SIZE_ERROR:   { icon: "≋",  cls: "errPayload",    label: "Payload Size"   },
+  ADAPTER_CONFIG_ERROR: { icon: "⊡",  cls: "errAdapter",    label: "Adapter Config" },
+  BACKEND_ERROR:        { icon: "⬡",  cls: "errBackend",    label: "Backend"        },
+  CONNECTIVITY_ERROR:   { icon: "⊗",  cls: "errConnectivity", label: "Connectivity" },
+  GROOVY_ERROR:         { icon: "{ }",cls: "errScript",     label: "Groovy"         },
+  SCRIPT_ERROR:         { icon: "⟩",  cls: "errScript",     label: "Script"         },
+  IDOC_ERROR:           { icon: "▤",  cls: "errIdoc",       label: "IDoc"           },
+  SOAP_ERROR:           { icon: "⬡",  cls: "errSoap",       label: "SOAP"           },
+  ODATA_ERROR:          { icon: "⊞",  cls: "errOdata",      label: "OData"          },
+  TIMEOUT_ERROR:        { icon: "⏱",  cls: "errTimeout",    label: "Timeout"        },
+};
+
+function ErrorTypeChip({ errorType }: { errorType?: string }) {
+  if (!errorType) return null;
+  const meta = ERROR_TYPE_META[errorType.toUpperCase()] ?? {
+    icon: "⚠", cls: "errUnknown", label: errorType.replace(/_/g, ' '),
+  };
+  return (
+    <span className={`${styles.errorChip} ${styles[meta.cls]}`}>
+      <span className={styles.errorChipIcon}>{meta.icon}</span>
+      {meta.label}
+    </span>
+  );
+}
+
 /* ── Rich text renderer ──────────────────────────────────────────────── */
 function RichText({ text }: { text: string }) {
   if (!text) return null;
@@ -1623,8 +1656,9 @@ export default function Observability() {
                 <div key={ticket.ticket_id} className={styles.ticketCard}>
                   <div className={styles.ticketHeader}>
                     <div>
-                      <h3>{ticket.title}</h3>
+                      <h3>{ticket.title.replace(/^\[SAP CPI\]\s*/i, '')}</h3>
                       <span className={styles.ticketId}>#{ticket.ticket_id}</span>
+                      <ErrorTypeChip errorType={ticket.error_type} />
                     </div>
                     <div className={styles.ticketBadges}>
                       <span className={`${styles.badge} ${styles[`priority_${ticket.priority.toLowerCase()}`]}`}>
