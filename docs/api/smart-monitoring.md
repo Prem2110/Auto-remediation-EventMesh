@@ -3,47 +3,27 @@
 **Router prefix:** `/smart-monitoring`  
 **File:** `smart_monitoring.py`
 
-The Smart Monitoring API provides a fine-grained view into SAP CPI failed messages, with AI-powered analysis and fix capabilities per message.
+The Smart Monitoring API provides a fine-grained view into SAP CPI failed messages, with AI-powered analysis, fix, and escalation capabilities per message.
 
 ---
 
-## Message Listing
+## Messages
 
 ### `GET /smart-monitoring/messages`
 
 List failed CPI messages with optional filtering.
 
-**Query params:**
+**Query params:** `status`, `iflow_id`, `time_range`, `limit`, `offset`
 
-| Param | Type | Description |
-|---|---|---|
-| `status` | string | Filter by message status |
-| `iflow_id` | string | Filter by integration flow ID |
-| `from_date` | string | ISO 8601 start date |
-| `to_date` | string | ISO 8601 end date |
-| `limit` | int | Page size (default 50) |
-| `offset` | int | Pagination offset |
+### `GET /smart-monitoring/messages/paginated`
 
-**Response:**
+Paginated list of failed messages with cursor-based navigation.
 
-```json
-{
-  "messages": [
-    {
-      "message_guid": "abc123",
-      "iflow_id": "OrderProcessing",
-      "status": "FAILED",
-      "error_message": "...",
-      "timestamp": "2026-04-09T10:00:00Z"
-    }
-  ],
-  "total": 142
-}
-```
+**Query params:** `page`, `page_size`, `status`, `iflow_id`, `time_range`
 
-### `GET /smart-monitoring/messages/{guid}`
+### `GET /smart-monitoring/messages/{message_guid}`
 
-Full detail view for a single failed message. Returns 6 tabs of information:
+Full detail view for a single failed message. Returns tabbed data:
 
 | Tab | Content |
 |---|---|
@@ -52,7 +32,7 @@ Full detail view for a single failed message. Returns 6 tabs of information:
 | `logs` | Processing log entries |
 | `payload` | Message payload (if available) |
 | `iflow` | Current iFlow configuration summary |
-| `history` | Previous incidents for same iFlow |
+| `history` | Previous incidents for the same iFlow |
 
 ### `GET /smart-monitoring/total-errors`
 
@@ -64,79 +44,69 @@ Full detail view for a single failed message. Returns 6 tabs of information:
 
 ## AI Analysis
 
-### `POST /smart-monitoring/messages/{guid}/analyze`
+### `POST /smart-monitoring/messages/{message_guid}/analyze`
 
 Run RCA on a specific failed message. Triggers `RCAAgent.run_rca()`.
 
 **Request:**
-
 ```json
-{
-  "user_id": "user123"
-}
+{ "user_id": "user123" }
 ```
 
 **Response:**
-
 ```json
 {
   "root_cause": "XPath expression references field 'OrderId' but schema defines 'orderId'",
   "proposed_fix": "Update XPath in MessageMapping_1 to use 'orderId'",
   "confidence": 0.92,
-  "affected_component": "MessageMapping_1",
-  "key_steps": ["..."]
+  "affected_component": "MessageMapping_1"
 }
 ```
 
-### `POST /smart-monitoring/messages/{guid}/generate_fix_patch`
+### `POST /smart-monitoring/messages/{message_guid}/explain_error`
 
-Generate a detailed fix plan without applying it. Returns step-by-step instructions and the expected XML change.
+Return a plain-English explanation of the error for a given message — no fix generated.
 
 **Request:**
-
 ```json
-{
-  "user_id": "user123",
-  "include_xml_diff": true
-}
+{ "user_id": "user123" }
+```
+
+### `POST /smart-monitoring/messages/{message_guid}/generate_fix_patch`
+
+Generate a detailed fix plan without applying it. Returns step-by-step instructions and expected XML change.
+
+**Request:**
+```json
+{ "user_id": "user123" }
 ```
 
 ### `POST /smart-monitoring/chat`
 
-Ask the AI a question about a specific error.
+Ask the AI a free-form question about a specific error or incident.
 
 **Request:**
-
 ```json
-{
-  "message_guid": "abc123",
-  "query": "What does this error mean?",
-  "user_id": "user123"
-}
+{ "message_guid": "abc123", "query": "What does this error mean?", "user_id": "user123" }
 ```
 
 ---
 
 ## Fix Application
 
-### `POST /smart-monitoring/messages/{guid}/apply_fix`
+### `POST /smart-monitoring/messages/{message_guid}/apply_fix`
 
 Apply a fix to the iFlow and deploy. Runs the full `OrchestratorAgent.execute_incident_fix()` pipeline.
 
 **Request:**
-
 ```json
-{
-  "user_id": "user123",
-  "proposed_fix": "Optional override for proposed fix from RCA"
-}
+{ "user_id": "user123", "proposed_fix": "Optional override for RCA-proposed fix" }
 ```
 
 **Response:**
-
 ```json
 {
-  "incident_id": "uuid",
+  "incident_id": "ORBCPI-20260520-000001",
   "fix_applied": true,
   "deploy_success": true,
   "summary": "Updated XPath expression in MessageMapping_1 and deployed successfully"
@@ -145,35 +115,11 @@ Apply a fix to the iFlow and deploy. Runs the full `OrchestratorAgent.execute_in
 
 ---
 
-## Statistics
-
-### `GET /smart-monitoring/stats`
-
-Dashboard statistics.
-
-**Response:**
-
-```json
-{
-  "total_failed": 142,
-  "auto_fixed": 98,
-  "awaiting_approval": 12,
-  "escalated": 8,
-  "fix_success_rate": 0.87,
-  "top_error_types": [
-    {"type": "MAPPING_ERROR", "count": 45},
-    {"type": "AUTH_ERROR", "count": 23}
-  ]
-}
-```
-
----
-
-## Incidents (via Smart Monitoring)
+## Incidents
 
 ### `GET /smart-monitoring/incidents`
 
-List all tracked incidents (persisted in HANA).
+List all tracked incidents persisted in HANA.
 
 **Query params:** `status`, `error_type`, `iflow_id`, `limit`, `offset`
 
@@ -182,23 +128,63 @@ List all tracked incidents (persisted in HANA).
 Poll fix progress for an incident.
 
 ```json
+{ "incident_id": "ORBCPI-20260520-000001", "status": "FIX_VERIFIED", "step": "COMPLETE", "pct": 100 }
+```
+
+### `POST /smart-monitoring/incidents/{incident_id}/retry_fix`
+
+Retry a failed fix for an existing incident.
+
+### `POST /smart-monitoring/incidents/{incident_id}/resolve`
+
+Manually mark an incident as resolved.
+
+**Request:**
+```json
+{ "resolution_note": "Fixed manually via iFlow editor", "user_id": "user123" }
+```
+
+### `POST /smart-monitoring/incidents/{incident_id}/rollback`
+
+Roll back a deployed fix and restore the previous iFlow version.
+
+---
+
+## Statistics
+
+### `GET /smart-monitoring/stats`
+
+Summary statistics for the monitoring dashboard.
+
+```json
 {
-  "incident_id": "uuid",
-  "status": "FIX_VERIFIED",
-  "step": "COMPLETE",
-  "pct": 100
+  "total_failed": 142,
+  "auto_fixed": 98,
+  "awaiting_approval": 12,
+  "fix_success_rate": 0.87
 }
 ```
 
 ---
 
-## MCP Access Pattern
+## Escalations
 
-`smart_monitoring.py` uses a lazy import of `main_v2` to access the initialized `MultiMCP` and agents:
+### `GET /smart-monitoring/escalations`
 
-```python
-# Avoids circular import at module load time
-from main_v2 import multi_mcp, orchestrator  # imported at request time inside endpoint
-```
+List escalation tickets. Query params: `status`, `incident_id`, `limit`.
 
-This is intentional and necessary due to Python module load order constraints.
+### `GET /smart-monitoring/escalations/{ticket_id}`
+
+Get detail for a single escalation ticket.
+
+### `PATCH /smart-monitoring/escalations/{ticket_id}`
+
+Update fields on an escalation ticket (e.g. status, resolution notes).
+
+---
+
+## Admin
+
+### `DELETE /smart-monitoring/admin/clear-all-data`
+
+Wipe all incidents and monitoring data from the database. **Destructive — dev/test environments only.**
