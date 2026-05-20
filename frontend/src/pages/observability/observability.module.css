@@ -1690,11 +1690,6 @@
   border: 1px solid transparent;
 }
 
-.errorChipIcon {
-  font-size: 0.75rem;
-  line-height: 1;
-}
-
 /* colour variants */
 .errMapping     { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
 .errValidation  { background: #fefce8; color: #a16207; border-color: #fde68a; }

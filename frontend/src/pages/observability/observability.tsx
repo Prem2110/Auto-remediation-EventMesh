@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import SvgIcon from "../../components/icons/SvgIcon.tsx";
+import type { IconName } from "../../components/icons/SvgIcon.tsx";
 import {
   fetchMonitorMessages,
   fetchMonitorMessageDetail,
@@ -453,33 +454,33 @@ function parseTicketDescription(desc: string): Record<string, string> {
 }
 
 /* ── Error type chip ─────────────────────────────────────────────────── */
-const ERROR_TYPE_META: Record<string, { icon: string; cls: string; label: string }> = {
-  MAPPING_ERROR:        { icon: "⇄",  cls: "errMapping",    label: "Mapping"        },
-  DATA_VALIDATION:      { icon: "⊘",  cls: "errValidation", label: "Validation"     },
-  SSL_ERROR:            { icon: "⚿",  cls: "errSSL",        label: "SSL"            },
-  AUTH_CONFIG_ERROR:    { icon: "⚙",  cls: "errAuth",       label: "Auth Config"    },
-  AUTH_ERROR:           { icon: "🔑", cls: "errAuth",       label: "Auth"           },
-  DUPLICATE_ERROR:      { icon: "⊞",  cls: "errDuplicate",  label: "Duplicate"      },
-  PAYLOAD_SIZE_ERROR:   { icon: "≋",  cls: "errPayload",    label: "Payload Size"   },
-  ADAPTER_CONFIG_ERROR: { icon: "⊡",  cls: "errAdapter",    label: "Adapter Config" },
-  BACKEND_ERROR:        { icon: "⬡",  cls: "errBackend",    label: "Backend"        },
-  CONNECTIVITY_ERROR:   { icon: "⊗",  cls: "errConnectivity", label: "Connectivity" },
-  GROOVY_ERROR:         { icon: "{ }",cls: "errScript",     label: "Groovy"         },
-  SCRIPT_ERROR:         { icon: "⟩",  cls: "errScript",     label: "Script"         },
-  IDOC_ERROR:           { icon: "▤",  cls: "errIdoc",       label: "IDoc"           },
-  SOAP_ERROR:           { icon: "⬡",  cls: "errSoap",       label: "SOAP"           },
-  ODATA_ERROR:          { icon: "⊞",  cls: "errOdata",      label: "OData"          },
-  TIMEOUT_ERROR:        { icon: "⏱",  cls: "errTimeout",    label: "Timeout"        },
+const ERROR_TYPE_META: Record<string, { icon: IconName; cls: string; label: string }> = {
+  MAPPING_ERROR:        { icon: "arrows-right-left", cls: "errMapping",     label: "Mapping"        },
+  DATA_VALIDATION:      { icon: "exclamation-circle",cls: "errValidation",  label: "Validation"     },
+  SSL_ERROR:            { icon: "lock-closed",        cls: "errSSL",         label: "SSL"            },
+  AUTH_CONFIG_ERROR:    { icon: "key",                cls: "errAuth",        label: "Auth Config"    },
+  AUTH_ERROR:           { icon: "lock-closed",        cls: "errAuth",        label: "Auth"           },
+  DUPLICATE_ERROR:      { icon: "document-duplicate", cls: "errDuplicate",   label: "Duplicate"      },
+  PAYLOAD_SIZE_ERROR:   { icon: "archive-box",        cls: "errPayload",     label: "Payload Size"   },
+  ADAPTER_CONFIG_ERROR: { icon: "plug",               cls: "errAdapter",     label: "Adapter Config" },
+  BACKEND_ERROR:        { icon: "server-stack",       cls: "errBackend",     label: "Backend"        },
+  CONNECTIVITY_ERROR:   { icon: "no-symbol",          cls: "errConnectivity",label: "Connectivity"   },
+  GROOVY_ERROR:         { icon: "code-bracket",       cls: "errScript",      label: "Groovy"         },
+  SCRIPT_ERROR:         { icon: "code-bracket",       cls: "errScript",      label: "Script"         },
+  IDOC_ERROR:           { icon: "document",           cls: "errIdoc",        label: "IDoc"           },
+  SOAP_ERROR:           { icon: "globe-alt",          cls: "errSoap",        label: "SOAP"           },
+  ODATA_ERROR:          { icon: "circle-stack",       cls: "errOdata",       label: "OData"          },
+  TIMEOUT_ERROR:        { icon: "history",            cls: "errTimeout",     label: "Timeout"        },
 };
 
 function ErrorTypeChip({ errorType }: { errorType?: string }) {
   if (!errorType) return null;
   const meta = ERROR_TYPE_META[errorType.toUpperCase()] ?? {
-    icon: "⚠", cls: "errUnknown", label: errorType.replace(/_/g, ' '),
+    icon: "question-mark-circle" as IconName, cls: "errUnknown", label: errorType.replace(/_/g, ' '),
   };
   return (
     <span className={`${styles.errorChip} ${styles[meta.cls]}`}>
-      <span className={styles.errorChipIcon}>{meta.icon}</span>
+      <SvgIcon name={meta.icon} size={11} />
       {meta.label}
     </span>
   );
