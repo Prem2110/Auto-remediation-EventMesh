@@ -454,7 +454,9 @@ function parseTicketDescription(desc: string): Record<string, string> {
 }
 
 /* ── Error type chip ─────────────────────────────────────────────────── */
-const ERROR_TYPE_META: Record<string, { icon: IconName; cls: string; label: string }> = {
+type ErrorChipMeta = { icon: IconName; cls: string; label: string };
+
+const ERROR_CHIP_META: Record<string, ErrorChipMeta> = {
   MAPPING_ERROR:        { icon: "arrows-right-left", cls: "errMapping",     label: "Mapping"        },
   DATA_VALIDATION:      { icon: "exclamation-circle",cls: "errValidation",  label: "Validation"     },
   SSL_ERROR:            { icon: "lock-closed",        cls: "errSSL",         label: "SSL"            },
@@ -475,7 +477,7 @@ const ERROR_TYPE_META: Record<string, { icon: IconName; cls: string; label: stri
 
 function ErrorTypeChip({ errorType }: { errorType?: string }) {
   if (!errorType) return null;
-  const meta = ERROR_TYPE_META[errorType.toUpperCase()] ?? {
+  const meta: ErrorChipMeta = ERROR_CHIP_META[errorType.toUpperCase()] ?? {
     icon: "question-mark-circle" as IconName, cls: "errUnknown", label: errorType.replace(/_/g, ' '),
   };
   return (
