@@ -31,20 +31,20 @@ def set_db_source(source: str) -> None:
 # CONNECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_connection():
-    from hdbcli import dbapi
+_pool = None
+
+
+def _build_pool():
+    from hdbcli.connectionpool import ConnectionPool
+
     host     = os.getenv("HANA_HOST")
     user     = os.getenv("HANA_USER")
     password = os.getenv("HANA_PASSWORD")
     port_raw = os.getenv("HANA_PORT", "443")
 
-    missing = []
-    if not host:
-        missing.append("HANA_HOST")
-    if not user:
-        missing.append("HANA_USER")
-    if not password:
-        missing.append("HANA_PASSWORD")
+    missing = [name for name, val in {
+        "HANA_HOST": host, "HANA_USER": user, "HANA_PASSWORD": password,
+    }.items() if not val]
     if missing:
         raise RuntimeError(f"Missing HANA configuration: {', '.join(missing)}")
 
@@ -53,14 +53,28 @@ def get_connection():
     except ValueError as exc:
         raise RuntimeError(f"Invalid HANA_PORT value: {port_raw}") from exc
 
-    conn = dbapi.connect(
+    pool_min = int(os.getenv("HANA_POOL_MIN", "2"))
+    pool_max = int(os.getenv("HANA_POOL_MAX", "10"))
+
+    return ConnectionPool(
         address=host,
         port=port,
         user=user,
         password=password,
         encrypt=True,
         sslValidateCertificate=False,
+        min=pool_min,
+        max=pool_max,
     )
+
+
+def get_connection():
+    global _pool
+    if _pool is None:
+        _pool = _build_pool()
+
+    conn = _pool.getConnection()
+
     schema = os.getenv("HANA_SCHEMA", "")
     if schema:
         cur = conn.cursor()
