@@ -6,6 +6,8 @@ SAP HANA Cloud database layer (hdbcli).
 import os
 import json
 import uuid
+import queue
+import threading
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime, UTC
@@ -31,10 +33,11 @@ def set_db_source(source: str) -> None:
 # CONNECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-_cached_conn = None
+_pool_queue: "queue.Queue | None" = None
+_pool_lock  = threading.Lock()
 
 
-def _open_connection():
+def _open_raw_connection():
     from hdbcli import dbapi
 
     host     = os.getenv("HANA_HOST")
@@ -69,15 +72,77 @@ def _open_connection():
     return conn
 
 
-def get_connection():
-    global _cached_conn
+class _PooledConnection:
+    """
+    Thin wrapper around a raw hdbcli connection.
+    close() returns the connection to the pool instead of destroying it,
+    so every call site can call conn.close() as normal without leaking.
+    """
+
+    def __init__(self, raw_conn, pool: "queue.Queue"):
+        self._conn = raw_conn
+        self._pool = pool
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def isconnected(self) -> bool:
+        try:
+            return bool(self._conn.isconnected())
+        except Exception:
+            return False
+
+    def close(self):
+        try:
+            if self.isconnected():
+                self._pool.put_nowait(self._conn)
+                return
+        except queue.Full:
+            pass
+        # Connection is dead or pool is unexpectedly full — open a replacement
+        try:
+            self._pool.put_nowait(_open_raw_connection())
+        except (queue.Full, Exception):
+            pass
+
+
+def _get_pool() -> "queue.Queue":
+    global _pool_queue
+    if _pool_queue is not None:
+        return _pool_queue
+    with _pool_lock:
+        if _pool_queue is not None:
+            return _pool_queue
+        size = int(os.getenv("HANA_POOL_SIZE", "5"))
+        q: queue.Queue = queue.Queue(maxsize=size)
+        for _ in range(size):
+            q.put(_open_raw_connection())
+        _pool_queue = q
+        logger.info("[DB] HANA connection pool initialised (size=%d)", size)
+    return _pool_queue
+
+
+def get_connection() -> _PooledConnection:
+    pool = _get_pool()
     try:
-        if _cached_conn is not None and _cached_conn.isconnected():
-            return _cached_conn
+        raw_conn = pool.get(timeout=30)
+    except queue.Empty:
+        raise RuntimeError("HANA pool exhausted — no free connection after 30 s")
+
+    # Replace dead connections transparently
+    try:
+        if not raw_conn.isconnected():
+            raw_conn = _open_raw_connection()
     except Exception:
-        pass
-    _cached_conn = _open_connection()
-    return _cached_conn
+        raw_conn = _open_raw_connection()
+
+    return _PooledConnection(raw_conn, pool)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
