@@ -519,7 +519,7 @@ class ObserverAgent:
                 "iflow_id":    incident.get("iflow_id"),
                 "error_type":  incident.get("error_type"),
                 "title": (
-                    f"[SAP CPI] Auto-remediation escalation: {incident.get('iflow_id', 'unknown')} — "
+                    f"Auto-remediation escalation: {incident.get('iflow_id', 'unknown')} — "
                     f"{incident.get('error_type', 'UNKNOWN_ERROR')}"
                 ),
                 "description": (

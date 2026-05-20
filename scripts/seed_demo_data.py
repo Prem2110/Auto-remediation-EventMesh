@@ -608,7 +608,7 @@ def insert_tickets(cur, incident_ids: list):
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 tid, iid, iflow, etype,
-                f"[SAP CPI] Auto-remediation escalation: {iflow} — {etype}",
+                f"Auto-remediation escalation: {iflow} — {etype}",
                 (
                     f"iFlow: {iflow}\n"
                     f"Error type: {etype}\n"

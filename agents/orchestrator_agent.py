@@ -434,7 +434,7 @@ Rules:
 
                 # Title — iFlow + error type
                 "title": (
-                    f"[SAP CPI] {incident.get('iflow_id', 'unknown')} — "
+                    f"{incident.get('iflow_id', 'unknown')} — "
                     f"{incident.get('error_type', 'UNKNOWN_ERROR')}"
                 ),
 
@@ -1324,7 +1324,7 @@ Rules:
                         "iflow_id":      iflow_id,
                         "incident_id":   incident_id,
                         "error_type":    rca.get("error_type", "UNKNOWN"),
-                        "title":         f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
+                        "title":         f"Auto-remediation failed: iFlow '{iflow_id}'",
                         "description": (
                             f"Auto-remediation exhausted all fix attempts for iFlow '{iflow_id}'.\n"
                             f"Last failed stage: {fix_result.get('failed_stage', 'unknown')}.\n"
@@ -1466,7 +1466,7 @@ Rules:
                     "iflow_id":      iflow_id,
                     "incident_id":   incident_id,
                     "error_type":    "UNKNOWN",
-                    "title":         f"[SAP CPI] Auto-remediation failed: iFlow '{iflow_id}'",
+                    "title":         f"Auto-remediation failed: iFlow '{iflow_id}'",
                     "description": (
                         f"Auto-remediation raised an unhandled exception for iFlow '{iflow_id}'.\n"
                         f"Last failed stage: agent.\n"
