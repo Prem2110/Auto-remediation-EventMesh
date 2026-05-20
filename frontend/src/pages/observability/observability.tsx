@@ -1917,7 +1917,7 @@ export default function Observability() {
                   <div className={styles.approvalHeader}>
                     <div>
                       <h3>{approval.iflow_id}</h3>
-                      <span className={styles.approvalId}>Incident: {approval.incident_id}</span>
+                      <span className={styles.approvalId}>{approval.incident_id}</span>
                     </div>
                     <StatusPill status={approval.status} />
                   </div>

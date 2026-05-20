@@ -167,7 +167,7 @@ async def get_dashboard_all(mcp=Depends(_get_mcp)):
         error_counts: Dict[str, int] = defaultdict(int)
         iflow_counts: Dict[str, int] = defaultdict(int)
         timeline_buckets: Dict[str, int] = defaultdict(int)
-        cutoff = datetime.utcnow() - timedelta(hours=24)
+        cutoff = datetime.utcnow() - timedelta(hours=72)
 
         for inc in all_incidents:
             status = str(inc.get("status") or "UNKNOWN")
