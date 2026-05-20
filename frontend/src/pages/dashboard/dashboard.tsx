@@ -592,7 +592,7 @@ export default function Dashboard() {
                     const isResolving = resolvingId === ticket.ticket_id;
                     return (
                       <tr key={ticket.ticket_id}>
-                        <td className={styles.mono}>{ticket.ticket_id.slice(0, 8)}…</td>
+                        <td className={styles.mono}>{ticket.ticket_id}</td>
                         <td>{ticket.iflow_id || "-"}</td>
                         <td>{ticket.error_type || "-"}</td>
                         <td className={styles.errorPreview} style={{ color: "#334155", maxWidth: 220 }} title={rcaSummary}>

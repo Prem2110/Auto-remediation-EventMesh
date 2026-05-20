@@ -1276,7 +1276,7 @@ def get_patterns_by_error_type(
 
 def create_escalation_ticket(data: Dict) -> str:
     """Insert a new escalation ticket and return its ticket_id."""
-    ticket_id = data.get("ticket_id") or str(uuid.uuid4())
+    ticket_id = data.get("ticket_id") or data.get("incident_id") or generate_orbit_id()
     now = datetime.now(UTC).isoformat()
     try:
         conn = get_connection()
