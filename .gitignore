@@ -37,3 +37,4 @@ solace/
 solace_pubsubplus-*.dist-info/
 manifest.yml
 frontend/manifest.yml
+AUDIT_REPORT.md
