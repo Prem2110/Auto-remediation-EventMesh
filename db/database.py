@@ -31,11 +31,11 @@ def set_db_source(source: str) -> None:
 # CONNECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-_pool = None
+_cached_conn = None
 
 
-def _build_pool():
-    from hdbcli.connectionpool import ConnectionPool
+def _open_connection():
+    from hdbcli import dbapi
 
     host     = os.getenv("HANA_HOST")
     user     = os.getenv("HANA_USER")
@@ -53,34 +53,31 @@ def _build_pool():
     except ValueError as exc:
         raise RuntimeError(f"Invalid HANA_PORT value: {port_raw}") from exc
 
-    pool_min = int(os.getenv("HANA_POOL_MIN", "2"))
-    pool_max = int(os.getenv("HANA_POOL_MAX", "10"))
-
-    return ConnectionPool(
+    conn = dbapi.connect(
         address=host,
         port=port,
         user=user,
         password=password,
         encrypt=True,
         sslValidateCertificate=False,
-        min=pool_min,
-        max=pool_max,
     )
-
-
-def get_connection():
-    global _pool
-    if _pool is None:
-        _pool = _build_pool()
-
-    conn = _pool.getConnection()
-
     schema = os.getenv("HANA_SCHEMA", "")
     if schema:
         cur = conn.cursor()
         cur.execute(f'SET SCHEMA "{schema}"')
         cur.close()
     return conn
+
+
+def get_connection():
+    global _cached_conn
+    try:
+        if _cached_conn is not None and _cached_conn.isconnected():
+            return _cached_conn
+    except Exception:
+        pass
+    _cached_conn = _open_connection()
+    return _cached_conn
 
 
 # ─────────────────────────────────────────────────────────────────────────────
