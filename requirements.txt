@@ -19,6 +19,10 @@ langchain-openai>=0.2.0
 
 # ── SAP AI Core ───────────────────────────────────────────────────────────────
 sap-ai-sdk-gen>=6.1.2
+# Required by gen_ai_hub's langchain proxy (sap-ai-sdk-gen internal dep)
+langchain-aws>=0.2.0
+langchain-community>=0.3.0
+langchain-openai>=0.2.0
 
 # ── SAP HANA ──────────────────────────────────────────────────────────────────
 hdbcli>=2.28.20
