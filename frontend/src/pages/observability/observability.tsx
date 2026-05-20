@@ -1,7 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import SvgIcon from "../../components/icons/SvgIcon.tsx";
-import type { IconName } from "../../components/icons/SvgIcon.tsx";
 import {
   fetchMonitorMessages,
   fetchMonitorMessageDetail,
@@ -451,41 +450,6 @@ function parseTicketDescription(desc: string): Record<string, string> {
     result[key] = val;
   }
   return result;
-}
-
-/* ── Error type chip ─────────────────────────────────────────────────── */
-type ErrorChipMeta = { icon: IconName; cls: string; label: string };
-
-const ERROR_CHIP_META: Record<string, ErrorChipMeta> = {
-  MAPPING_ERROR:        { icon: "arrows-right-left", cls: "errMapping",     label: "Mapping"        },
-  DATA_VALIDATION:      { icon: "exclamation-circle",cls: "errValidation",  label: "Validation"     },
-  SSL_ERROR:            { icon: "lock-closed",        cls: "errSSL",         label: "SSL"            },
-  AUTH_CONFIG_ERROR:    { icon: "key",                cls: "errAuth",        label: "Auth Config"    },
-  AUTH_ERROR:           { icon: "lock-closed",        cls: "errAuth",        label: "Auth"           },
-  DUPLICATE_ERROR:      { icon: "document-duplicate", cls: "errDuplicate",   label: "Duplicate"      },
-  PAYLOAD_SIZE_ERROR:   { icon: "archive-box",        cls: "errPayload",     label: "Payload Size"   },
-  ADAPTER_CONFIG_ERROR: { icon: "plug",               cls: "errAdapter",     label: "Adapter Config" },
-  BACKEND_ERROR:        { icon: "server-stack",       cls: "errBackend",     label: "Backend"        },
-  CONNECTIVITY_ERROR:   { icon: "no-symbol",          cls: "errConnectivity",label: "Connectivity"   },
-  GROOVY_ERROR:         { icon: "code-bracket",       cls: "errScript",      label: "Groovy"         },
-  SCRIPT_ERROR:         { icon: "code-bracket",       cls: "errScript",      label: "Script"         },
-  IDOC_ERROR:           { icon: "document",           cls: "errIdoc",        label: "IDoc"           },
-  SOAP_ERROR:           { icon: "globe-alt",          cls: "errSoap",        label: "SOAP"           },
-  ODATA_ERROR:          { icon: "circle-stack",       cls: "errOdata",       label: "OData"          },
-  TIMEOUT_ERROR:        { icon: "history",            cls: "errTimeout",     label: "Timeout"        },
-};
-
-function ErrorTypeChip({ errorType }: { errorType?: string }) {
-  if (!errorType) return null;
-  const meta: ErrorChipMeta = ERROR_CHIP_META[errorType.toUpperCase()] ?? {
-    icon: "question-mark-circle" as IconName, cls: "errUnknown", label: errorType.replace(/_/g, ' '),
-  };
-  return (
-    <span className={`${styles.errorChip} ${styles[meta.cls]}`}>
-      <SvgIcon name={meta.icon} size={11} />
-      {meta.label}
-    </span>
-  );
 }
 
 /* ── Rich text renderer ──────────────────────────────────────────────── */
@@ -1661,7 +1625,6 @@ export default function Observability() {
                     <div>
                       <h3>{ticket.title.replace(/^\[SAP CPI\]\s*/i, '')}</h3>
                       <span className={styles.ticketId}>#{ticket.ticket_id}</span>
-                      <ErrorTypeChip errorType={ticket.error_type} />
                     </div>
                     <div className={styles.ticketBadges}>
                       <span className={`${styles.badge} ${styles[`priority_${ticket.priority.toLowerCase()}`]}`}>

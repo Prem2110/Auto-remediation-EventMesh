@@ -1675,38 +1675,6 @@
   font-weight: 700;
 }
 
-/* ── Error type chip ─────────────────────────────────────────────────── */
-.errorChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.28rem;
-  margin-top: 0.35rem;
-  padding: 0.18rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  border: 1px solid transparent;
-}
-
-/* colour variants */
-.errMapping     { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
-.errValidation  { background: #fefce8; color: #a16207; border-color: #fde68a; }
-.errSSL         { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-.errAuth        { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-.errDuplicate   { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
-.errPayload     { background: #fefce8; color: #a16207; border-color: #fde68a; }
-.errAdapter     { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
-.errBackend     { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-.errConnectivity{ background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
-.errScript      { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
-.errIdoc        { background: #f0fdfa; color: #0f766e; border-color: #99f6e4; }
-.errSoap        { background: #f0fdfa; color: #0f766e; border-color: #99f6e4; }
-.errOdata       { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
-.errTimeout     { background: #fefce8; color: #a16207; border-color: #fde68a; }
-.errUnknown     { background: #f9fafb; color: #6b7280; border-color: #e5e7eb; }
-
 .itsmFailBadge {
   display: inline-flex;
   align-items: center;
