@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import {
@@ -604,9 +604,10 @@ export default function Observability() {
     enabled:         mainTab === "messages",
   });
 
-  const messages     = resolveItems(msgData as Record<string, unknown> ?? {}) as IMonitorMessage[];
-  const msgTotal     = resolveTotal(msgData as Record<string, unknown> ?? {});
-  const msgTotalPages = resolveTotalPages(msgData as Record<string, unknown> ?? {}, msgTable.state.pageSize);
+  const _msgRaw      = (msgData as unknown ?? {}) as Record<string, unknown>;
+  const messages     = resolveItems(_msgRaw) as IMonitorMessage[];
+  const msgTotal     = resolveTotal(_msgRaw);
+  const msgTotalPages = resolveTotalPages(_msgRaw, msgTable.state.pageSize);
 
   // Reset to page 1 when filter or search changes
   useEffect(() => { msgTable.setPage(1); }, [filters.idQuery, activeStatusGroup]);
