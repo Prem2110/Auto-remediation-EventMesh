@@ -1202,8 +1202,8 @@ export default function Observability() {
                 </div>
               )}
 
-              {/* ── Server-side pagination ── */}
-              {!msgLoading && msgTotal > 0 && (
+              {/* ── Server-side pagination — hidden when detail panel is open ── */}
+              {!msgLoading && msgTotal > 0 && !selectedGuid && (
                 <Pagination
                   currentPage={msgTable.state.page}
                   totalPages={msgTotalPages}
