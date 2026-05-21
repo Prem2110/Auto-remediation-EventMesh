@@ -171,6 +171,14 @@ const INITIAL_FILTERS: IFilterState = {
   dateFrom: "", dateTo: "", idQuery: "", searchQuery: "",
 };
 
+const CARD_TIPS: Record<string, string> = {
+  FAILED:     "Messages in FAILED, FIX_FAILED, RCA_FAILED or DETECTED state — need attention",
+  SUCCESS:    "Messages that reached AUTO_FIXED, HUMAN_FIXED or FIX_VERIFIED state",
+  PROCESSING: "Messages currently in RCA, classification or fix-in-progress stages",
+  RETRY:      "Messages pending approval, ticket created or scheduled for retry",
+};
+
+const SUMMARY_CARD_KEYS = ["FAILED", "SUCCESS", "PROCESSING", "RETRY"] as const;
 
 const ANALYZE_STEPS = [
   "Analyzing error pattern and stack trace...",
@@ -1065,6 +1073,42 @@ export default function Observability() {
           MESSAGES TAB
           ══════════════════════════════════════════════════════════════════ */}
       <div style={{ display: mainTab === "messages" ? "contents" : "none" }}>
+          {/* ── Summary cards ── */}
+          <div className={styles.summaryRow}>
+            {SUMMARY_CARD_KEYS.map((k) => {
+              const cfg = STATUS_CONFIG[k];
+              const isActive = activeStatusGroup === k;
+              return (
+                <div
+                  key={k}
+                  className={`${styles.summaryCard} ${isActive ? styles.summaryCardActive : ""}`}
+                  style={{ borderTop: `3px solid ${cfg.dot}` }}
+                  onClick={() => setActiveStatusGroup(isActive ? null : k)}
+                  data-tip={CARD_TIPS[k]}
+                >
+                  <span className={styles.summaryCount} style={{ color: cfg.color }}>
+                    {isActive ? msgTotal : "–"}
+                  </span>
+                  <span className={styles.summaryLabel} style={{ color: cfg.color }}>{cfg.label}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Active filter chip */}
+          {activeStatusGroup && (
+            <div className={styles.chipRow}>
+              {(() => {
+                const cfg = STATUS_CONFIG[activeStatusGroup];
+                return (
+                  <span className={styles.filterChip} style={{ background: cfg.bg, color: cfg.color, borderColor: cfg.dot }}>
+                    {cfg.label}
+                    <button onClick={() => setActiveStatusGroup(null)} data-tip="Remove this filter">x</button>
+                  </span>
+                );
+              })()}
+            </div>
+          )}
 
           {/* ── Two-column layout ── */}
           <div className={styles.columns}>
