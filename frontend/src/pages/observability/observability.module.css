@@ -1503,6 +1503,24 @@
   gap: 1rem;
 }
 
+/* ── message list pagination ── */
+.msgPagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--orbit-card-border, #e5e7eb);
+  background: var(--orbit-card-bg, #fff);
+}
+
+.msgPaginationInfo {
+  font-size: 0.75rem;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
 /* ── ticket pagination ── */
 .ticketPagination {
   display: flex;

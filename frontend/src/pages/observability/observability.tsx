@@ -579,6 +579,8 @@ export default function Observability() {
   const [ticketPage,         setTicketPage]         = useState(1);
   const [retryingItsmId,     setRetryingItsmId]     = useState<string | null>(null);
   const TICKET_PAGE_SIZE = 10;
+  const MSG_PAGE_SIZE = 20;
+  const [msgPage, setMsgPage] = useState(1);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["monitor-messages"],
@@ -642,6 +644,12 @@ export default function Observability() {
     });
     return result;
   }, [data]);
+
+  // Reset message page when filters change
+  useEffect(() => { setMsgPage(1); }, [filters]);
+
+  const msgTotalPages  = Math.max(1, Math.ceil(messages.length / MSG_PAGE_SIZE));
+  const pagedMessages  = messages.slice((msgPage - 1) * MSG_PAGE_SIZE, msgPage * MSG_PAGE_SIZE);
 
   const tickets      = (ticketsData?.tickets || []) as Ticket[];
   const ticketsTotal = (ticketsData?.total   ?? 0) as number;
@@ -1155,7 +1163,7 @@ export default function Observability() {
                 </div>
               ) : (
                 <div className={styles.messageList}>
-                  {messages.map((msg, i) => {
+                  {pagedMessages.map((msg, i) => {
                     const cfg = STATUS_CONFIG[msg.status?.toUpperCase()] ?? STATUS_CONFIG.FAILED;
                     const isSelected = selectedGuid !== null && selectedGuid === msg.message_guid;
                     return (
@@ -1177,6 +1185,39 @@ export default function Observability() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* ── Message list pagination ── */}
+              {!isLoading && messages.length > MSG_PAGE_SIZE && (
+                <div className={styles.msgPagination}>
+                  <span className={styles.msgPaginationInfo}>
+                    {(msgPage - 1) * MSG_PAGE_SIZE + 1}–{Math.min(msgPage * MSG_PAGE_SIZE, messages.length)} of {messages.length}
+                  </span>
+                  <div className={styles.ticketPaginationControls}>
+                    <button className={styles.pageBtn} onClick={() => setMsgPage(1)} disabled={msgPage === 1}>«</button>
+                    <button className={styles.pageBtn} onClick={() => setMsgPage((p) => Math.max(1, p - 1))} disabled={msgPage === 1}>‹ Prev</button>
+                    {Array.from({ length: msgTotalPages }, (_, i) => i + 1)
+                      .filter((p) => p === 1 || p === msgTotalPages || Math.abs(p - msgPage) <= 1)
+                      .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                        if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+                        acc.push(p);
+                        return acc;
+                      }, [])
+                      .map((p, i) =>
+                        p === "…" ? (
+                          <span key={`ellipsis-${i}`} className={styles.pageDots}>…</span>
+                        ) : (
+                          <button
+                            key={p}
+                            className={`${styles.pageBtn} ${msgPage === p ? styles.pageBtnActive : ""}`}
+                            onClick={() => setMsgPage(p as number)}
+                          >{p}</button>
+                        )
+                      )}
+                    <button className={styles.pageBtn} onClick={() => setMsgPage((p) => Math.min(msgTotalPages, p + 1))} disabled={msgPage === msgTotalPages}>Next ›</button>
+                    <button className={styles.pageBtn} onClick={() => setMsgPage(msgTotalPages)} disabled={msgPage === msgTotalPages}>»</button>
+                  </div>
                 </div>
               )}
             </div>
