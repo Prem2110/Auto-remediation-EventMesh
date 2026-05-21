@@ -581,6 +581,8 @@ export default function Observability() {
   const TICKET_PAGE_SIZE = 10;
   const MSG_PAGE_SIZE = 10;
   const [msgPage, setMsgPage] = useState(1);
+  const APPROVAL_PAGE_SIZE = 5;
+  const [approvalPage, setApprovalPage] = useState(1);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["monitor-messages"],
@@ -655,6 +657,9 @@ export default function Observability() {
   const ticketsTotal = (ticketsData?.total   ?? 0) as number;
   const ticketPages  = Math.max(1, Math.ceil(ticketsTotal / TICKET_PAGE_SIZE));
   const approvals = (approvalsData?.pending || []) as Approval[];
+
+  const approvalTotalPages = Math.max(1, Math.ceil(approvals.length / APPROVAL_PAGE_SIZE));
+  const pagedApprovals     = approvals.slice((approvalPage - 1) * APPROVAL_PAGE_SIZE, approvalPage * APPROVAL_PAGE_SIZE);
 
   /* ── Approval actions ──────────────────────────────────────────────── */
   const handleApprove = useCallback(async (incidentId: string) => {
@@ -1953,7 +1958,7 @@ export default function Observability() {
             </div>
           ) : (
             <div className={styles.approvalsList}>
-              {approvals.map((approval) => (
+              {pagedApprovals.map((approval) => (
                 <div key={approval.incident_id} className={styles.approvalCard}>
                   <div className={styles.approvalHeader}>
                     <div>
@@ -2009,6 +2014,39 @@ export default function Observability() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* ── Approvals pagination ── */}
+          {!approvalsLoading && approvals.length > APPROVAL_PAGE_SIZE && (
+            <div className={styles.ticketPagination}>
+              <span className={styles.ticketPaginationInfo}>
+                {(approvalPage - 1) * APPROVAL_PAGE_SIZE + 1}–{Math.min(approvalPage * APPROVAL_PAGE_SIZE, approvals.length)} of {approvals.length} approvals
+              </span>
+              <div className={styles.ticketPaginationControls}>
+                <button className={styles.pageBtn} onClick={() => setApprovalPage(1)} disabled={approvalPage === 1}>«</button>
+                <button className={styles.pageBtn} onClick={() => setApprovalPage((p) => Math.max(1, p - 1))} disabled={approvalPage === 1}>‹ Prev</button>
+                {Array.from({ length: approvalTotalPages }, (_, i) => i + 1)
+                  .filter((p) => p === 1 || p === approvalTotalPages || Math.abs(p - approvalPage) <= 1)
+                  .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+                    acc.push(p);
+                    return acc;
+                  }, [])
+                  .map((p, i) =>
+                    p === "…" ? (
+                      <span key={`ellipsis-${i}`} className={styles.pageDots}>…</span>
+                    ) : (
+                      <button
+                        key={p}
+                        className={`${styles.pageBtn} ${approvalPage === p ? styles.pageBtnActive : ""}`}
+                        onClick={() => setApprovalPage(p as number)}
+                      >{p}</button>
+                    )
+                  )}
+                <button className={styles.pageBtn} onClick={() => setApprovalPage((p) => Math.min(approvalTotalPages, p + 1))} disabled={approvalPage === approvalTotalPages}>Next ›</button>
+                <button className={styles.pageBtn} onClick={() => setApprovalPage(approvalTotalPages)} disabled={approvalPage === approvalTotalPages}>»</button>
+              </div>
             </div>
           )}
         </div>
