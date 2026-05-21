@@ -270,9 +270,19 @@ export async function searchKnowledge(
 export async function fetchTickets(
   page = 1,
   pageSize = 10,
-): Promise<{ tickets: unknown[]; total: number }> {
+  sortBy = "created_at",
+  sortOrder = "desc",
+  search?: string,
+): Promise<{ tickets: unknown[]; total: number; total_pages: number; has_next: boolean; has_previous: boolean }> {
   const offset = (page - 1) * pageSize;
-  return request(`${_BASE}/autonomous/tickets?limit=${pageSize}&offset=${offset}`);
+  const params = new URLSearchParams({
+    limit:      String(pageSize),
+    offset:     String(offset),
+    sort_by:    sortBy,
+    sort_order: sortOrder,
+  });
+  if (search) params.set("search", search);
+  return request(`${_BASE}/autonomous/tickets?${params}`);
 }
 
 export async function retryItsmPush(ticketId: string): Promise<{ success: boolean; ticket: unknown }> {
@@ -293,6 +303,21 @@ export async function updateTicket(
 
 export async function fetchPendingApprovals(): Promise<{ pending: unknown[] }> {
   return request(`${_BASE}/autonomous/pending_approvals`);
+}
+
+export async function fetchPendingApprovalsPaginated(
+  page = 1,
+  pageSize = 10,
+  sortBy = "created_at",
+  sortOrder = "desc",
+): Promise<{ pending: unknown[]; total: number; total_pages: number; has_next: boolean; has_previous: boolean }> {
+  const params = new URLSearchParams({
+    page:       String(page),
+    page_size:  String(pageSize),
+    sort_by:    sortBy,
+    sort_order: sortOrder,
+  });
+  return request(`${_BASE}/autonomous/pending_approvals?${params}`);
 }
 
 export async function approveIncident(
@@ -382,15 +407,19 @@ export async function fetchFailedMessagesPaginated(
   status?: string,
   type?: string,
   id?: string,
-  artifacts?: string
+  artifacts?: string,
+  sortBy = "created_at",
+  sortOrder = "desc",
 ): Promise<PaginatedMessagesResponse> {
   const params = new URLSearchParams({
-    page: String(page),
-    page_size: String(pageSize),
+    page:       String(page),
+    page_size:  String(pageSize),
+    sort_by:    sortBy,
+    sort_order: sortOrder,
   });
-  if (status) params.set("status", status);
-  if (type) params.set("type", type);
-  if (id) params.set("id", id);
+  if (status)    params.set("status", status);
+  if (type)      params.set("type", type);
+  if (id)        params.set("id", id);
   if (artifacts) params.set("artifacts", artifacts);
 
   return request(`${_BASE}/smart-monitoring/messages/paginated?${params}`);

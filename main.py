@@ -1033,13 +1033,35 @@ async def get_fix_patterns_endpoint(incident_id: str):
 
 
 @app.get("/autonomous/pending_approvals")
-async def list_pending_approvals():
+async def list_pending_approvals(
+    page: int = 1,
+    page_size: int = 10,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+):
+    if page < 1:
+        raise HTTPException(status_code=400, detail="page must be >= 1")
     try:
-        pending = get_pending_approvals()
+        offset = (page - 1) * page_size
+        result = get_pending_approvals(limit=page_size, offset=offset, sort_by=sort_by, sort_order=sort_order)
+        pending     = result["pending"]
+        total       = result["total"]
+        total_pages = max(1, (total + page_size - 1) // page_size)
         for inc in pending:
-            inc["approval_ref"]      = inc.get("incident_id")
-            inc["message_guid_ref"]  = inc.get("message_guid")
-        return {"pending": pending}
+            inc["approval_ref"]     = inc.get("incident_id")
+            inc["message_guid_ref"] = inc.get("message_guid")
+        return {
+            "pending":     pending,
+            "items":       pending,
+            "total":       total,
+            "page":        page,
+            "page_size":   page_size,
+            "total_pages": total_pages,
+            "has_next":    page < total_pages,
+            "has_previous": page > 1,
+            "sort_by":     sort_by,
+            "sort_order":  sort_order,
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -1097,10 +1119,35 @@ async def list_escalation_tickets(
     status: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    search: Optional[str] = None,
 ):
     try:
-        result = get_escalation_tickets(status=status, limit=limit, offset=offset)
-        return {"tickets": result["tickets"], "total": result["total"]}
+        result = get_escalation_tickets(
+            status=status,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            search=search,
+        )
+        total      = result["total"]
+        page_size  = limit or 20
+        page       = (offset // page_size) + 1 if page_size else 1
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        return {
+            "tickets":     result["tickets"],
+            "items":       result["tickets"],
+            "total":       total,
+            "page":        page,
+            "page_size":   page_size,
+            "total_pages": total_pages,
+            "has_next":    page < total_pages,
+            "has_previous": page > 1,
+            "sort_by":     sort_by,
+            "sort_order":  sort_order,
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

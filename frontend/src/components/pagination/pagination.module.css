@@ -54,6 +54,33 @@
   flex: 0 0 auto;
 }
 
+.btnActive {
+  background-color: var(--orbit-primary, #1e3a5f) !important;
+  color: #fff !important;
+  border-color: var(--orbit-primary, #1e3a5f) !important;
+}
+
+.dots {
+  font-size: 0.9rem;
+  color: #9ca3af;
+  padding: 0 0.25rem;
+  align-self: center;
+}
+
+.sortableHeader {
+  white-space: nowrap;
+}
+
+.sortableHeaderActive {
+  color: var(--orbit-primary, #1e3a5f);
+}
+
+.sortArrow {
+  font-size: 0.75rem;
+  margin-left: 0.2rem;
+  opacity: 0.7;
+}
+
 .pageSizeSelect {
   padding: 0.5rem;
   border: var(--orbit-card-border-width, 1px) solid var(--orbit-input-border, #dee2e6);

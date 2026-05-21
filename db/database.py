@@ -928,29 +928,54 @@ def update_incident(incident_id: str, updates: Dict):
         raise
 
 
+_INCIDENT_SORT_COLS = frozenset({
+    "created_at", "last_seen", "status", "iflow_id",
+    "error_type", "occurrence_count", "rca_confidence", "log_end",
+})
+
+
 def get_all_incidents(
     status: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    search: Optional[str] = None,
 ) -> Dict:
-    """Returns {"incidents": [...], "total": int}."""
-    try:
-        conn = get_connection()
-        cur  = conn.cursor()
-        src   = f'"{_INCIDENTS_TABLE}"'
-        where = "WHERE status=?" if status else ""
-        base_params: list = [status] if status else []
+    """Returns {"incidents": [...], "total": int}.
 
-        cur.execute(f"SELECT COUNT(*) FROM {src} {where}", base_params)
+    sort_by is whitelisted; sort_order must be asc|desc.
+    search does a substring match across iflow_id, message_guid, incident_id.
+    """
+    col   = sort_by if sort_by in _INCIDENT_SORT_COLS else "created_at"
+    order = "ASC" if (sort_order or "").lower() == "asc" else "DESC"
+    try:
+        conn   = get_connection()
+        cur    = conn.cursor()
+        src    = f'"{_INCIDENTS_TABLE}"'
+        conds: list = []
+        params: list = []
+
+        if status:
+            conds.append("status=?")
+            params.append(status)
+        if search:
+            like = f"%{search}%"
+            conds.append("(iflow_id LIKE ? OR message_guid LIKE ? OR incident_id LIKE ?)")
+            params.extend([like, like, like])
+
+        where = f"WHERE {' AND '.join(conds)}" if conds else ""
+
+        cur.execute(f"SELECT COUNT(*) FROM {src} {where}", params)
         total = int(cur.fetchone()[0])
 
         if limit and limit > 0:
             cur.execute(
-                f"SELECT * FROM {src} {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (*base_params, limit, offset),
+                f'SELECT * FROM {src} {where} ORDER BY "{col}" {order} LIMIT ? OFFSET ?',
+                (*params, limit, offset),
             )
         else:
-            cur.execute(f"SELECT * FROM {src} {where} ORDER BY created_at DESC", base_params)
+            cur.execute(f'SELECT * FROM {src} {where} ORDER BY "{col}" {order}', params)
 
         rows = []
         for d in _rows_to_dicts(cur):
@@ -964,7 +989,7 @@ def get_all_incidents(
         return {"incidents": rows, "total": total}
     except Exception as e:
         logger.error(f"get_all_incidents: {e}")
-        return []
+        return {"incidents": [], "total": 0}
 
 
 def get_stage_counts() -> dict:
@@ -1128,20 +1153,33 @@ def increment_incident_occurrence(incident_id: str, message_guid: Optional[str] 
         logger.error(f"increment_incident_occurrence: {e}")
 
 
-def get_pending_approvals() -> List[Dict]:
+def get_pending_approvals(
+    limit: int = 50,
+    offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> Dict:
+    """Returns {"pending": [...], "total": int}."""
+    col   = sort_by if sort_by in _INCIDENT_SORT_COLS else "created_at"
+    order = "ASC" if (sort_order or "").lower() == "asc" else "DESC"
     try:
         conn = get_connection()
         cur  = conn.cursor()
+        src  = f'"{_INCIDENTS_TABLE}"'
+
+        cur.execute(f"SELECT COUNT(*) FROM {src} WHERE status=?", ("AWAITING_APPROVAL",))
+        total = int(cur.fetchone()[0])
+
         cur.execute(
-            f'SELECT * FROM "{_INCIDENTS_TABLE}" WHERE status=? ORDER BY created_at DESC LIMIT 250',
-            ("AWAITING_APPROVAL",),
+            f'SELECT * FROM {src} WHERE status=? ORDER BY "{col}" {order} LIMIT ? OFFSET ?',
+            ("AWAITING_APPROVAL", limit, offset),
         )
         rows = [_normalize_incident_dict(d) for d in _rows_to_dicts(cur)]
         conn.close()
-        return _dedupe_incidents(rows)
+        return {"pending": _dedupe_incidents(rows), "total": total}
     except Exception as e:
         logger.error(f"get_pending_approvals: {e}")
-        return []
+        return {"pending": [], "total": 0}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1392,13 +1430,23 @@ def create_escalation_ticket(data: Dict) -> str:
     return ticket_id
 
 
+_TICKET_SORT_COLS = frozenset({
+    "created_at", "updated_at", "status", "priority", "iflow_id", "error_type",
+})
+
+
 def get_escalation_tickets(
     status: Optional[str] = None,
     incident_id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    search: Optional[str] = None,
 ) -> Dict:
     """Returns {"tickets": [...], "total": int}."""
+    col   = sort_by if sort_by in _TICKET_SORT_COLS else "created_at"
+    order = "ASC" if (sort_order or "").lower() == "asc" else "DESC"
     try:
         conn       = get_connection()
         cur        = conn.cursor()
@@ -1410,13 +1458,17 @@ def get_escalation_tickets(
         if incident_id:
             conditions.append("incident_id=?")
             params.append(incident_id)
+        if search:
+            like = f"%{search}%"
+            conditions.append("(iflow_id LIKE ? OR ticket_id LIKE ? OR incident_id LIKE ?)")
+            params.extend([like, like, like])
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         cur.execute(f'SELECT COUNT(*) FROM "{_TICKETS_TABLE}" {where}', params)
         total = int(cur.fetchone()[0])
 
         cur.execute(
-            f'SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            f'SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY "{col}" {order} LIMIT ? OFFSET ?',
             (*params, limit, offset),
         )
         rows = _rows_to_dicts(cur)

@@ -1001,29 +1001,44 @@ async def list_messages_paginated(
     id: Optional[str] = None,
     artifacts: Optional[str] = None,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 20,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
 ):
     """
-    Fetch incidents from the local DB with pagination — no SAP CPI OData API calls.
+    Fetch incidents from the local DB with real DB-level pagination, filtering, and sorting.
+    No SAP CPI OData API calls; no fetch-all anti-pattern.
     """
     if page < 1:
         raise HTTPException(status_code=400, detail="Page must be >= 1")
     if page_size < 1 or page_size > 500:
         raise HTTPException(status_code=400, detail="Page size must be between 1 and 500")
 
-    incidents = get_all_incidents(limit=0)["incidents"]
+    # Resolve status: UI sends "FAILED" to mean all failure statuses — pass None so DB returns all
+    db_status = None if (not status or status.upper() in ("FAILED", "ALL", "")) else status
+    # search covers iflow_id, message_guid, incident_id — combine id + artifacts
+    search = id or artifacts or None
 
-    filtered_messages: List[Dict] = []
+    offset  = (page - 1) * page_size
+    result  = get_all_incidents(
+        status=db_status,
+        limit=page_size,
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search=search,
+    )
+    incidents   = result["incidents"]
+    total_count = result["total"]
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+
+    messages = []
     for inc in incidents:
-        if not _incident_matches_filter(inc, status, None, id, artifacts):
-            continue
-
         inc_status = (inc.get("status") or "DETECTED").upper()
         iflow_name = inc.get("iflow_id") or ""
         log_end    = str(inc.get("log_end") or inc.get("last_seen") or inc.get("created_at") or "")
         log_start  = str(inc.get("log_start") or inc.get("created_at") or "")
-
-        filtered_messages.append({
+        messages.append({
             "message_guid":    inc.get("message_guid") or inc.get("incident_id"),
             "iflow_name":      iflow_name,
             "iflow_display":   iflow_name.replace("-", " – ").replace("_", " "),
@@ -1041,32 +1056,19 @@ async def list_messages_paginated(
             "incident_status": inc_status,
         })
 
-    filtered_messages.sort(key=lambda m: m.get("log_end") or "", reverse=True)
-
-    total_count = len(filtered_messages)
-    total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
-
-    if page > total_pages and total_count > 0:
-        raise HTTPException(status_code=404, detail=f"Page {page} not found. Total pages: {total_pages}")
-
-    start_idx = (page - 1) * page_size
-    paginated_messages = filtered_messages[start_idx: start_idx + page_size]
-
     return {
-        "count":            len(paginated_messages),
-        "total_count":      total_count,
-        "page":             page,
-        "page_size":        page_size,
-        "total_pages":      total_pages,
-        "has_next":         page < total_pages,
-        "has_previous":     page > 1,
-        "messages":         paginated_messages,
-        "filters_applied":  {
-            "status":     status,
-            "type":       type,
-            "id":         id,
-            "artifacts":  artifacts,
-        },
+        "messages":    messages,
+        "items":       messages,          # standard key for useServerTable
+        "total":       total_count,
+        "total_count": total_count,
+        "count":       len(messages),
+        "page":        page,
+        "page_size":   page_size,
+        "total_pages": total_pages,
+        "has_next":    page < total_pages,
+        "has_previous": page > 1,
+        "sort_by":     sort_by,
+        "sort_order":  sort_order,
     }
 
 

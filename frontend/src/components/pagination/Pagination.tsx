@@ -1,5 +1,8 @@
 import React from "react";
 import styles from "./pagination.module.css";
+import type { SortOrder } from "../../hooks/useServerTable";
+
+// ─── Pagination bar ───────────────────────────────────────────────────────────
 
 export interface PaginationProps {
   currentPage: number;
@@ -8,9 +11,11 @@ export interface PaginationProps {
   totalCount: number;
   hasNextPage: boolean;
   hasPreviousPage: boolean;
-  onPreviousClick: () => void;
-  onNextClick: () => void;
+  onPageChange?: (page: number) => void;
+  onPreviousClick?: () => void;
+  onNextClick?: () => void;
   onPageSizeChange?: (size: number) => void;
+  label?: string;
 }
 
 export const Pagination: React.FC<PaginationProps> = ({
@@ -20,41 +25,50 @@ export const Pagination: React.FC<PaginationProps> = ({
   totalCount,
   hasNextPage,
   hasPreviousPage,
+  onPageChange,
   onPreviousClick,
   onNextClick,
   onPageSizeChange,
+  label = "items",
 }) => {
-  const startItem = (currentPage - 1) * pageSize + 1;
-  const endItem = Math.min(currentPage * pageSize, totalCount);
+  const startItem = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0;
+  const endItem   = Math.min(currentPage * pageSize, totalCount);
+
+  const goTo = onPageChange ?? (() => {});
+  const prev = onPreviousClick ?? (() => goTo(Math.max(1, currentPage - 1)));
+  const next = onNextClick     ?? (() => goTo(Math.min(totalPages, currentPage + 1)));
+
+  const pageNumbers = buildPageNumbers(currentPage, totalPages);
 
   return (
     <div className={styles.paginationContainer}>
       <div className={styles.info}>
-        Showing {startItem} to {endItem} of {totalCount} items
+        {totalCount > 0
+          ? `${startItem}–${endItem} of ${totalCount} ${label}`
+          : `0 ${label}`}
       </div>
 
       <div className={styles.controls}>
-        <button
-          className={styles.btn}
-          onClick={onPreviousClick}
-          disabled={!hasPreviousPage}
-          type="button"
-        >
-          ← Previous
-        </button>
+        <button className={styles.btn} onClick={() => goTo(1)} disabled={!hasPreviousPage} type="button">«</button>
+        <button className={styles.btn} onClick={prev} disabled={!hasPreviousPage} type="button">‹ Prev</button>
 
-        <div className={styles.pageInfo}>
-          Page {currentPage} of {totalPages}
-        </div>
+        {pageNumbers.map((p, i) =>
+          p === "…" ? (
+            <span key={`dots-${i}`} className={styles.dots}>…</span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              className={`${styles.btn} ${currentPage === p ? styles.btnActive : ""}`}
+              onClick={() => goTo(p as number)}
+            >
+              {p}
+            </button>
+          )
+        )}
 
-        <button
-          className={styles.btn}
-          onClick={onNextClick}
-          disabled={!hasNextPage}
-          type="button"
-        >
-          Next →
-        </button>
+        <button className={styles.btn} onClick={next} disabled={!hasNextPage} type="button">Next ›</button>
+        <button className={styles.btn} onClick={() => goTo(totalPages)} disabled={!hasNextPage} type="button">»</button>
 
         {onPageSizeChange && (
           <select
@@ -62,15 +76,53 @@ export const Pagination: React.FC<PaginationProps> = ({
             value={pageSize}
             onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
           >
-            <option value={10}>10 per page</option>
-            <option value={20}>20 per page</option>
-            <option value={50}>50 per page</option>
-            <option value={100}>100 per page</option>
+            {[10, 20, 50, 100].map((n) => (
+              <option key={n} value={n}>{n} / page</option>
+            ))}
           </select>
         )}
       </div>
     </div>
   );
 };
+
+// ─── Sortable column header ───────────────────────────────────────────────────
+
+export interface SortableHeaderProps {
+  label: string;
+  column: string;
+  currentSort: string;
+  currentOrder: SortOrder;
+  onSort: (column: string) => void;
+  className?: string;
+}
+
+export const SortableHeader: React.FC<SortableHeaderProps> = ({
+  label, column, currentSort, currentOrder, onSort, className,
+}) => {
+  const active = currentSort === column;
+  const arrow  = active ? (currentOrder === "asc" ? " ↑" : " ↓") : " ↕";
+  return (
+    <th
+      className={`${styles.sortableHeader} ${active ? styles.sortableHeaderActive : ""} ${className ?? ""}`}
+      onClick={() => onSort(column)}
+      style={{ cursor: "pointer", userSelect: "none" }}
+    >
+      {label}<span className={styles.sortArrow}>{arrow}</span>
+    </th>
+  );
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function buildPageNumbers(current: number, total: number): (number | "…")[] {
+  return Array.from({ length: total }, (_, i) => i + 1)
+    .filter((p) => p === 1 || p === total || Math.abs(p - current) <= 1)
+    .reduce<(number | "…")[]>((acc, p, i, arr) => {
+      if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+      acc.push(p);
+      return acc;
+    }, []);
+}
 
 export default Pagination;

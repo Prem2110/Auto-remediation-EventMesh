@@ -12,9 +12,11 @@ import {
   fetchTickets,
   updateTicket,
   retryItsmPush,
-  fetchPendingApprovals,
+  fetchPendingApprovalsPaginated,
   approveIncident,
 } from "../../services/api.ts";
+import { useServerTable, resolveItems, resolveTotal, resolveTotalPages } from "../../hooks/useServerTable.ts";
+import { Pagination } from "../../components/pagination/Pagination.tsx";
 import type {
   IMonitorMessage,
   IFilterState,
@@ -576,35 +578,45 @@ export default function Observability() {
   const [confirmingTicketId, setConfirmingTicketId] = useState<string | null>(null);
   const [resolveNotes,       setResolveNotes]       = useState<Record<string, string>>({});
   const [ticketActionError,  setTicketActionError]  = useState<string | null>(null);
-  const [ticketPage,         setTicketPage]         = useState(1);
-  const [retryingItsmId,     setRetryingItsmId]     = useState<string | null>(null);
-  const TICKET_PAGE_SIZE = 10;
+  const [retryingItsmId, setRetryingItsmId] = useState<string | null>(null);
+
+  // ── Messages tab: client-side pagination ──
   const MSG_PAGE_SIZE = 10;
   const [msgPage, setMsgPage] = useState(1);
-  const APPROVAL_PAGE_SIZE = 5;
-  const [approvalPage, setApprovalPage] = useState(1);
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ["monitor-messages"],
-    queryFn: fetchMonitorMessages,
-    refetchInterval: 30_000,   // was 10s — each poll hits SAP CPI OData (slow)
-    staleTime: 20_000,
-  });
-
-  // Fetch tickets
+  // ── Tickets: server-driven table ──
+  const ticketTable = useServerTable("escalation-tickets", { defaultPageSize: 10, defaultSortBy: "created_at" });
   const { data: ticketsData, isLoading: ticketsLoading, refetch: refetchTickets } = useQuery({
-    queryKey: ["escalation-tickets", ticketPage],
-    queryFn: () => fetchTickets(ticketPage, TICKET_PAGE_SIZE),
+    queryKey: ticketTable.queryKey,
+    queryFn:  () => fetchTickets(
+      ticketTable.state.page,
+      ticketTable.state.pageSize,
+      ticketTable.state.sortBy,
+      ticketTable.state.sortOrder,
+    ),
     refetchInterval: 30_000,
     enabled: mainTab === "tickets",
   });
 
-  // Fetch approvals
+  // ── Approvals: server-driven table ──
+  const approvalTable = useServerTable("pending-approvals", { defaultPageSize: 10, defaultSortBy: "created_at" });
   const { data: approvalsData, isLoading: approvalsLoading, refetch: refetchApprovals } = useQuery({
-    queryKey: ["pending-approvals"],
-    queryFn: fetchPendingApprovals,
+    queryKey: approvalTable.queryKey,
+    queryFn:  () => fetchPendingApprovalsPaginated(
+      approvalTable.state.page,
+      approvalTable.state.pageSize,
+      approvalTable.state.sortBy,
+      approvalTable.state.sortOrder,
+    ),
     refetchInterval: 30_000,
     enabled: mainTab === "approvals",
+  });
+
+  const { data, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ["monitor-messages"],
+    queryFn: fetchMonitorMessages,
+    refetchInterval: 30_000,
+    staleTime: 20_000,
   });
 
   const STATUS_GROUP: Record<string, string[]> = {
@@ -650,16 +662,21 @@ export default function Observability() {
   // Reset message page when filters change
   useEffect(() => { setMsgPage(1); }, [filters]);
 
-  const msgTotalPages  = Math.max(1, Math.ceil(messages.length / MSG_PAGE_SIZE));
-  const pagedMessages  = messages.slice((msgPage - 1) * MSG_PAGE_SIZE, msgPage * MSG_PAGE_SIZE);
+  const msgTotalPages = Math.max(1, Math.ceil(messages.length / MSG_PAGE_SIZE));
+  const pagedMessages = messages.slice((msgPage - 1) * MSG_PAGE_SIZE, msgPage * MSG_PAGE_SIZE);
 
-  const tickets      = (ticketsData?.tickets || []) as Ticket[];
-  const ticketsTotal = (ticketsData?.total   ?? 0) as number;
-  const ticketPages  = Math.max(1, Math.ceil(ticketsTotal / TICKET_PAGE_SIZE));
-  const approvals = (approvalsData?.pending || []) as Approval[];
+  // Tickets — server-driven
+  const ticketsRaw       = ticketsData as Record<string, unknown> | undefined;
+  const tickets          = (resolveItems(ticketsRaw ?? {})) as Ticket[];
+  const ticketsTotal     = resolveTotal(ticketsRaw ?? {});
+  const ticketTotalPages = resolveTotalPages(ticketsRaw ?? {}, ticketTable.state.pageSize);
 
-  const approvalTotalPages = Math.max(1, Math.ceil(approvals.length / APPROVAL_PAGE_SIZE));
-  const pagedApprovals     = approvals.slice((approvalPage - 1) * APPROVAL_PAGE_SIZE, approvalPage * APPROVAL_PAGE_SIZE);
+  // Approvals — server-driven
+  const approvalsRaw       = approvalsData as Record<string, unknown> | undefined;
+  const approvals          = (resolveItems(approvalsRaw ?? {})) as Approval[];
+  const approvalsTotal     = resolveTotal(approvalsRaw ?? {});
+  const approvalTotalPages = resolveTotalPages(approvalsRaw ?? {}, approvalTable.state.pageSize);
+  const pagedApprovals     = approvals; // server already sliced
 
   /* ── Approval actions ──────────────────────────────────────────────── */
   const handleApprove = useCallback(async (incidentId: string) => {
@@ -731,7 +748,7 @@ export default function Observability() {
       }
       await updateTicket(ticketId, { status: "RESOLVED", resolution_notes: notes.trim() || undefined });
       setResolveNotes((prev) => { const n = { ...prev }; delete n[ticketId]; return n; });
-      setTicketPage(1);
+      ticketTable.setPage(1);
       refetchTickets();
     } catch (e) {
       setTicketActionError(e instanceof Error ? e.message : "Failed to update ticket");
@@ -1820,52 +1837,18 @@ export default function Observability() {
           )}
 
           {/* ── pagination ── */}
-          {!ticketsLoading && ticketsTotal > TICKET_PAGE_SIZE && (
-            <div className={styles.ticketPagination}>
-              <span className={styles.ticketPaginationInfo}>
-                {((ticketPage - 1) * TICKET_PAGE_SIZE) + 1}–{Math.min(ticketPage * TICKET_PAGE_SIZE, ticketsTotal)} of {ticketsTotal} tickets
-              </span>
-              <div className={styles.ticketPaginationControls}>
-                <button
-                  className={styles.pageBtn}
-                  onClick={() => setTicketPage(1)}
-                  disabled={ticketPage === 1}
-                >«</button>
-                <button
-                  className={styles.pageBtn}
-                  onClick={() => setTicketPage((p) => Math.max(1, p - 1))}
-                  disabled={ticketPage === 1}
-                >‹ Prev</button>
-                {Array.from({ length: ticketPages }, (_, i) => i + 1)
-                  .filter((p) => p === 1 || p === ticketPages || Math.abs(p - ticketPage) <= 1)
-                  .reduce<(number | "…")[]>((acc, p, i, arr) => {
-                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
-                    acc.push(p);
-                    return acc;
-                  }, [])
-                  .map((p, i) =>
-                    p === "…" ? (
-                      <span key={`ellipsis-${i}`} className={styles.pageDots}>…</span>
-                    ) : (
-                      <button
-                        key={p}
-                        className={`${styles.pageBtn} ${ticketPage === p ? styles.pageBtnActive : ""}`}
-                        onClick={() => setTicketPage(p as number)}
-                      >{p}</button>
-                    )
-                  )}
-                <button
-                  className={styles.pageBtn}
-                  onClick={() => setTicketPage((p) => Math.min(ticketPages, p + 1))}
-                  disabled={ticketPage === ticketPages}
-                >Next ›</button>
-                <button
-                  className={styles.pageBtn}
-                  onClick={() => setTicketPage(ticketPages)}
-                  disabled={ticketPage === ticketPages}
-                >»</button>
-              </div>
-            </div>
+          {!ticketsLoading && ticketsTotal > 0 && (
+            <Pagination
+              currentPage={ticketTable.state.page}
+              totalPages={ticketTotalPages}
+              pageSize={ticketTable.state.pageSize}
+              totalCount={ticketsTotal}
+              hasNextPage={ticketTable.state.page < ticketTotalPages}
+              hasPreviousPage={ticketTable.state.page > 1}
+              onPageChange={ticketTable.setPage}
+              onPageSizeChange={ticketTable.setPageSize}
+              label="tickets"
+            />
           )}
         </div>
       )}
@@ -2018,36 +2001,18 @@ export default function Observability() {
           )}
 
           {/* ── Approvals pagination ── */}
-          {!approvalsLoading && approvals.length > APPROVAL_PAGE_SIZE && (
-            <div className={styles.ticketPagination}>
-              <span className={styles.ticketPaginationInfo}>
-                {(approvalPage - 1) * APPROVAL_PAGE_SIZE + 1}–{Math.min(approvalPage * APPROVAL_PAGE_SIZE, approvals.length)} of {approvals.length} approvals
-              </span>
-              <div className={styles.ticketPaginationControls}>
-                <button className={styles.pageBtn} onClick={() => setApprovalPage(1)} disabled={approvalPage === 1}>«</button>
-                <button className={styles.pageBtn} onClick={() => setApprovalPage((p) => Math.max(1, p - 1))} disabled={approvalPage === 1}>‹ Prev</button>
-                {Array.from({ length: approvalTotalPages }, (_, i) => i + 1)
-                  .filter((p) => p === 1 || p === approvalTotalPages || Math.abs(p - approvalPage) <= 1)
-                  .reduce<(number | "…")[]>((acc, p, i, arr) => {
-                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
-                    acc.push(p);
-                    return acc;
-                  }, [])
-                  .map((p, i) =>
-                    p === "…" ? (
-                      <span key={`ellipsis-${i}`} className={styles.pageDots}>…</span>
-                    ) : (
-                      <button
-                        key={p}
-                        className={`${styles.pageBtn} ${approvalPage === p ? styles.pageBtnActive : ""}`}
-                        onClick={() => setApprovalPage(p as number)}
-                      >{p}</button>
-                    )
-                  )}
-                <button className={styles.pageBtn} onClick={() => setApprovalPage((p) => Math.min(approvalTotalPages, p + 1))} disabled={approvalPage === approvalTotalPages}>Next ›</button>
-                <button className={styles.pageBtn} onClick={() => setApprovalPage(approvalTotalPages)} disabled={approvalPage === approvalTotalPages}>»</button>
-              </div>
-            </div>
+          {!approvalsLoading && approvalsTotal > 0 && (
+            <Pagination
+              currentPage={approvalTable.state.page}
+              totalPages={approvalTotalPages}
+              pageSize={approvalTable.state.pageSize}
+              totalCount={approvalsTotal}
+              hasNextPage={approvalTable.state.page < approvalTotalPages}
+              hasPreviousPage={approvalTable.state.page > 1}
+              onPageChange={approvalTable.setPage}
+              onPageSizeChange={approvalTable.setPageSize}
+              label="approvals"
+            />
           )}
         </div>
       )}
