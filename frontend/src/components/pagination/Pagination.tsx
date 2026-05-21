@@ -41,13 +41,11 @@ export const Pagination: React.FC<PaginationProps> = ({
   const pageNumbers = buildPageNumbers(currentPage, totalPages);
 
   return (
-    <div className={styles.paginationWrapper}>
-      <div className={styles.paginationContainer}>
-        <div className={styles.info}>
-          {totalCount > 0
-            ? `${startItem}–${endItem} of ${totalCount} ${label}`
-            : `0 ${label}`}
-        </div>
+    <div className={styles.paginationContainer}>
+      <div className={styles.info}>
+        {totalCount > 0
+          ? `${startItem}–${endItem} of ${totalCount} ${label}`
+          : `0 ${label}`}
       </div>
 
       <div className={styles.controls}>
