@@ -947,7 +947,8 @@ def get_all_incidents(
     sort_by is whitelisted; sort_order must be asc|desc.
     search does a substring match across iflow_id, message_guid, incident_id.
     """
-    col   = sort_by if sort_by in _INCIDENT_SORT_COLS else "created_at"
+    # HANA stores unquoted column names as UPPERCASE — use .upper() and no quotes
+    col   = (sort_by if sort_by in _INCIDENT_SORT_COLS else "created_at").upper()
     order = "ASC" if (sort_order or "").lower() == "asc" else "DESC"
     try:
         conn   = get_connection()
@@ -971,11 +972,11 @@ def get_all_incidents(
 
         if limit and limit > 0:
             cur.execute(
-                f'SELECT * FROM {src} {where} ORDER BY "{col}" {order} LIMIT ? OFFSET ?',
+                f"SELECT * FROM {src} {where} ORDER BY {col} {order} LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             )
         else:
-            cur.execute(f'SELECT * FROM {src} {where} ORDER BY "{col}" {order}', params)
+            cur.execute(f"SELECT * FROM {src} {where} ORDER BY {col} {order}", params)
 
         rows = []
         for d in _rows_to_dicts(cur):
@@ -1160,7 +1161,7 @@ def get_pending_approvals(
     sort_order: str = "desc",
 ) -> Dict:
     """Returns {"pending": [...], "total": int}."""
-    col   = sort_by if sort_by in _INCIDENT_SORT_COLS else "created_at"
+    col   = (sort_by if sort_by in _INCIDENT_SORT_COLS else "created_at").upper()
     order = "ASC" if (sort_order or "").lower() == "asc" else "DESC"
     try:
         conn = get_connection()
@@ -1171,7 +1172,7 @@ def get_pending_approvals(
         total = int(cur.fetchone()[0])
 
         cur.execute(
-            f'SELECT * FROM {src} WHERE status=? ORDER BY "{col}" {order} LIMIT ? OFFSET ?',
+            f"SELECT * FROM {src} WHERE status=? ORDER BY {col} {order} LIMIT ? OFFSET ?",
             ("AWAITING_APPROVAL", limit, offset),
         )
         rows = [_normalize_incident_dict(d) for d in _rows_to_dicts(cur)]
@@ -1445,7 +1446,7 @@ def get_escalation_tickets(
     search: Optional[str] = None,
 ) -> Dict:
     """Returns {"tickets": [...], "total": int}."""
-    col   = sort_by if sort_by in _TICKET_SORT_COLS else "created_at"
+    col   = (sort_by if sort_by in _TICKET_SORT_COLS else "created_at").upper()
     order = "ASC" if (sort_order or "").lower() == "asc" else "DESC"
     try:
         conn       = get_connection()
@@ -1468,7 +1469,7 @@ def get_escalation_tickets(
         total = int(cur.fetchone()[0])
 
         cur.execute(
-            f'SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY "{col}" {order} LIMIT ? OFFSET ?',
+            f'SELECT * FROM "{_TICKETS_TABLE}" {where} ORDER BY {col} {order} LIMIT ? OFFSET ?',
             (*params, limit, offset),
         )
         rows = _rows_to_dicts(cur)
