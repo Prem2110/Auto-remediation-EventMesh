@@ -48,18 +48,6 @@ export const Pagination: React.FC<PaginationProps> = ({
             ? `${startItem}–${endItem} of ${totalCount} ${label}`
             : `0 ${label}`}
         </div>
-
-        {onPageSizeChange && (
-          <select
-            className={styles.pageSizeSelect}
-            value={pageSize}
-            onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
-          >
-            {[10, 20, 50, 100].map((n) => (
-              <option key={n} value={n}>{n} / page</option>
-            ))}
-          </select>
-        )}
       </div>
 
       <div className={styles.controls}>
@@ -83,6 +71,18 @@ export const Pagination: React.FC<PaginationProps> = ({
 
         <button className={styles.btn} onClick={next} disabled={!hasNextPage} type="button">Next ›</button>
         <button className={styles.btn} onClick={() => goTo(totalPages)} disabled={!hasNextPage} type="button">»</button>
+
+        {onPageSizeChange && (
+          <select
+            className={styles.pageSizeSelect}
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
+          >
+            {[10, 20, 50, 100].map((n) => (
+              <option key={n} value={n}>{n} / page</option>
+            ))}
+          </select>
+        )}
       </div>
     </div>
   );

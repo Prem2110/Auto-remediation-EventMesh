@@ -69,8 +69,6 @@
 
 .btnCurrent {
   font-weight: 700;
-  text-decoration: underline;
-  color: var(--orbit-primary, #1e3a5f);
 }
 
 .dots {
