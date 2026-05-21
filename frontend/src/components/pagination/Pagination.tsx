@@ -41,11 +41,25 @@ export const Pagination: React.FC<PaginationProps> = ({
   const pageNumbers = buildPageNumbers(currentPage, totalPages);
 
   return (
-    <div className={styles.paginationContainer}>
-      <div className={styles.info}>
-        {totalCount > 0
-          ? `${startItem}–${endItem} of ${totalCount} ${label}`
-          : `0 ${label}`}
+    <div className={styles.paginationWrapper}>
+      <div className={styles.paginationContainer}>
+        <div className={styles.info}>
+          {totalCount > 0
+            ? `${startItem}–${endItem} of ${totalCount} ${label}`
+            : `0 ${label}`}
+        </div>
+
+        {onPageSizeChange && (
+          <select
+            className={styles.pageSizeSelect}
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
+          >
+            {[10, 20, 50, 100].map((n) => (
+              <option key={n} value={n}>{n} / page</option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className={styles.controls}>
@@ -59,7 +73,7 @@ export const Pagination: React.FC<PaginationProps> = ({
             <button
               key={p}
               type="button"
-              className={`${styles.btn} ${currentPage === p ? styles.btnActive : ""}`}
+              className={`${styles.btn} ${currentPage === p ? styles.btnCurrent : ""}`}
               onClick={() => goTo(p as number)}
             >
               {p}
@@ -69,18 +83,6 @@ export const Pagination: React.FC<PaginationProps> = ({
 
         <button className={styles.btn} onClick={next} disabled={!hasNextPage} type="button">Next ›</button>
         <button className={styles.btn} onClick={() => goTo(totalPages)} disabled={!hasNextPage} type="button">»</button>
-
-        {onPageSizeChange && (
-          <select
-            className={styles.pageSizeSelect}
-            value={pageSize}
-            onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
-          >
-            {[10, 20, 50, 100].map((n) => (
-              <option key={n} value={n}>{n} / page</option>
-            ))}
-          </select>
-        )}
       </div>
     </div>
   );

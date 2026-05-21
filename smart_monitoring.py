@@ -1001,6 +1001,34 @@ async def list_messages(
     }
 
 
+@router.get("/messages/status-counts")
+async def get_message_status_counts():
+    """Return total counts per status group (FAILED/SUCCESS/PROCESSING/RETRY) in a single DB query."""
+    from db.database import get_connection, _INCIDENTS_TABLE
+    groups = {
+        "FAILED":     _STATUS_GROUPS["FAILED"],
+        "SUCCESS":    _STATUS_GROUPS["SUCCESS"],
+        "PROCESSING": _STATUS_GROUPS["PROCESSING"],
+        "RETRY":      _STATUS_GROUPS["RETRY"],
+    }
+    counts = {k: 0 for k in groups}
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(f'SELECT status, COUNT(*) FROM "{_INCIDENTS_TABLE}" GROUP BY status')
+        rows = cur.fetchall()
+        conn.close()
+        status_map: dict = {}
+        for row in rows:
+            s, n = (row[0] or "").upper(), int(row[1] or 0)
+            status_map[s] = n
+        for group, statuses in groups.items():
+            counts[group] = sum(status_map.get(s, 0) for s in statuses)
+    except Exception as e:
+        logger.error(f"get_message_status_counts: {e}")
+    return counts
+
+
 @router.get("/messages/paginated")
 async def list_messages_paginated(
     status: Optional[str] = None,

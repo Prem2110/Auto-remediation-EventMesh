@@ -401,6 +401,18 @@ export async function fetchAemIncidents(
   };
 }
 
+export interface MessageStatusCounts {
+  FAILED: number;
+  SUCCESS: number;
+  PROCESSING: number;
+  RETRY: number;
+}
+
+export async function fetchMessageStatusCounts(): Promise<MessageStatusCounts> {
+  const data = await requestMaybe<MessageStatusCounts>(`${_BASE}/smart-monitoring/messages/status-counts`);
+  return data ?? { FAILED: 0, SUCCESS: 0, PROCESSING: 0, RETRY: 0 };
+}
+
 export async function fetchFailedMessagesPaginated(
   page = 1,
   pageSize = 20,

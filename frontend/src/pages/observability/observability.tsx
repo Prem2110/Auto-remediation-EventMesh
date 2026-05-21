@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import {
   fetchFailedMessagesPaginated,
+  fetchMessageStatusCounts,
   fetchMonitorMessageDetail,
   analyzeMessage,
   explainError,
@@ -608,6 +609,14 @@ export default function Observability() {
   const msgTotal     = resolveTotal(_msgRaw);
   const msgTotalPages = resolveTotalPages(_msgRaw, msgTable.state.pageSize);
 
+  const { data: statusCounts } = useQuery({
+    queryKey: ["message-status-counts"],
+    queryFn:  fetchMessageStatusCounts,
+    refetchInterval: 30_000,
+    staleTime:       20_000,
+    enabled:         mainTab === "messages",
+  });
+
   // Reset to page 1 when filter or search changes
   useEffect(() => { msgTable.setPage(1); }, [filters.idQuery, activeStatusGroup]);
 
@@ -1078,6 +1087,7 @@ export default function Observability() {
             {SUMMARY_CARD_KEYS.map((k) => {
               const cfg = STATUS_CONFIG[k];
               const isActive = activeStatusGroup === k;
+              const count = statusCounts ? statusCounts[k as keyof typeof statusCounts] : undefined;
               return (
                 <div
                   key={k}
@@ -1087,7 +1097,7 @@ export default function Observability() {
                   data-tip={CARD_TIPS[k]}
                 >
                   <span className={styles.summaryCount} style={{ color: cfg.color }}>
-                    {isActive ? msgTotal : "–"}
+                    {count !== undefined ? count.toLocaleString() : "–"}
                   </span>
                   <span className={styles.summaryLabel} style={{ color: cfg.color }}>{cfg.label}</span>
                 </div>
