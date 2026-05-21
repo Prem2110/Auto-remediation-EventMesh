@@ -579,7 +579,7 @@ export default function Observability() {
   const [ticketPage,         setTicketPage]         = useState(1);
   const [retryingItsmId,     setRetryingItsmId]     = useState<string | null>(null);
   const TICKET_PAGE_SIZE = 10;
-  const MSG_PAGE_SIZE = 20;
+  const MSG_PAGE_SIZE = 10;
   const [msgPage, setMsgPage] = useState(1);
 
   const { data, isLoading, refetch, isFetching } = useQuery({

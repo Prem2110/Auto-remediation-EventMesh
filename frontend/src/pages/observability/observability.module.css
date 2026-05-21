@@ -341,7 +341,7 @@
 }
 .listColResetBtn:hover { background: var(--orbit-gray-50, #f9fafb); }
 
-.messageList { display: flex; flex-direction: column; }
+.messageList { display: flex; flex-direction: column; flex: 1; overflow-y: auto; }
 
 .messageRow {
   display: flex;
@@ -1509,6 +1509,7 @@
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
+  flex-shrink: 0;
   gap: 0.5rem;
   padding: 0.6rem 0.75rem;
   border-top: 1px solid var(--orbit-card-border, #e5e7eb);
