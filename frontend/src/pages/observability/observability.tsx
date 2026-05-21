@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import {
-  fetchMonitorMessages,
+  fetchFailedMessagesPaginated,
   fetchMonitorMessageDetail,
   analyzeMessage,
   explainError,
@@ -580,9 +580,36 @@ export default function Observability() {
   const [ticketActionError,  setTicketActionError]  = useState<string | null>(null);
   const [retryingItsmId, setRetryingItsmId] = useState<string | null>(null);
 
-  // ── Messages tab: client-side pagination ──
-  const MSG_PAGE_SIZE = 10;
-  const [msgPage, setMsgPage] = useState(1);
+  // ── Messages tab: server-driven ──
+  const msgTable = useServerTable<IMonitorMessage>("monitor-messages", {
+    defaultPageSize: 10,
+    defaultSortBy:   "created_at",
+  });
+  const [activeStatusGroup, setActiveStatusGroup] = useState<string | null>(null);
+
+  const { data: msgData, isLoading: msgLoading, isFetching: msgFetching, refetch: refetchMessages } = useQuery({
+    queryKey: [...msgTable.queryKey, activeStatusGroup, filters.idQuery],
+    queryFn:  () => fetchFailedMessagesPaginated(
+      msgTable.state.page,
+      msgTable.state.pageSize,
+      activeStatusGroup ?? undefined,
+      undefined,
+      filters.idQuery || undefined,
+      undefined,
+      msgTable.state.sortBy,
+      msgTable.state.sortOrder,
+    ),
+    refetchInterval: 30_000,
+    staleTime:       20_000,
+    enabled:         mainTab === "messages",
+  });
+
+  const messages     = resolveItems(msgData as Record<string, unknown> ?? {}) as IMonitorMessage[];
+  const msgTotal     = resolveTotal(msgData as Record<string, unknown> ?? {});
+  const msgTotalPages = resolveTotalPages(msgData as Record<string, unknown> ?? {}, msgTable.state.pageSize);
+
+  // Reset to page 1 when filter or search changes
+  useEffect(() => { msgTable.setPage(1); }, [filters.idQuery, activeStatusGroup]);
 
   // ── Tickets: server-driven table ──
   const ticketTable = useServerTable("escalation-tickets", { defaultPageSize: 10, defaultSortBy: "created_at" });
@@ -611,59 +638,6 @@ export default function Observability() {
     refetchInterval: 30_000,
     enabled: mainTab === "approvals",
   });
-
-  const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ["monitor-messages"],
-    queryFn: fetchMonitorMessages,
-    refetchInterval: 30_000,
-    staleTime: 20_000,
-  });
-
-  const STATUS_GROUP: Record<string, string[]> = {
-    FAILED:     ["FAILED", "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED", "ARTIFACT_MISSING"],
-    SUCCESS:    ["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS", "HUMAN_INITIATED_FIX", "FIX_DEPLOYED"],
-    PROCESSING: ["RCA_IN_PROGRESS", "FIX_IN_PROGRESS", "CLASSIFIED", "RCA_COMPLETE", "FIX_APPLIED_PENDING_VERIFICATION", "PROCESSING"],
-    RETRY:      ["RETRY", "PENDING_APPROVAL", "TICKET_CREATED", "AWAITING_APPROVAL"],
-  };
-
-  const messages = useMemo(() => {
-    return ((data?.messages || []) as IMonitorMessage[]).filter((m) => {
-      const s = (m.status || "").toUpperCase();
-      if (filters.statuses.length) {
-        const allowed = filters.statuses.flatMap((g) => STATUS_GROUP[g] || [g]);
-        if (!allowed.includes(s)) return false;
-      }
-      if (filters.searchQuery) {
-        const q = filters.searchQuery.toLowerCase();
-        if (!(m.iflow_display || m.title || "").toLowerCase().includes(q)) return false;
-      }
-      if (filters.idQuery) {
-        const q = filters.idQuery.toLowerCase();
-        if (!(m.message_guid || "").toLowerCase().includes(q) &&
-            !(m.iflow_display || "").toLowerCase().includes(q)) return false;
-      }
-      return true;
-    });
-  }, [data, filters]);
-
-  const counts = useMemo(() => {
-    const all = (data?.messages || []) as IMonitorMessage[];
-    const result: Record<string, number> = { FAILED: 0, SUCCESS: 0, PROCESSING: 0, RETRY: 0 };
-    all.forEach((m) => {
-      const s = (m.status || "").toUpperCase();
-      if (["FAILED", "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED", "ARTIFACT_MISSING"].includes(s)) result.FAILED++;
-      else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS", "HUMAN_INITIATED_FIX", "FIX_DEPLOYED"].includes(s)) result.SUCCESS++;
-      else if (["RCA_IN_PROGRESS", "FIX_IN_PROGRESS", "CLASSIFIED", "RCA_COMPLETE", "FIX_APPLIED_PENDING_VERIFICATION"].includes(s)) result.PROCESSING++;
-      else if (["RETRY", "PENDING_APPROVAL", "TICKET_CREATED", "AWAITING_APPROVAL"].includes(s)) result.RETRY++;
-    });
-    return result;
-  }, [data]);
-
-  // Reset message page when filters change
-  useEffect(() => { setMsgPage(1); }, [filters]);
-
-  const msgTotalPages = Math.max(1, Math.ceil(messages.length / MSG_PAGE_SIZE));
-  const pagedMessages = messages.slice((msgPage - 1) * MSG_PAGE_SIZE, msgPage * MSG_PAGE_SIZE);
 
   // Tickets — server-driven
   const ticketsRaw       = ticketsData as Record<string, unknown> | undefined;
@@ -1103,19 +1077,17 @@ export default function Observability() {
           <div className={styles.summaryRow}>
             {SUMMARY_CARD_KEYS.map((k) => {
               const cfg = STATUS_CONFIG[k];
+              const isActive = activeStatusGroup === k;
               return (
                 <div
                   key={k}
-                  className={`${styles.summaryCard} ${filters.statuses.includes(k) ? styles.summaryCardActive : ""}`}
+                  className={`${styles.summaryCard} ${isActive ? styles.summaryCardActive : ""}`}
                   style={{ borderTop: `3px solid ${cfg.dot}` }}
-                  onClick={() => setFilters((f) => ({
-                    ...f,
-                    statuses: f.statuses.includes(k) ? f.statuses.filter((s) => s !== k) : [...f.statuses, k],
-                  }))}
+                  onClick={() => setActiveStatusGroup(isActive ? null : k)}
                   data-tip={CARD_TIPS[k] ?? `Click to filter by ${cfg.label} status`}
                 >
                   <span className={styles.summaryCount} style={{ color: cfg.color }}>
-                    {counts[k] ?? 0}
+                    {isActive ? msgTotal : "–"}
                   </span>
                   <span className={styles.summaryLabel} style={{ color: cfg.color }}>{cfg.label}</span>
                 </div>
@@ -1124,17 +1096,17 @@ export default function Observability() {
           </div>
 
           {/* Active filter chips */}
-          {filters.statuses.length > 0 && (
+          {activeStatusGroup && (
             <div className={styles.chipRow}>
-              {filters.statuses.map((s) => {
-                const cfg = STATUS_CONFIG[s];
+              {(() => {
+                const cfg = STATUS_CONFIG[activeStatusGroup];
                 return (
-                  <span key={s} className={styles.filterChip} style={{ background: cfg.bg, color: cfg.color, borderColor: cfg.dot }}>
+                  <span className={styles.filterChip} style={{ background: cfg.bg, color: cfg.color, borderColor: cfg.dot }}>
                     {cfg.label}
-                    <button onClick={() => setFilters((f) => ({ ...f, statuses: f.statuses.filter((x) => x !== s) }))} data-tip="Remove this filter">x</button>
+                    <button onClick={() => setActiveStatusGroup(null)} data-tip="Remove this filter">x</button>
                   </span>
                 );
-              })}
+              })()}
             </div>
           )}
 
@@ -1166,16 +1138,20 @@ export default function Observability() {
                     <option value="">Status</option>
                     {Object.entries(STATUS_CONFIG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
                   </select>
-                  <button className={styles.listColRefreshBtn} onClick={() => refetch()} disabled={isFetching}>
+                  <button className={styles.listColRefreshBtn} onClick={() => refetchMessages()} disabled={msgFetching}>
                     Refresh
                   </button>
-                  <button className={styles.listColResetBtn} onClick={() => setFilters(INITIAL_FILTERS)}>Reset</button>
+                  <button className={styles.listColResetBtn} onClick={() => { setActiveStatusGroup(null); setFilters(INITIAL_FILTERS); msgTable.setPage(1); }}>Reset</button>
                 </div>
               </div>
-              {isLoading ? (
-                <div className={styles.centered}>
-                  <div className={styles.spinner} />
-                  <span>Loading messages...</span>
+              {msgLoading ? (
+                <div className={styles.messageList}>
+                  {Array.from({ length: msgTable.state.pageSize }).map((_, i) => (
+                    <div key={i} className={styles.skeletonRow}>
+                      <div className={styles.skeletonName} />
+                      <div className={styles.skeletonBadge} />
+                    </div>
+                  ))}
                 </div>
               ) : messages.length === 0 ? (
                 <div className={styles.msgEmptyState}>
@@ -1184,8 +1160,8 @@ export default function Observability() {
                   <p className={styles.msgEmptyHint}>Errors detected by the autonomous monitor will appear here.</p>
                 </div>
               ) : (
-                <div className={styles.messageList}>
-                  {pagedMessages.map((msg, i) => {
+                <div className={`${styles.messageList} ${msgFetching && !msgLoading ? styles.messageListFetching : ""}`}>
+                  {messages.map((msg, i) => {
                     const cfg = STATUS_CONFIG[msg.status?.toUpperCase()] ?? STATUS_CONFIG.FAILED;
                     const isSelected = selectedGuid !== null && selectedGuid === msg.message_guid;
                     return (
@@ -1210,37 +1186,26 @@ export default function Observability() {
                 </div>
               )}
 
-              {/* ── Message list pagination ── */}
-              {!isLoading && messages.length > MSG_PAGE_SIZE && (
-                <div className={styles.msgPagination}>
-                  <span className={styles.msgPaginationInfo}>
-                    {(msgPage - 1) * MSG_PAGE_SIZE + 1}–{Math.min(msgPage * MSG_PAGE_SIZE, messages.length)} of {messages.length}
-                  </span>
-                  <div className={styles.ticketPaginationControls}>
-                    <button className={styles.pageBtn} onClick={() => setMsgPage(1)} disabled={msgPage === 1}>«</button>
-                    <button className={styles.pageBtn} onClick={() => setMsgPage((p) => Math.max(1, p - 1))} disabled={msgPage === 1}>‹ Prev</button>
-                    {Array.from({ length: msgTotalPages }, (_, i) => i + 1)
-                      .filter((p) => p === 1 || p === msgTotalPages || Math.abs(p - msgPage) <= 1)
-                      .reduce<(number | "…")[]>((acc, p, i, arr) => {
-                        if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
-                        acc.push(p);
-                        return acc;
-                      }, [])
-                      .map((p, i) =>
-                        p === "…" ? (
-                          <span key={`ellipsis-${i}`} className={styles.pageDots}>…</span>
-                        ) : (
-                          <button
-                            key={p}
-                            className={`${styles.pageBtn} ${msgPage === p ? styles.pageBtnActive : ""}`}
-                            onClick={() => setMsgPage(p as number)}
-                          >{p}</button>
-                        )
-                      )}
-                    <button className={styles.pageBtn} onClick={() => setMsgPage((p) => Math.min(msgTotalPages, p + 1))} disabled={msgPage === msgTotalPages}>Next ›</button>
-                    <button className={styles.pageBtn} onClick={() => setMsgPage(msgTotalPages)} disabled={msgPage === msgTotalPages}>»</button>
-                  </div>
+              {/* ── Refetch indicator ── */}
+              {msgFetching && !msgLoading && (
+                <div className={styles.refetchBadge}>
+                  <span className={styles.refetchSpinner} /> Updating…
                 </div>
+              )}
+
+              {/* ── Server-side pagination ── */}
+              {!msgLoading && msgTotal > 0 && (
+                <Pagination
+                  currentPage={msgTable.state.page}
+                  totalPages={msgTotalPages}
+                  pageSize={msgTable.state.pageSize}
+                  totalCount={msgTotal}
+                  hasNextPage={msgTable.state.page < msgTotalPages}
+                  hasPreviousPage={msgTable.state.page > 1}
+                  onPageChange={msgTable.setPage}
+                  onPageSizeChange={msgTable.setPageSize}
+                  label="messages"
+                />
               )}
             </div>
 

@@ -941,6 +941,7 @@ def get_all_incidents(
     sort_by: str = "created_at",
     sort_order: str = "desc",
     search: Optional[str] = None,
+    status_list: Optional[List[str]] = None,
 ) -> Dict:
     """Returns {"incidents": [...], "total": int}.
 
@@ -957,8 +958,12 @@ def get_all_incidents(
         conds: list = []
         params: list = []
 
-        if status:
-            conds.append("status=?")
+        if status_list:
+            ph = ",".join("?" * len(status_list))
+            conds.append(f"STATUS IN ({ph})")
+            params.extend(status_list)
+        elif status:
+            conds.append("STATUS=?")
             params.append(status)
         if search:
             like = f"%{search}%"

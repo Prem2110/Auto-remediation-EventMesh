@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/smart-monitoring", tags=["Smart Monitoring"])
 
+_STATUS_GROUPS: dict = {
+    "FAILED":     ["FAILED", "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME", "RCA_FAILED", "PIPELINE_ERROR", "DETECTED", "ARTIFACT_MISSING"],
+    "SUCCESS":    ["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "SUCCESS", "HUMAN_INITIATED_FIX", "FIX_DEPLOYED"],
+    "PROCESSING": ["RCA_IN_PROGRESS", "FIX_IN_PROGRESS", "CLASSIFIED", "RCA_COMPLETE", "FIX_APPLIED_PENDING_VERIFICATION", "PROCESSING"],
+    "RETRY":      ["RETRY", "PENDING_APPROVAL", "TICKET_CREATED", "AWAITING_APPROVAL"],
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DEPENDENCY — lazy import avoids circular import with main.py
@@ -1014,8 +1021,15 @@ async def list_messages_paginated(
     if page_size < 1 or page_size > 500:
         raise HTTPException(status_code=400, detail="Page size must be between 1 and 500")
 
-    # Resolve status: UI sends "FAILED" to mean all failure statuses — pass None so DB returns all
-    db_status = None if (not status or status.upper() in ("FAILED", "ALL", "")) else status
+    # Resolve status: group names (FAILED/SUCCESS/PROCESSING/RETRY) expand to individual statuses
+    db_status: Optional[str] = None
+    db_status_list: Optional[list] = None
+    if status:
+        s = status.upper()
+        if s in _STATUS_GROUPS:
+            db_status_list = _STATUS_GROUPS[s]
+        elif s not in ("ALL", ""):
+            db_status = s
     # search covers iflow_id, message_guid, incident_id — combine id + artifacts
     search = id or artifacts or None
 
@@ -1027,6 +1041,7 @@ async def list_messages_paginated(
         sort_by=sort_by,
         sort_order=sort_order,
         search=search,
+        status_list=db_status_list,
     )
     incidents   = result["incidents"]
     total_count = result["total"]
