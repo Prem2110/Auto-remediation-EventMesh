@@ -171,15 +171,6 @@ const INITIAL_FILTERS: IFilterState = {
   dateFrom: "", dateTo: "", idQuery: "", searchQuery: "",
 };
 
-const CARD_TIPS: Record<string, string> = {
-  FAILED:      "Messages in FAILED, FIX_FAILED, RCA_FAILED or DETECTED state — need attention",
-  SUCCESS:     "Messages that reached AUTO_FIXED, HUMAN_FIXED or FIX_VERIFIED state",
-  PROCESSING:  "Messages currently in RCA, classification or fix-in-progress stages",
-  RETRY:       "Messages pending approval, ticket created or scheduled for retry",
-};
-
-// Explicit ordered keys for the 4 summary cards — never rely on STATUS_CONFIG insertion order
-const SUMMARY_CARD_KEYS = ["FAILED", "SUCCESS", "PROCESSING", "RETRY"] as const;
 
 const ANALYZE_STEPS = [
   "Analyzing error pattern and stack trace...",
@@ -1074,42 +1065,6 @@ export default function Observability() {
           MESSAGES TAB
           ══════════════════════════════════════════════════════════════════ */}
       <div style={{ display: mainTab === "messages" ? "contents" : "none" }}>
-          {/* ── Summary cards ── */}
-          <div className={styles.summaryRow}>
-            {SUMMARY_CARD_KEYS.map((k) => {
-              const cfg = STATUS_CONFIG[k];
-              const isActive = activeStatusGroup === k;
-              return (
-                <div
-                  key={k}
-                  className={`${styles.summaryCard} ${isActive ? styles.summaryCardActive : ""}`}
-                  style={{ borderTop: `3px solid ${cfg.dot}` }}
-                  onClick={() => setActiveStatusGroup(isActive ? null : k)}
-                  data-tip={CARD_TIPS[k] ?? `Click to filter by ${cfg.label} status`}
-                >
-                  <span className={styles.summaryCount} style={{ color: cfg.color }}>
-                    {isActive ? msgTotal : "–"}
-                  </span>
-                  <span className={styles.summaryLabel} style={{ color: cfg.color }}>{cfg.label}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Active filter chips */}
-          {activeStatusGroup && (
-            <div className={styles.chipRow}>
-              {(() => {
-                const cfg = STATUS_CONFIG[activeStatusGroup];
-                return (
-                  <span className={styles.filterChip} style={{ background: cfg.bg, color: cfg.color, borderColor: cfg.dot }}>
-                    {cfg.label}
-                    <button onClick={() => setActiveStatusGroup(null)} data-tip="Remove this filter">x</button>
-                  </span>
-                );
-              })()}
-            </div>
-          )}
 
           {/* ── Two-column layout ── */}
           <div className={styles.columns}>
@@ -1129,15 +1084,14 @@ export default function Observability() {
                   </div>
                   <select
                     className={styles.listColStatusSelect}
-                    value=""
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (!v) return;
-                      setFilters((f) => ({ ...f, statuses: f.statuses.includes(v) ? f.statuses.filter((s) => s !== v) : [...f.statuses, v] }));
-                    }}
+                    value={activeStatusGroup ?? ""}
+                    onChange={(e) => setActiveStatusGroup(e.target.value || null)}
                   >
-                    <option value="">Status</option>
-                    {Object.entries(STATUS_CONFIG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+                    <option value="">All Status</option>
+                    <option value="FAILED">Failed</option>
+                    <option value="SUCCESS">Success</option>
+                    <option value="PROCESSING">Processing</option>
+                    <option value="RETRY">Retry / Pending</option>
                   </select>
                   <button className={styles.listColRefreshBtn} onClick={() => refetchMessages()} disabled={msgFetching}>
                     Refresh
