@@ -238,6 +238,15 @@ class FixPlanner:
     # ── Direct XML patch (no LLM) ────────────────────────────────────────────
 
     @staticmethod
+    def _normalize_value(v: str) -> str:
+        import html as _html
+        v = (v or "").strip()
+        if v.startswith("<![CDATA[") and v.endswith("]]>"):
+            v = v[9:-3]
+        v = _html.unescape(v)
+        return v.strip()
+
+    @staticmethod
     def _apply_direct_patch(xml: str, fixes: List[Any]) -> Optional[str]:
         """
         Apply one or more property patches to an iFlow XML in a single parse pass.
@@ -280,11 +289,11 @@ class FixPlanner:
             _tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
             if _tag != "property":
                 continue
-            _key_el = prop.find(".//{*}key") or prop.find("key")
-            _val_el = prop.find(".//{*}value") or prop.find("value")
+            _key_el_f = prop.find(".//{*}key"); _key_el = _key_el_f if _key_el_f is not None else prop.find("key")
+            _val_el_f = prop.find(".//{*}value"); _val_el = _val_el_f if _val_el_f is not None else prop.find("value")
             if _val_el is None:
                 continue
-            _vt = (_val_el.text or "").strip()
+            _vt = FixPlanner._normalize_value(_val_el.text or "")
             if _vt:
                 value_to_props.setdefault(_vt, []).append((_key_el, _val_el))
 
@@ -326,8 +335,8 @@ class FixPlanner:
                     tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
                     if tag != "property":
                         continue
-                    key_elem = prop.find(".//{*}key") or prop.find("key")
-                    val_elem = prop.find(".//{*}value") or prop.find("value")
+                    key_elem_f = prop.find(".//{*}key"); key_elem = key_elem_f if key_elem_f is not None else prop.find("key")
+                    val_elem_f = prop.find(".//{*}value"); val_elem = val_elem_f if val_elem_f is not None else prop.find("value")
                     if key_elem is None or val_elem is None:
                         continue
                     _key_text   = (key_elem.text or "").strip()
@@ -358,7 +367,7 @@ class FixPlanner:
             # Finds the ifl:property whose <ifl:value> currently equals current_value.
             # When multiple properties share the same value, narrows by key name.
             if not prop_found and old_value and old_value.strip():
-                matches = value_to_props.get(old_value.strip(), [])
+                matches = value_to_props.get(FixPlanner._normalize_value(old_value), [])
 
                 if len(matches) == 1:
                     key_el, val_el = matches[0]
