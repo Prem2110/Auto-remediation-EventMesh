@@ -45,6 +45,43 @@ _ERROR_TYPE_LIKELY_PROPERTIES: Dict[str, List[str]] = {
 }
 
 
+def _extract_rca_json(answer: str) -> Dict[str, Any]:
+    """
+    Robustly extract the RCA JSON object from an LLM response.
+
+    Strategy:
+    1. Strip markdown code fences and retry direct parse.
+    2. Walk the string character by character to find the last balanced
+       JSON object — this handles reasoning text before the final answer
+       and avoids greedy re.DOTALL matching that swallows intermediate objects.
+    """
+    clean = re.sub(r"```(?:json)?", "", answer).replace("```", "").strip()
+    try:
+        return json.loads(clean)
+    except Exception:
+        pass
+
+    last_obj: Dict[str, Any] = {}
+    depth = 0
+    start = -1
+    for i, ch in enumerate(clean):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = clean[start : i + 1]
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        last_obj = parsed
+                except Exception:
+                    pass
+    return last_obj
+
+
 def _extract_prop_from_xml(xml_raw: str, component_id: str, prop_name: str) -> str:
     """
     Extract a single ifl:property value from raw get-iflow output.
@@ -684,15 +721,7 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                 )
                 final_msg = result["messages"][-1]
                 answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
-                try:
-                    clean = re.sub(r"```(?:json)?|```", "", answer).strip()
-                    rca   = json.loads(clean)
-                except Exception:
-                    match = re.search(r"\{.*\}", answer, re.DOTALL)
-                    try:
-                        rca = json.loads(match.group(0)) if match else {}
-                    except Exception:
-                        rca = {}
+                rca = _extract_rca_json(answer)
                 _ti, _to = extract_token_counts(result.get("messages", []))
                 log_agent_event(message_guid, "rca_agent", _ti, _to)
                 break
