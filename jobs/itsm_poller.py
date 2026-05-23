@@ -78,10 +78,15 @@ async def poll_itsm_tickets_once(classifier=None) -> None:
         try:
             itsm_data = await get_itsm_ticket(itsm_id)
             if not itsm_data:
-                logger.warning(
-                    "[ITSMPoller] itsm_id=%s does not exist in ITSM (ticket_id=%s incident_id=%s) — ticket may be stale test data or was deleted",
+                logger.info(
+                    "[ITSMPoller] itsm_id=%s not found in ITSM — marking STALE to stop polling "
+                    "(ticket_id=%s incident_id=%s)",
                     itsm_id, ticket_id, incident_id,
                 )
+                try:
+                    update_escalation_ticket(ticket_id, {"status": "STALE"})
+                except Exception as _stale_exc:
+                    logger.debug("[ITSMPoller] Could not mark ticket %s as STALE: %s", ticket_id, _stale_exc)
                 continue
 
             itsm_status = str(itsm_data.get("status", "")).lower()

@@ -446,6 +446,18 @@ def _check_iflow_xml(original_xml: str, modified_xml: str) -> List[str]:
     try:
         mod_root = ET.fromstring(modified_xml)
     except ET.ParseError as e:
+        err_line = e.position[0] if (hasattr(e, "position") and e.position) else 0
+        if err_line:
+            xml_lines = modified_xml.splitlines()
+            start = max(0, err_line - 4)
+            end   = min(len(xml_lines), err_line + 2)
+            ctx   = "\n".join(f"  {start + i + 1}: {xml_lines[start + i]}" for i in range(end - start))
+            return [
+                f"NEW: Modified iFlow XML is not valid XML: {e}.\n"
+                f"XML lines {start + 1}–{end} around the error:\n{ctx}\n"
+                "Identify the mismatched or unclosed tag in the snippet above and fix it, "
+                "then retry update-iflow."
+            ]
         return [f"NEW: Modified iFlow XML is not valid XML: {e}. Fix the XML before calling update-iflow."]
 
     # Parse original XML once — reused by all pre-existing issue checks below.
