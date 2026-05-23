@@ -350,6 +350,21 @@ function FixPlanSteps({ steps }: { steps: IFixPlanStep[] }) {
 //  0=Submit  1=Get iFlow  2=Analyze  3=Patch  4=Deploy  5=Verify
 const FIX_STAGES = ["Submit", "Get iFlow", "Analyze", "Patch", "Deploy", "Verify"] as const;
 
+const STAGE_HINTS: Record<string, string> = {
+  "Submit":    "Queuing the fix request…",
+  "Get iFlow": "Fetching iFlow XML from SAP CPI…",
+  "Analyze":   "LLM is performing root-cause analysis — typically 30-60 s",
+  "Patch":     "LLM is generating the XML patch — this can take 1-2 min",
+  "Deploy":    "Deploying to SAP CPI — typically 30-90 s",
+  "Verify":    "Checking iFlow runtime status after deploy…",
+};
+
+function formatElapsed(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return m > 0 ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`;
+}
+
 function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: number; totalSteps: number; currentStep?: string }) {
   const slots = FIX_STAGES.length;
   const allDone = stepIndex >= totalSteps || (currentStep || "").toLowerCase().includes("complete");
@@ -364,10 +379,12 @@ function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: 
           slots - 1
         );
 
-  // Strip internal "Agent: " prefix for display; trim ellipsis for compactness
+  // Strip internal "Agent: " prefix for display; trim ellipsis for compactness.
+  // Fall back to the stage hint so the user always sees something meaningful.
+  const activeLabel = FIX_STAGES[active] ?? "";
   const subLabel = currentStep
     ? currentStep.replace(/^Agent:\s*/i, "").replace(/…$/, "")
-    : "";
+    : (STAGE_HINTS[activeLabel] ?? "");
 
   return (
     <div className={styles.stageRail}>
@@ -566,6 +583,8 @@ export default function Observability() {
   const [fixProgress, setFixProgress] = useState<{
     currentStep: string; stepIndex: number; totalSteps: number; stepsDone: string[];
   } | null>(null);
+  const fixStartedAtRef = useRef<number | null>(null);
+  const [fixElapsedSeconds, setFixElapsedSeconds] = useState(0);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeStep, setAnalyzeStep] = useState(0);
 
@@ -853,9 +872,9 @@ export default function Observability() {
 
   const startFixPolling = useCallback(async (incidentId: string) => {
     let resolved = false;
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 200; i++) {
       if (pollAbortRef.current.cancelled) break;
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, 3000));
       try {
         const s = await fetchFixStatus(incidentId) as Record<string, unknown>;
         const st = (s.status as string || "").toUpperCase();
@@ -900,6 +919,22 @@ export default function Observability() {
       setFixResult("Fix is taking longer than expected. Click 'Check Status' to poll again, or reload the message.");
     }
   }, []);
+
+  /* ── Elapsed timer — ticks every second while fix is loading ─────── */
+  useEffect(() => {
+    if (fixState !== "loading") {
+      setFixElapsedSeconds(0);
+      fixStartedAtRef.current = null;
+      return;
+    }
+    if (fixStartedAtRef.current === null) {
+      fixStartedAtRef.current = Date.now();
+    }
+    const id = setInterval(() => {
+      setFixElapsedSeconds(Math.floor((Date.now() - fixStartedAtRef.current!) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [fixState]);
 
   /* ── Apply fix ──────────────────────────────────────────────────────── */
   const handleApplyFix = useCallback(async () => {
@@ -1511,6 +1546,11 @@ export default function Observability() {
                         <div className={styles.fixProgressCurrentStep}>
                           <span className={styles.fixProgressSpinner} />
                           <span>{fixProgress.currentStep}</span>
+                          {fixElapsedSeconds >= 3 && (
+                            <span className={styles.fixProgressElapsed}>
+                              {formatElapsed(fixElapsedSeconds)}
+                            </span>
+                          )}
                         </div>
                       </div>
                     )}

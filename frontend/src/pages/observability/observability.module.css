@@ -1358,6 +1358,19 @@
   padding-left: 0.125rem;
 }
 
+.fixProgressElapsed {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.35rem;
+  letter-spacing: 0.02em;
+}
+
 /* ── Status dot pulse for active pipeline messages ───────────────────── */
 @keyframes dotPulse {
   0%, 100% { opacity: 1; }
