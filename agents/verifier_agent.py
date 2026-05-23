@@ -125,7 +125,7 @@ Your job is to verify that a deployed fix works. Execute in order:
    - If the latest log entry still shows the original error type: set test_passed=false and include
      "Original error persists in message log" in summary.
    - If the log is absent or shows a non-error status: no action needed.
-5. Return EXACTLY this JSON (no markdown):
+6. Return EXACTLY this JSON (no markdown):
    {"test_passed": true/false, "http_status": <code or null>, "summary": "<one sentence: payload structure used and what the iFlow returned>"}
 
 Do NOT call update-iflow or deploy-iflow.

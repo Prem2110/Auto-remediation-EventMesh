@@ -30,7 +30,9 @@ async def test_new_error_after_fix_creates_new_incident():
     assert len(created_incidents) == 1
     assert created_incidents[0]["error_type"] == "AUTH_CONFIG_ERROR"
     assert created_incidents[0]["iflow_id"] == "iflow_A"
-    assert created_incidents[0]["parent_incident_id"] == "orig-id"
+    assert "incident_id" in created_incidents[0]
+    assert "created_at" in created_incidents[0]
+    assert "parent_incident_id" not in created_incidents[0]
 
 
 @pytest.mark.asyncio

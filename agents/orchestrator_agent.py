@@ -102,12 +102,13 @@ async def _maybe_requeue_runtime_failure(
     )
     try:
         new_incident = {
-            "iflow_id":             original_incident.get("iflow_id", ""),
-            "error_type":           runtime_error_type,
-            "error_message":        runtime_error_msg[:2000],
-            "message_guid":         original_incident.get("message_guid", ""),
-            "parent_incident_id":   original_incident.get("incident_id", ""),
-            "status":               "CLASSIFIED",
+            "incident_id":  generate_orbit_id(),
+            "iflow_id":     original_incident.get("iflow_id", ""),
+            "error_type":   runtime_error_type,
+            "error_message":runtime_error_msg[:2000],
+            "message_guid": original_incident.get("message_guid", ""),
+            "status":       "CLASSIFIED",
+            "created_at":   get_hana_timestamp(),
         }
         create_incident(new_incident)
         return True
@@ -2031,8 +2032,9 @@ Rules:
             "resolved_at":         get_hana_timestamp() if _resolved else None,
         })
         if final_status == "FIX_FAILED_RUNTIME":
-            _runtime_err_type = (result.get("error_type") or "").strip()
             _runtime_err_msg  = (result.get("summary") or "").strip()
+            _clf_result       = self._classifier.classify_error(_runtime_err_msg) if _runtime_err_msg else {}
+            _runtime_err_type = (_clf_result.get("error_type") or "").strip()
             if _runtime_err_type and _runtime_err_type != incident.get("error_type", ""):
                 await _maybe_requeue_runtime_failure(
                     original_incident=incident,
