@@ -137,15 +137,22 @@ class FixApplier:
                 )
                 update_ok = self._update_succeeded(_cr_out)
                 if not update_ok:
+                    _cr_locked = self._is_locked_error(_cr_out)
                     logger.warning(
-                        "[FixApplier] Component replace update failed for iflow=%s", ctx.iflow_id
+                        "[FixApplier] Component replace update failed for iflow=%s locked=%s",
+                        ctx.iflow_id, _cr_locked,
                     )
                     return ApplyResult(
                         success=False,
                         fix_applied=False,
                         deploy_success=False,
-                        failed_stage="update",
-                        summary=f"Component replacement update failed for {ctx.iflow_id}",
+                        failed_stage="locked" if _cr_locked else "update",
+                        summary=(
+                            "iFlow is locked in SAP CPI Integration Flow Designer. "
+                            "Cancel/close the checkout in SAP CPI and retry."
+                            if _cr_locked else
+                            f"Component replacement update failed for {ctx.iflow_id}"
+                        ),
                         technical_details=_cr_out[:300],
                         steps=[],
                     )
@@ -200,6 +207,23 @@ class FixApplier:
         # HTTP 200 with no body even when the write succeeded.  Verify by
         # re-fetching the live XML and checking every patched field landed.
         if not self._update_succeeded(update_out):
+            # Short-circuit: if the iFlow is locked, no point re-fetching XML.
+            if self._is_locked_error(update_out):
+                logger.warning(
+                    "[FixApplier] update-iflow LOCKED for iflow=%s — stopping retries", ctx.iflow_id
+                )
+                return ApplyResult(
+                    success=False,
+                    fix_applied=False,
+                    deploy_success=False,
+                    failed_stage="locked",
+                    summary=(
+                        "iFlow is locked in SAP CPI Integration Flow Designer. "
+                        "Cancel/close the checkout in SAP CPI and retry."
+                    ),
+                    technical_details=update_out[:300],
+                    steps=[],
+                )
             patch_confirmed = await self._verify_patch_landed(ctx, patch.operations)
             if not patch_confirmed:
                 _reason = "empty body — patch not confirmed in live XML" if not update_out.strip() else update_out[:200]

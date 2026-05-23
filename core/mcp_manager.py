@@ -59,17 +59,22 @@ def _looks_like_xml(s: str) -> bool:
 
 
 def _coerce_files_to_dicts(files: list) -> list:
-    """Convert any Pydantic model instances in a files list to plain dicts."""
+    """Convert any Pydantic model instances in a files list to plain dicts.
+
+    Also strips None values: the MCP schema validates boolean fields strictly
+    and rejects null (e.g. appendMode: null → -32602 Input validation error).
+    """
     result = []
     for f in files:
         if isinstance(f, dict):
-            result.append(f)
+            d = f
         elif hasattr(f, "model_dump"):
-            result.append(f.model_dump())
+            d = f.model_dump()
         elif hasattr(f, "dict"):
-            result.append(f.dict())
+            d = f.dict()
         else:
-            result.append({"filepath": str(getattr(f, "filepath", "")), "content": str(getattr(f, "content", ""))})
+            d = {"filepath": str(getattr(f, "filepath", "")), "content": str(getattr(f, "content", ""))}
+        result.append({k: v for k, v in d.items() if v is not None})
     return result
 
 
