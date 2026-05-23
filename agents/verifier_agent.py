@@ -91,6 +91,19 @@ class VerifierAgent:
         if get_iflow_tool:
             verify_tools = [get_iflow_tool] + verify_tools
 
+        get_logs_tool = next(
+            (
+                t for t in self._mcp.tools
+                if any(
+                    kw in f"{t.name} {t.mcp_tool_name}".lower()
+                    for kw in ("message_log", "message-log")
+                )
+            ),
+            None,
+        )
+        if get_logs_tool:
+            verify_tools.append(get_logs_tool)
+
         all_tools = [check_iflow_runtime_status] + verify_tools
 
         system_prompt = """You are an SAP CPI post-fix verification agent.
@@ -108,12 +121,16 @@ Your job is to verify that a deployed fix works. Execute in order:
    - Find any message mapping or schema step to infer required field names and payload structure.
    - Use ONLY confirmed field names from the iFlow — never guess field names.
 4. Call test_iflow_with_payload ONCE using the payload you constructed from the iFlow schema.
+5. If a message_guid is available in the incident context: call get_message_logs for that GUID.
+   - If the latest log entry still shows the original error type: set test_passed=false and include
+     "Original error persists in message log" in summary.
+   - If the log is absent or shows a non-error status: no action needed.
 5. Return EXACTLY this JSON (no markdown):
    {"test_passed": true/false, "http_status": <code or null>, "summary": "<one sentence: payload structure used and what the iFlow returned>"}
 
 Do NOT call update-iflow or deploy-iflow.
 Do NOT modify any iFlow.
-Maximum 5 tool calls total.
+Maximum 6 tool calls total.
 """
         self._agent = await self._mcp.build_agent(
             tools=all_tools,
@@ -243,6 +260,14 @@ Rules:
         error_msg    = incident.get("error_message", "")
         proposed_fix = incident.get("proposed_fix", "")
 
+        _msg_guid = incident.get("message_guid", "")
+        _log_step = (
+            f"5. call get_message_logs for message_guid='{_msg_guid}' to confirm the original "
+            f"error is absent from the latest run. If the log still shows the original error, "
+            f"set test_passed=false.\n"
+            if _msg_guid else ""
+        )
+
         prompt = f"""IFLOW VERIFICATION — the fix has been deployed. Confirm it works.
 
 iFlow ID:     {iflow_id}
@@ -266,11 +291,11 @@ INSTRUCTIONS — execute in order, stop early if a step gives a definitive resul
       - Use ONLY field names you observed in the iFlow XML — do NOT guess or invent field names.
    b. Construct a minimal test payload using the field names and structure you observed.
    c. Call test_iflow_with_payload ONCE with iflow_id='{iflow_id}' and the schema-based payload.
-4. Return EXACTLY this JSON (no markdown):
+{_log_step}4. Return EXACTLY this JSON (no markdown):
 {{"test_passed": true/false, "http_status": <status code or null>, "summary": "<what payload structure was sent and what the iFlow returned>"}}
 
 Do NOT call update-iflow. Do NOT call deploy-iflow. Do NOT modify the iFlow.
-Maximum 5 tool calls total.
+Maximum 6 tool calls total.
 """
         timestamp = get_hana_timestamp()
         tracker   = TestExecutionTracker(
@@ -283,7 +308,7 @@ Maximum 5 tool calls total.
             result    = await asyncio.wait_for(
                 agent.ainvoke(
                     {"messages": [{"role": "user", "content": prompt}]},
-                    config={"callbacks": [logger_cb], "recursion_limit": 10},
+                    config={"callbacks": [logger_cb], "recursion_limit": 12},
                 ),
                 timeout=120.0,
             )
