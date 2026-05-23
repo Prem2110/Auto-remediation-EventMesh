@@ -10,6 +10,7 @@ Exports:
 """
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -238,12 +239,11 @@ class FixPlanner:
     # ── Direct XML patch (no LLM) ────────────────────────────────────────────
 
     @staticmethod
-    def _normalize_value(v: str) -> str:
-        import html as _html
+    def _normalize_value(v: Optional[str]) -> str:
         v = (v or "").strip()
         if v.startswith("<![CDATA[") and v.endswith("]]>"):
             v = v[9:-3]
-        v = _html.unescape(v)
+        v = html.unescape(v)
         return v.strip()
 
     @staticmethod
@@ -289,8 +289,10 @@ class FixPlanner:
             _tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
             if _tag != "property":
                 continue
-            _key_el_f = prop.find(".//{*}key"); _key_el = _key_el_f if _key_el_f is not None else prop.find("key")
-            _val_el_f = prop.find(".//{*}value"); _val_el = _val_el_f if _val_el_f is not None else prop.find("value")
+            _key_el_f = prop.find(".//{*}key")
+            _key_el = _key_el_f if _key_el_f is not None else prop.find("key")
+            _val_el_f = prop.find(".//{*}value")
+            _val_el = _val_el_f if _val_el_f is not None else prop.find("value")
             if _val_el is None:
                 continue
             _vt = FixPlanner._normalize_value(_val_el.text or "")
