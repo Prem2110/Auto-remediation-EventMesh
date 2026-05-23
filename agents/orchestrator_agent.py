@@ -80,6 +80,41 @@ logger = logging.getLogger(__name__)
 _SAP_TENANT          = os.getenv("SAP_HUB_TENANT_URL", "")
 _TICKET_ASSIGNEE     = os.getenv("TICKET_DEFAULT_ASSIGNEE", "")
 
+
+async def _maybe_requeue_runtime_failure(
+    original_incident: Dict,
+    runtime_error_type: str,
+    runtime_error_msg: str,
+) -> bool:
+    """
+    If the post-deploy runtime error differs from the original error type, create a new
+    incident so the pipeline can attempt a fix for the newly-exposed failure.
+    Returns True if a new incident was queued, False otherwise.
+    """
+    orig_type = (original_incident.get("error_type") or "").strip()
+    if not runtime_error_type or runtime_error_type == orig_type:
+        return False
+    if not runtime_error_msg:
+        return False
+    logger.info(
+        "[OrchestratorAgent] FIX_FAILED_RUNTIME — original=%s new=%s iflow=%s — re-queuing",
+        orig_type, runtime_error_type, original_incident.get("iflow_id", ""),
+    )
+    try:
+        new_incident = {
+            "iflow_id":             original_incident.get("iflow_id", ""),
+            "error_type":           runtime_error_type,
+            "error_message":        runtime_error_msg[:2000],
+            "message_guid":         original_incident.get("message_guid", ""),
+            "parent_incident_id":   original_incident.get("incident_id", ""),
+            "status":               "CLASSIFIED",
+        }
+        create_incident(new_incident)
+        return True
+    except Exception as exc:
+        logger.warning("[OrchestratorAgent] _maybe_requeue_runtime_failure: %s", exc)
+        return False
+
 # Event Mesh — pipeline uses HTTP webhook push; local queue buffers during agent init
 
 
@@ -1995,6 +2030,15 @@ Rules:
             "verification_status": "VERIFIED" if _resolved else "FAILED",
             "resolved_at":         get_hana_timestamp() if _resolved else None,
         })
+        if final_status == "FIX_FAILED_RUNTIME":
+            _runtime_err_type = (result.get("error_type") or "").strip()
+            _runtime_err_msg  = (result.get("summary") or "").strip()
+            if _runtime_err_type and _runtime_err_type != incident.get("error_type", ""):
+                await _maybe_requeue_runtime_failure(
+                    original_incident=incident,
+                    runtime_error_type=_runtime_err_type,
+                    runtime_error_msg=_runtime_err_msg,
+                )
         # ── Dispatch terminal stage directly — no Solace round-trip ──────────
         await self._handle_verified({
             "incident_id": incident_id,
