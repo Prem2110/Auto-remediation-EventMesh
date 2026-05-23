@@ -1270,14 +1270,12 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                 cur.execute(
                     f"""INSERT INTO "{_FIX_TABLE}"
                        (pattern_id, error_signature, iflow_id, error_type,
-                        root_cause, fix_applied, outcome, applied_count, last_seen,
-                        "FIXES_JSON")
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        root_cause, fix_applied, outcome, applied_count, last_seen)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
                     (
                         str(uuid.uuid4()), sig,
                         data.get("iflow_id", ""), data.get("error_type", ""),
                         data.get("root_cause", ""), fix, outcome, 1, now,
-                        fixes_json_str if outcome == "SUCCESS" else None,
                     ),
                 )
         conn.commit()
