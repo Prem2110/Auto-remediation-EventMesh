@@ -780,13 +780,16 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
         # that the agent fetched.  If RCA hallucinated a value, direct_patch will silently
         # produce a no-op — the wrong iFlow gets redeployed and the error persists.
         # Extract the raw get-iflow output from agent steps to run this check without a
-        # second network call.
+        # second network call.  Fall back to the pre-fetched XML if the agent did not
+        # call get-iflow explicitly (e.g. when XML was injected directly into the prompt).
         _iflow_xml_raw = ""
         for _step in logger_cb.steps:
             _tool_name = str(_step.get("tool", ""))
             if "get-iflow" in _tool_name or "get_iflow" in _tool_name:
                 _iflow_xml_raw = str(_step.get("output", ""))
                 break
+        if not _iflow_xml_raw and iflow_xml:
+            _iflow_xml_raw = iflow_xml
 
         if _iflow_xml_raw and all_fixes:
             _mismatched = [
@@ -812,6 +815,60 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                 )
                 # Cap confidence so the mismatched fixes don't auto-deploy without LLM review.
                 final_confidence = min(final_confidence, 0.75)
+
+                # One targeted retry: inject real component IDs so the LLM can correct.
+                _real_ids = sorted({
+                    m.group(1)
+                    for m in re.finditer(r'id=["\']([^"\']+)["\']', _iflow_xml_raw)
+                })[:30]
+                _hint = (
+                    f"\n\nCORRECTION REQUIRED: your previous answer referenced component IDs "
+                    f"that do not exist in the iFlow XML: "
+                    f"{[f.component_id if hasattr(f, 'component_id') else f.get('component_id', '') for f in _mismatched]}. "
+                    f"The actual available IDs are: {_real_ids}. "
+                    f"Re-examine the iFlow XML above and return corrected JSON using only these IDs.\n"
+                )
+                _retry_messages = messages + [
+                    {"role": "assistant", "content": answer},
+                    {"role": "user",     "content": _hint},
+                ]
+                try:
+                    _retry_result = await asyncio.wait_for(
+                        agent.ainvoke(
+                            {"messages": _retry_messages},
+                            config={"callbacks": [logger_cb], "recursion_limit": 6},
+                        ),
+                        timeout=120.0,
+                    )
+                    _retry_final = _retry_result["messages"][-1]
+                    _retry_ans   = _retry_final.content if hasattr(_retry_final, "content") else str(_retry_final)
+                    _retry_clean = re.sub(r"```(?:json)?|```", "", _retry_ans).strip()
+                    _retry_rca   = json.loads(_retry_clean)
+                    _retry_fixes = get_all_fixes(_retry_rca)
+                    _still_bad   = [
+                        f for f in _retry_fixes
+                        if (
+                            (f.current_value if hasattr(f, "current_value") else f.get("current_value", ""))
+                            and (f.current_value if hasattr(f, "current_value") else f.get("current_value", ""))
+                            not in _iflow_xml_raw
+                        )
+                    ]
+                    if not _still_bad:
+                        logger.info(
+                            "[RCA] Consistency retry resolved mismatch for iflow=%s", iflow_id
+                        )
+                        rca       = _retry_rca
+                        all_fixes = _retry_fixes
+                        final_confidence = min(float(rca.get("confidence", final_confidence)), 0.95)
+                    else:
+                        logger.warning(
+                            "[RCA] Consistency retry did not resolve mismatch for iflow=%s — "
+                            "keeping capped confidence=%.2f", iflow_id, final_confidence,
+                        )
+                except Exception as _retry_exc:
+                    logger.warning(
+                        "[RCA] Consistency retry failed for iflow=%s: %s", iflow_id, _retry_exc
+                    )
 
         # ── Post-RCA fill-in pass ─────────────────────────────────────────────
         # When the LLM left current_value blank, try to extract it directly from
