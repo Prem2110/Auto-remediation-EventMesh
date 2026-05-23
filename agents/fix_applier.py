@@ -207,43 +207,73 @@ class FixApplier:
         # HTTP 200 with no body even when the write succeeded.  Verify by
         # re-fetching the live XML and checking every patched field landed.
         if not self._update_succeeded(update_out):
-            # Short-circuit: if the iFlow is locked, no point re-fetching XML.
             if self._is_locked_error(update_out):
-                logger.warning(
-                    "[FixApplier] update-iflow LOCKED for iflow=%s — stopping retries", ctx.iflow_id
+                # Try to cancel the checkout lock automatically, then retry once.
+                logger.info(
+                    "[FixApplier] Locked iFlow — attempting auto-unlock: iflow=%s", ctx.iflow_id
                 )
-                return ApplyResult(
-                    success=False,
-                    fix_applied=False,
-                    deploy_success=False,
-                    failed_stage="locked",
-                    summary=(
-                        "iFlow is locked in SAP CPI Integration Flow Designer. "
-                        "Cancel/close the checkout in SAP CPI and retry."
-                    ),
-                    technical_details=update_out[:300],
-                    steps=[],
+                unlocked = await self._try_unlock(ctx.iflow_id)
+                if unlocked:
+                    logger.info(
+                        "[FixApplier] Auto-unlock succeeded — retrying update-iflow: iflow=%s", ctx.iflow_id
+                    )
+                    _retry_result = await self._mcp.execute_integration_tool(
+                        "update-iflow",
+                        {"id": ctx.iflow_id, "files": _files, "autoDeploy": False},
+                    )
+                    update_out = str(_retry_result.get("output", ""))
+                    logger.info(
+                        "[FixApplier] Post-unlock update-iflow: iflow=%s output=%.200s",
+                        ctx.iflow_id, update_out,
+                    )
+                    if not self._update_succeeded(update_out):
+                        return ApplyResult(
+                            success=False,
+                            fix_applied=False,
+                            deploy_success=False,
+                            failed_stage="locked" if self._is_locked_error(update_out) else "update",
+                            summary=(
+                                "iFlow checkout was cancelled automatically but the update still failed. "
+                                "Retry the fix or check the iFlow status in SAP CPI."
+                            ),
+                            technical_details=update_out[:300],
+                            steps=[],
+                        )
+                    # Unlock + retry succeeded — fall through to deploy
+                else:
+                    return ApplyResult(
+                        success=False,
+                        fix_applied=False,
+                        deploy_success=False,
+                        failed_stage="locked",
+                        summary=(
+                            "iFlow is locked in SAP CPI — automatic unlock failed. "
+                            "Cancel the checkout manually in SAP Integration Flow Designer and retry."
+                        ),
+                        technical_details=update_out[:300],
+                        steps=[],
+                    )
+            else:
+                patch_confirmed = await self._verify_patch_landed(ctx, patch.operations)
+                if not patch_confirmed:
+                    _reason = "empty body — patch not confirmed in live XML" if not update_out.strip() else update_out[:200]
+                    logger.warning(
+                        "[FixApplier] update-iflow failed (content check): iflow=%s reason=%s",
+                        ctx.iflow_id, _reason,
+                    )
+                    return ApplyResult(
+                        success=False,
+                        fix_applied=False,
+                        deploy_success=False,
+                        failed_stage="update",
+                        summary=f"update-iflow failed after structured patch: {_reason}",
+                        technical_details=update_out,
+                        steps=[],
+                    )
+                logger.info(
+                    "[FixApplier] update-iflow empty body — content check confirmed patch landed: iflow=%s",
+                    ctx.iflow_id,
                 )
-            patch_confirmed = await self._verify_patch_landed(ctx, patch.operations)
-            if not patch_confirmed:
-                _reason = "empty body — patch not confirmed in live XML" if not update_out.strip() else update_out[:200]
-                logger.warning(
-                    "[FixApplier] update-iflow failed (content check): iflow=%s reason=%s",
-                    ctx.iflow_id, _reason,
-                )
-                return ApplyResult(
-                    success=False,
-                    fix_applied=False,
-                    deploy_success=False,
-                    failed_stage="update",
-                    summary=f"update-iflow failed after structured patch: {_reason}",
-                    technical_details=update_out,
-                    steps=[],
-                )
-            logger.info(
-                "[FixApplier] update-iflow empty body — content check confirmed patch landed: iflow=%s",
-                ctx.iflow_id,
-            )
 
         # Call deploy-iflow
         deploy_result = await self._mcp.execute_integration_tool(
@@ -288,6 +318,50 @@ class FixApplier:
             technical_details=deploy_out,
             steps=[],
         )
+
+    # ── unlock helper ─────────────────────────────────────────────────────────
+
+    async def _try_unlock(self, iflow_id: str) -> bool:
+        """Cancel the SAP CPI checkout lock via MCP unlock tools.
+
+        Tries every unlock-related tool registered on the integration_suite server
+        and returns True as soon as one succeeds.
+        """
+        unlock_tools: List[str] = []
+        for t in self._mcp.tools:
+            server = getattr(t, "server", "") or ""
+            if server != "integration_suite":
+                continue
+            combined = f"{getattr(t, 'name', '')} {getattr(t, 'mcp_tool_name', '')}".lower()
+            if any(kw in combined for kw in ("cancel", "checkout", "unlock", "force_unlock", "discard")):
+                tool_name = getattr(t, "mcp_tool_name", None) or getattr(t, "name", None)
+                if tool_name:
+                    unlock_tools.append(tool_name)
+
+        if not unlock_tools:
+            logger.warning("[FixApplier] No unlock MCP tools found for iflow=%s", iflow_id)
+            return False
+
+        for tool_name in unlock_tools:
+            try:
+                out = await self._mcp.execute_integration_tool(
+                    tool_name,
+                    {"iflow_id": iflow_id, "id": iflow_id, "artifact_id": iflow_id},
+                )
+                out_str = str(out.get("output", out) if isinstance(out, dict) else out)
+                out_lower = out_str.lower()
+                if "error" not in out_lower and "fail" not in out_lower:
+                    logger.info(
+                        "[FixApplier] Unlock via '%s' succeeded: iflow=%s", tool_name, iflow_id
+                    )
+                    return True
+                logger.debug(
+                    "[FixApplier] MCP unlock tool '%s' did not succeed: %.100s", tool_name, out_str
+                )
+            except Exception as exc:
+                logger.debug("[FixApplier] MCP unlock tool '%s' exception: %s", tool_name, exc)
+
+        return False
 
     # ── free_xml mode ─────────────────────────────────────────────────────────
 
@@ -502,6 +576,8 @@ class FixApplier:
         await asyncio.sleep(initial_wait)
 
         for poll_num in range(max_polls):
+            if poll_num > 0:
+                await asyncio.sleep(poll_interval)
             elapsed = initial_wait + poll_num * poll_interval
             if progress_fn:
                 try:
@@ -549,12 +625,15 @@ class FixApplier:
                     steps=result.steps,
                 )
 
-            # Non-empty = SAP reported a deployment error
+            # Non-empty = SAP reported a deployment error; keep polling — SAP sometimes
+            # clears transient errors within the first few ticks after a 202 response.
             logger.warning(
-                "[FixApplier] iFlow deploy FAILED (get-deploy-error non-empty) on poll %d: "
+                "[FixApplier] iFlow deploy FAILED (get-deploy-error non-empty) on poll %d/%d: "
                 "iflow=%s error=%.200s",
-                poll_num + 1, ctx.iflow_id, deploy_error[:200],
+                poll_num + 1, max_polls, ctx.iflow_id, deploy_error[:200],
             )
+            if poll_num < max_polls - 1:
+                continue
             return ApplyResult(
                 success=False,
                 fix_applied=result.fix_applied,

@@ -383,6 +383,11 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     ),
                     steps=[],
                 )
+            logger.warning(
+                "[FixGenerator] direct_patch has no merged_xml for iflow=%s — "
+                "falling back to free_xml",
+                ctx.iflow_id,
+            )
 
         if strategy.strategy == "component_replace":
             merged_xml = strategy.operations[0].get("merged_xml", "") if strategy.operations else ""
@@ -402,21 +407,33 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
                     raw_answer=f"Component replaced with reference '{strategy.reference_name}'",
                     steps=[],
                 )
+            logger.warning(
+                "[FixGenerator] component_replace has no merged_xml for iflow=%s — "
+                "falling back to free_xml",
+                ctx.iflow_id,
+            )
 
         if strategy.strategy == "structured":
-            logger.info(
-                "[FixGenerator] Strategy=structured_patch | iflow=%s | "
-                "affected_component=%s | sap_notes=%s",
-                ctx.iflow_id, ctx.affected_component,
-                "yes" if ctx.sap_notes else "NO — KB context missing",
-            )
-            return PatchSpec(
-                mode="structured",
-                operations=strategy.operations,
-                raw_xml="",
-                raw_answer="",
-                steps=[],
-            )
+            if not strategy.operations:
+                logger.warning(
+                    "[FixGenerator] structured strategy has no operations for iflow=%s — "
+                    "falling back to free_xml to avoid a no-op deploy",
+                    ctx.iflow_id,
+                )
+            else:
+                logger.info(
+                    "[FixGenerator] Strategy=structured_patch | iflow=%s | "
+                    "affected_component=%s | sap_notes=%s",
+                    ctx.iflow_id, ctx.affected_component,
+                    "yes" if ctx.sap_notes else "NO — KB context missing",
+                )
+                return PatchSpec(
+                    mode="structured",
+                    operations=strategy.operations,
+                    raw_xml="",
+                    raw_answer="",
+                    steps=[],
+                )
 
         return await self._run_free_xml_agent(ctx, progress_fn)
 
