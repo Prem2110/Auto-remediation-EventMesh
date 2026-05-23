@@ -1359,31 +1359,6 @@ def get_similar_patterns(error_signature: str) -> List[Dict]:
         return []
 
 
-def get_strategy_success_by_error_type(error_type: str) -> List[Dict]:
-    """Return per-strategy success counts for a given error_type, ranked by success_count DESC."""
-    try:
-        conn = get_connection()
-        cur  = conn.cursor()
-        cur.execute(
-            f"""SELECT "SUPERVISOR_STRATEGY" AS strategy,
-                       SUM("success_count")  AS success_count,
-                       COUNT(*)              AS total_patterns
-                FROM "{_FIX_TABLE}"
-               WHERE error_type=?
-                 AND "SUPERVISOR_STRATEGY" IS NOT NULL
-                 AND "SUPERVISOR_STRATEGY" != ''
-               GROUP BY "SUPERVISOR_STRATEGY"
-               ORDER BY SUM("success_count") DESC""",
-            (error_type,),
-        )
-        rows = _rows_to_dicts(cur)
-        conn.close()
-        return rows
-    except Exception as exc:
-        logger.error("get_strategy_success_by_error_type: %s", exc)
-        return []
-
-
 def get_patterns_by_error_type(
     error_type: str,
     min_success_count: int = 1,
@@ -1420,6 +1395,31 @@ def get_patterns_by_error_type(
         return rows
     except Exception as e:
         logger.error(f"get_patterns_by_error_type: {e}")
+        return []
+
+
+def get_strategy_success_by_error_type(error_type: str) -> List[Dict]:
+    """Return per-strategy success counts for a given error_type, ranked by success_count DESC."""
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            f"""SELECT "SUPERVISOR_STRATEGY" AS strategy,
+                       SUM("success_count")  AS success_count,
+                       COUNT(*)              AS total_patterns
+                FROM "{_FIX_TABLE}"
+               WHERE error_type=?
+                 AND "SUPERVISOR_STRATEGY" IS NOT NULL
+                 AND "SUPERVISOR_STRATEGY" != ''
+               GROUP BY "SUPERVISOR_STRATEGY"
+               ORDER BY SUM("success_count") DESC""",
+            (error_type,),
+        )
+        rows = _rows_to_dicts(cur)
+        conn.close()
+        return rows
+    except Exception as exc:
+        logger.error("get_strategy_success_by_error_type: %s", exc)
         return []
 
 
