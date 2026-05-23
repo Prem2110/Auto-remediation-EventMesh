@@ -1208,6 +1208,7 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
             [str(s)[:200] for s in raw_steps if s][:8]  # at most 8 steps, 200 chars each
         ) if raw_steps else None
         fixes_json_str = data.get("fixes_json") or None
+        supervisor_strategy = data.get("supervisor_strategy") or None
 
         # Try full SELECT with success_count; fall back if column doesn't exist yet
         _has_success_count = True
@@ -1239,9 +1240,10 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                 cur.execute(
                     f"""UPDATE "{_FIX_TABLE}"
                        SET applied_count=?, outcome=?, last_seen=?,
-                           "success_count"=?, "replay_success_count"=?, "key_steps"=?, "FIXES_JSON"=?
+                           "success_count"=?, "replay_success_count"=?, "key_steps"=?, "FIXES_JSON"=?,
+                           "SUPERVISOR_STRATEGY"=?
                        WHERE pattern_id=?""",
-                    (existing["applied_count"] + 1, outcome, now, new_success, new_replay, new_steps, new_fixes_json, existing["pattern_id"]),
+                    (existing["applied_count"] + 1, outcome, now, new_success, new_replay, new_steps, new_fixes_json, supervisor_strategy, existing["pattern_id"]),
                 )
             else:
                 cur.execute(
@@ -1254,8 +1256,9 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                     f"""INSERT INTO "{_FIX_TABLE}"
                        (pattern_id, error_signature, iflow_id, error_type,
                         root_cause, fix_applied, outcome, applied_count, last_seen,
-                        "success_count", "replay_success_count", "key_steps", "FIXES_JSON")
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        "success_count", "replay_success_count", "key_steps", "FIXES_JSON",
+                        "SUPERVISOR_STRATEGY")
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         str(uuid.uuid4()), sig,
                         data.get("iflow_id", ""), data.get("error_type", ""),
@@ -1264,6 +1267,7 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                         1 if replay_success else 0,
                         key_steps_json if outcome == "SUCCESS" else None,
                         fixes_json_str if outcome == "SUCCESS" else None,
+                        supervisor_strategy,
                     ),
                 )
             else:
@@ -1352,6 +1356,31 @@ def get_similar_patterns(error_signature: str) -> List[Dict]:
         return rows
     except Exception as e:
         logger.error(f"get_similar_patterns: {e}")
+        return []
+
+
+def get_strategy_success_by_error_type(error_type: str) -> List[Dict]:
+    """Return per-strategy success counts for a given error_type, ranked by success_count DESC."""
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            f"""SELECT "SUPERVISOR_STRATEGY" AS strategy,
+                       SUM("success_count")  AS success_count,
+                       COUNT(*)              AS total_patterns
+                FROM "{_FIX_TABLE}"
+               WHERE error_type=?
+                 AND "SUPERVISOR_STRATEGY" IS NOT NULL
+                 AND "SUPERVISOR_STRATEGY" != ''
+               GROUP BY "SUPERVISOR_STRATEGY"
+               ORDER BY SUM("success_count") DESC""",
+            (error_type,),
+        )
+        rows = _rows_to_dicts(cur)
+        conn.close()
+        return rows
+    except Exception as exc:
+        logger.error("get_strategy_success_by_error_type: %s", exc)
         return []
 
 

@@ -629,6 +629,7 @@ Rules:
                             for f in (rca.get("fixes") or [])
                         ]
                     ) if (_outcome == "SUCCESS" and rca.get("fixes")) else None,
+                    "supervisor_strategy": fix_result.get("strategy_used", ""),
                 })
                 return final_status
             finally:
@@ -1433,6 +1434,7 @@ Rules:
                             for f in (rca.get("fixes") or [])
                         ]
                     ) if (_outcome2 == "SUCCESS" and rca.get("fixes")) else None,
+                    "supervisor_strategy": fix_result.get("strategy_used", ""),
                 },
                 replay_success=replay_success,
             )

@@ -93,6 +93,21 @@ class FixSupervisor:
         strategy, sliced_xml = await self._planner.plan(ctx)
         ctx = dataclasses.replace(ctx, sliced_xml=sliced_xml)
 
+        _ordered_strategies = list(_STRATEGY_ORDER)
+        try:
+            from db.database import get_strategy_success_by_error_type  # noqa: PLC0415
+            _priors = get_strategy_success_by_error_type(ctx.error_type)
+            if _priors:
+                _prior_rank = [r["strategy"] for r in _priors if (r.get("success_count") or 0) > 0]
+                _fallback   = [s for s in _STRATEGY_ORDER if s not in _prior_rank]
+                _ordered_strategies = _prior_rank + _fallback
+                logger.info(
+                    "[Supervisor] Strategy order from priors for error_type=%s: %s",
+                    ctx.error_type, _ordered_strategies,
+                )
+        except Exception as _pe:
+            logger.debug("[Supervisor] Could not fetch strategy priors: %s", _pe)
+
         last_result: Optional[SuperviseResult] = None
         tried_strategies: set = set()
 
@@ -230,7 +245,7 @@ class FixSupervisor:
                 )
                 break
 
-            next_strat = self._next_strategy(strat_name, tried_strategies)
+            next_strat = self._next_strategy(strat_name, tried_strategies, _ordered_strategies)
             if next_strat is None:
                 logger.info(
                     "[Supervisor] All strategies exhausted: iflow=%s tried=%s",
@@ -372,8 +387,8 @@ class FixSupervisor:
         return deploy_error
 
     @staticmethod
-    def _next_strategy(current: str, tried: set) -> Optional[str]:
-        for s in _STRATEGY_ORDER:
+    def _next_strategy(current: str, tried: set, order: Optional[List[str]] = None) -> Optional[str]:
+        for s in (order or _STRATEGY_ORDER):
             if s not in tried:
                 return s
         return None
