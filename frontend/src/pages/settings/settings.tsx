@@ -4,7 +4,10 @@ import {
   fetchSettings,
   patchSettings,
   resetSetting,
+  fetchHealthCheck,
   type SettingSchema,
+  type HealthCheckResult,
+  type HealthStatus,
 } from "../../services/api.ts";
 import SvgIcon from "../../components/icons/SvgIcon.tsx";
 import styles from "./settings.module.css";
@@ -266,6 +269,151 @@ function applyFontSize(id: FontSizeId) {
   localStorage.setItem("orbit-font-size", id);
 }
 
+// ── health check panel ────────────────────────────────────────────────────────
+
+const HEALTH_SERVICES = [
+  { id: "all",        label: "All Services"  },
+  { id: "mcp",        label: "MCP Server"    },
+  { id: "db",         label: "Database"      },
+  { id: "event_mesh", label: "Event Mesh"    },
+] as const;
+
+type HealthServiceId = (typeof HEALTH_SERVICES)[number]["id"];
+
+function statusDot(s: HealthStatus) {
+  if (s === "ok")       return styles.dotOk;
+  if (s === "degraded") return styles.dotDegraded;
+  return styles.dotError;
+}
+
+function statusBadge(s: HealthStatus) {
+  if (s === "ok")       return styles.badgeOk;
+  if (s === "degraded") return styles.badgeDegraded;
+  return styles.badgeError;
+}
+
+function serviceIcon(name: string) {
+  if (name === "MCP Server") return "server-stack";
+  if (name === "Database")   return "circle-stack";
+  return "event-mesh";
+}
+
+function CheckRow({ result }: { result: HealthCheckResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetail = Object.keys(result.detail).length > 0;
+  return (
+    <div className={styles.checkRow}>
+      <div className={styles.checkMain}>
+        <span className={`${styles.checkDot} ${statusDot(result.status)}`} />
+        <SvgIcon name={serviceIcon(result.service)} size={15} style={{ flexShrink: 0, color: "var(--orbit-text-muted, #6b7280)" }} />
+        <span className={styles.checkName}>{result.service}</span>
+        <span className={`${styles.checkBadge} ${statusBadge(result.status)}`}>{result.status}</span>
+        <span className={styles.checkMsg}>{result.message}</span>
+        {hasDetail && (
+          <button className={styles.checkExpand} onClick={() => setExpanded((v) => !v)} title="Toggle details">
+            <SvgIcon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
+          </button>
+        )}
+      </div>
+      {expanded && hasDetail && (
+        <pre className={styles.checkDetail}>{JSON.stringify(result.detail, null, 2)}</pre>
+      )}
+    </div>
+  );
+}
+
+function HealthCheckPanel() {
+  const [open,     setOpen]       = useState(false);
+  const [selected, setSelected]   = useState<HealthServiceId>("all");
+  const [running,  setRunning]    = useState(false);
+  const [results,  setResults]    = useState<HealthCheckResult[] | null>(null);
+  const [overall,  setOverall]    = useState<HealthStatus | null>(null);
+  const [errMsg,   setErrMsg]     = useState<string | null>(null);
+
+  async function runCheck() {
+    setRunning(true);
+    setResults(null);
+    setOverall(null);
+    setErrMsg(null);
+    try {
+      const data = await fetchHealthCheck(selected);
+      setResults(data.checks);
+      setOverall(data.overall);
+    } catch (e) {
+      setErrMsg(String(e));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className={styles.healthCard}>
+      {/* ── collapsed / expanded toggle row ── */}
+      <button className={styles.healthToggle} onClick={() => setOpen((v) => !v)}>
+        <div className={styles.healthToggleLeft}>
+          <SvgIcon name="server-stack" size={15} style={{ flexShrink: 0 }} />
+          <span className={styles.healthTitle}>System Health</span>
+          {overall && !open && (
+            <span className={`${styles.checkBadge} ${statusBadge(overall)}`}>
+              {overall === "ok" ? "All good" : overall === "degraded" ? "Degraded" : "Issues found"}
+            </span>
+          )}
+        </div>
+        <SvgIcon name={open ? "chevron-down" : "chevron-right"} size={14} style={{ flexShrink: 0, color: "var(--orbit-text-muted, #9ca3af)" }} />
+      </button>
+
+      {/* ── body — only rendered when open ── */}
+      {open && (
+        <div className={styles.healthBody}>
+          <p className={styles.healthDesc}>
+            Run an on-demand liveness probe for MCP, the database, and SAP Event Mesh.
+          </p>
+
+          <div className={styles.healthControls}>
+            <select
+              className={styles.healthSelect}
+              value={selected}
+              onChange={(e) => { setSelected(e.target.value as HealthServiceId); setResults(null); setOverall(null); setErrMsg(null); }}
+              disabled={running}
+            >
+              {HEALTH_SERVICES.map((s) => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
+
+            <button className={styles.healthRunBtn} onClick={runCheck} disabled={running}>
+              {running ? (
+                <><span className={styles.spinner} />Checking…</>
+              ) : (
+                <><SvgIcon name="loop" size={13} />Run Check</>
+              )}
+            </button>
+
+            {overall && !running && (
+              <span className={`${styles.checkBadge} ${statusBadge(overall)}`} style={{ alignSelf: "center" }}>
+                {overall === "ok" ? "All good" : overall === "degraded" ? "Degraded" : "Issues found"}
+              </span>
+            )}
+          </div>
+
+          {errMsg && (
+            <div className={styles.healthError}>
+              <SvgIcon name="warning" size={13} />
+              {errMsg}
+            </div>
+          )}
+
+          {results && results.length > 0 && (
+            <div className={styles.checkList}>
+              {results.map((r) => <CheckRow key={r.service} result={r} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── main page ─────────────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -425,6 +573,9 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {/* ── health check ── */}
+      <HealthCheckPanel />
 
       {/* ── toast ── */}
       {toast && (

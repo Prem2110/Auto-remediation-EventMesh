@@ -34,7 +34,7 @@ from db.database import (
     update_incident,
     upsert_fix_pattern,
 )
-from integrations.itsm_client import get_itsm_ticket
+from integrations.itsm_client import get_itsm_ticket, _resolve_itsm_destination
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,16 @@ async def poll_itsm_tickets_once(classifier=None) -> None:
     open_tickets = get_open_itsm_tickets()
     if not open_tickets:
         logger.debug("[ITSMPoller] No open tickets to poll")
+        return
+
+    # Pre-flight: verify ITSM credentials are available before iterating tickets.
+    # Without this guard every ticket triggers an individual credential error.
+    creds_ok = await _resolve_itsm_destination()
+    if not creds_ok:
+        logger.warning(
+            "[ITSMPoller] Skipping poll of %d ticket(s) — ITSM credentials unavailable (VCAP_SERVICES not configured)",
+            len(open_tickets),
+        )
         return
 
     logger.info("[ITSMPoller] Polling %d open ticket(s) against ITSM", len(open_tickets))

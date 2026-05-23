@@ -41,7 +41,7 @@ async def _resolve_itsm_destination() -> Optional[Dict[str, str]]:
 
     creds = get_destination_service_creds()
     if not creds:
-        logger.error("[ITSM] SAP Destination service credentials not found in VCAP_SERVICES")
+        logger.warning("[ITSM] SAP Destination service credentials not found in VCAP_SERVICES — ITSM integration disabled")
         return None
 
     dest_uri   = creds.get("uri", "")

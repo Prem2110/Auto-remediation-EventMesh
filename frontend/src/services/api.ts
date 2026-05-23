@@ -497,3 +497,21 @@ export async function patchSettings(
 export async function resetSetting(key: string): Promise<{ reset: string; default: unknown }> {
   return request(`${_BASE}/settings/${key}`, { method: "DELETE" });
 }
+
+export type HealthStatus = "ok" | "degraded" | "error";
+
+export interface HealthCheckResult {
+  service: string;
+  status:  HealthStatus;
+  message: string;
+  detail:  Record<string, unknown>;
+}
+
+export interface HealthCheckResponse {
+  overall: HealthStatus;
+  checks:  HealthCheckResult[];
+}
+
+export async function fetchHealthCheck(service: "all" | "mcp" | "db" | "event_mesh" = "all"): Promise<HealthCheckResponse> {
+  return request(`${_BASE}/system/health-check?service=${service}`);
+}

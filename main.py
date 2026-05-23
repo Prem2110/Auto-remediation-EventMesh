@@ -2394,6 +2394,131 @@ async def itsm_poll_now():
 
 
 # ─────────────────────────────────────────────
+# SYSTEM HEALTH CHECK
+# ─────────────────────────────────────────────
+
+@app.get("/system/health-check")
+async def system_health_check(service: str = "all"):
+    """
+    On-demand liveness probe for the three core subsystems.
+
+    ?service=mcp        — MCP server reachability + tool inventory
+    ?service=db         — Database read probe
+    ?service=event_mesh — SAP Event Mesh configuration + connectivity marker
+    ?service=all        — All three in one call (default)
+    """
+    results: list[dict] = []
+
+    async def _check_mcp() -> dict:
+        try:
+            agents_ready = bool(orchestrator and getattr(orchestrator, "_agents_ready", False))
+            tool_count   = len(mcp.tools) if mcp else 0
+            if mcp is None:
+                return {
+                    "service": "MCP Server",
+                    "status":  "degraded",
+                    "message": "MCP manager not initialised — no servers configured",
+                    "detail":  {"tool_count": 0, "agents_ready": False},
+                }
+            if not agents_ready:
+                return {
+                    "service": "MCP Server",
+                    "status":  "degraded",
+                    "message": "Agents initialising or startup failed",
+                    "detail":  {"tool_count": tool_count, "agents_ready": False},
+                }
+            return {
+                "service": "MCP Server",
+                "status":  "ok",
+                "message": f"Reachable — {tool_count} tool{'s' if tool_count != 1 else ''} registered",
+                "detail":  {"tool_count": tool_count, "agents_ready": True},
+            }
+        except Exception as exc:
+            return {"service": "MCP Server", "status": "error", "message": str(exc), "detail": {}}
+
+    async def _check_db() -> dict:
+        try:
+            n = count_all_incidents()
+            return {
+                "service": "Database",
+                "status":  "ok",
+                "message": f"Connected — {n} incident{'s' if n != 1 else ''} on record",
+                "detail":  {"incident_count": n},
+            }
+        except Exception as exc:
+            return {"service": "Database", "status": "error", "message": str(exc), "detail": {}}
+
+    async def _check_event_mesh() -> dict:
+        em_enabled  = os.getenv("EM_ENABLED", os.getenv("AEM_ENABLED", "false")).lower() == "true"
+        rest_url    = os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", "")).strip()
+        queue_name  = os.getenv("EVENT_MESH_QUEUE", "").strip()
+        dest_name   = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh").strip()
+
+        if not em_enabled:
+            return {
+                "service": "Event Mesh",
+                "status":  "degraded",
+                "message": "Event Mesh disabled (EM_ENABLED=false)",
+                "detail":  {"enabled": False, "rest_url_set": bool(rest_url)},
+            }
+        if not rest_url:
+            return {
+                "service": "Event Mesh",
+                "status":  "error",
+                "message": "EM_REST_URL not configured",
+                "detail":  {"enabled": True, "rest_url_set": False},
+            }
+        # Quick TCP reachability probe — avoids full OAuth flow
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(rest_url)
+            host   = parsed.hostname or ""
+            port   = parsed.port or (443 if parsed.scheme == "https" else 80)
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.head(f"{parsed.scheme}://{host}:{port}", follow_redirects=True)
+            return {
+                "service": "Event Mesh",
+                "status":  "ok",
+                "message": f"Reachable — queue: {queue_name or 'not set'}, dest: {dest_name}",
+                "detail":  {
+                    "enabled":      True,
+                    "rest_url_set": True,
+                    "queue":        queue_name,
+                    "destination":  dest_name,
+                    "webhook_hits": _webhook_counter,
+                },
+            }
+        except Exception as exc:
+            return {
+                "service": "Event Mesh",
+                "status":  "error",
+                "message": f"Endpoint unreachable: {exc}",
+                "detail":  {"enabled": True, "rest_url_set": True, "error": str(exc)},
+            }
+
+    want = service.lower()
+    if want in ("mcp", "all"):
+        results.append(await _check_mcp())
+    if want in ("db", "all"):
+        results.append(await _check_db())
+    if want in ("event_mesh", "all"):
+        results.append(await _check_event_mesh())
+
+    if not results:
+        raise HTTPException(status_code=400, detail=f"Unknown service '{service}'. Use mcp, db, event_mesh, or all.")
+
+    overall = "ok"
+    for r in results:
+        if r["status"] == "error":
+            overall = "error"
+            break
+        if r["status"] == "degraded":
+            overall = "degraded"
+
+    return {"overall": overall, "checks": results}
+
+
+# ─────────────────────────────────────────────
 # ENTRYPOINT
 # ─────────────────────────────────────────────
 if __name__ == "__main__":

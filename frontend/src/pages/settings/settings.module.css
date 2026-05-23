@@ -553,3 +553,214 @@ button:disabled  { opacity: 0.5; cursor: not-allowed; }
   background: var(--orbit-primary-dim, #eff6ff);
   color: var(--orbit-primary, #2563eb);
 }
+
+/* ── health check panel ── */
+.healthCard {
+  background: var(--orbit-card-bg, #fff);
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.healthToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1.1rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: background 0.12s;
+}
+.healthToggle:hover { background: var(--orbit-bg-hover, #f9fafb); }
+
+.healthToggleLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.healthTitle {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--orbit-text-primary, #111827);
+}
+
+.healthDesc {
+  font-size: 0.8rem;
+  color: var(--orbit-text-muted, #6b7280);
+  margin: 0;
+}
+
+.healthBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0 1.1rem 1.1rem;
+  border-top: 1px solid var(--orbit-card-border, #e5e7eb);
+  padding-top: 0.9rem;
+}
+
+.healthControls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.healthSelect {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--orbit-input-border, #d1d5db);
+  border-radius: 7px;
+  font-size: 0.82rem;
+  color: var(--orbit-text-primary, #111827);
+  background: var(--orbit-input-bg, #fff);
+  cursor: pointer;
+  outline: none;
+  min-width: 160px;
+  transition: border-color 0.15s;
+}
+.healthSelect:focus  { border-color: var(--orbit-primary, #3b82f6); }
+.healthSelect:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.healthRunBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.9rem;
+  background: var(--orbit-primary, #1e3a5f);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.healthRunBtn:hover   { background: var(--orbit-primary-hover, #1e4070); }
+.healthRunBtn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.healthError {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 7px;
+  padding: 0.5rem 0.8rem;
+}
+
+/* ── check result list ── */
+.checkList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--orbit-card-border, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.checkRow {
+  border-bottom: 1px solid var(--orbit-card-border, #f3f4f6);
+  transition: background 0.12s;
+}
+.checkRow:last-child { border-bottom: none; }
+.checkRow:hover { background: var(--orbit-bg-hover, #f9fafb); }
+
+.checkMain {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.9rem;
+  flex-wrap: wrap;
+}
+
+.checkDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dotOk       { background: #22c55e; box-shadow: 0 0 0 2px #bbf7d0; }
+.dotDegraded { background: #f59e0b; box-shadow: 0 0 0 2px #fde68a; }
+.dotError    { background: #ef4444; box-shadow: 0 0 0 2px #fecaca; }
+
+.checkName {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--orbit-text-primary, #111827);
+  min-width: 100px;
+}
+
+.checkBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+.badgeOk       { background: #dcfce7; color: #166534; }
+.badgeDegraded { background: #fef9c3; color: #854d0e; }
+.badgeError    { background: #fee2e2; color: #991b1b; }
+
+.checkMsg {
+  font-size: 0.8rem;
+  color: var(--orbit-text-secondary, #374151);
+  flex: 1;
+  min-width: 0;
+}
+
+.checkExpand {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.15rem 0.25rem;
+  color: var(--orbit-text-muted, #9ca3af);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+.checkExpand:hover { background: var(--orbit-card-border, #e5e7eb); }
+
+.checkDetail {
+  margin: 0;
+  padding: 0.5rem 0.9rem 0.65rem 2.5rem;
+  font-size: 0.72rem;
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  color: var(--orbit-text-secondary, #374151);
+  background: var(--orbit-bg-hover, #f9fafb);
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-top: 1px solid var(--orbit-card-border, #f3f4f6);
+}
+
+/* ── spinner ── */
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
