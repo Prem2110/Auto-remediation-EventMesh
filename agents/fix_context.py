@@ -6,7 +6,7 @@ FixGenerator, FixValidator, and FixApplier.
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 
 @dataclass(frozen=True)
@@ -36,3 +36,4 @@ class FixContext:
     current_value: str = ""
     correct_value: str = ""
     fixes: List = field(default_factory=list)
+    secondary_files: Dict[str, str] = field(default_factory=dict)

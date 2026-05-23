@@ -84,6 +84,14 @@ class FixPlanner:
         Returns (FixStrategy, sliced_xml) where sliced_xml is a focused XML
         snippet centred on the affected component, or "" if unavailable.
         """
+        _secondary = self._extract_secondary_files(ctx.original_xml or "")
+        if _secondary:
+            logger.info(
+                "[FixPlanner] Extracted %d secondary file(s) for iflow=%s: %s",
+                len(_secondary), ctx.iflow_id, list(_secondary.keys()),
+            )
+            ctx = replace(ctx, secondary_files=_secondary)
+
         # If original_xml is a concatenated integration package string, extract only
         # the main iFlow XML under src/main/resources/scenarioflows/integrationflow/.
         if ctx.original_xml and "---begin-of-file---" in ctx.original_xml:
@@ -337,8 +345,10 @@ class FixPlanner:
                     tag = (prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag).lower()
                     if tag != "property":
                         continue
-                    key_elem_f = prop.find(".//{*}key"); key_elem = key_elem_f if key_elem_f is not None else prop.find("key")
-                    val_elem_f = prop.find(".//{*}value"); val_elem = val_elem_f if val_elem_f is not None else prop.find("value")
+                    key_elem_f = prop.find(".//{*}key")
+                    key_elem = key_elem_f if key_elem_f is not None else prop.find("key")
+                    val_elem_f = prop.find(".//{*}value")
+                    val_elem = val_elem_f if val_elem_f is not None else prop.find("value")
                     if key_elem is None or val_elem is None:
                         continue
                     _key_text   = (key_elem.text or "").strip()
@@ -529,6 +539,35 @@ class FixPlanner:
         except Exception as exc:
             logger.warning("[FixPlanner] _slice_xml failed for component=%s: %s", affected_component, exc)
             return ""
+
+    @staticmethod
+    def _extract_secondary_files(raw: str) -> Dict[str, str]:
+        """
+        Parse a multi-file get-iflow output and return non-iflw file contents.
+        Returns {filepath: content} for .groovy, .xsl, .xslt, .mmap files only.
+        """
+        if not raw or "---begin-of-file---" not in raw:
+            return {}
+        result: Dict[str, str] = {}
+        _EXTENSIONS = (".groovy", ".xsl", ".xslt", ".mmap")
+        parts = re.split(r"\n---begin-of-file---\n", raw)
+        for i, part in enumerate(parts):
+            if i == 0:
+                continue
+            prev_chunk = parts[i - 1]
+            filepath_candidate = ""
+            for line in reversed(prev_chunk.strip().splitlines()):
+                line = line.strip()
+                if line:
+                    filepath_candidate = line
+                    break
+            if not any(filepath_candidate.endswith(ext) for ext in _EXTENSIONS):
+                continue
+            content_end = part.find("\n---end-of-file---")
+            content = part[:content_end].strip() if content_end >= 0 else part.strip()
+            if content:
+                result[filepath_candidate] = content
+        return result
 
     # ── internal: call diagnosis agent ───────────────────────────────────────
 

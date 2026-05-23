@@ -586,6 +586,22 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
             else ""
         )
 
+        _secondary_section = ""
+        if (error_type or "").upper() in ("MAPPING_ERROR", "SCRIPT_ERROR") and iflow_xml:
+            from agents.fix_planner import FixPlanner as _FP  # noqa: PLC0415
+            _sec = _FP._extract_secondary_files(iflow_xml)
+            if _sec:
+                _secondary_parts = [f"=== {_fp} ===\n{_fc[:5000]}" for _fp, _fc in _sec.items()]
+                _secondary_section = "\n".join(_secondary_parts)
+                logger.info(
+                    "[RCA] Injecting %d secondary file(s) into prompt for error_type=%s iflow=%s",
+                    len(_sec), error_type, iflow_id,
+                )
+        _secondary_block = (
+            f"\n=== Script / Mapping files (pre-fetched) ===\n{_secondary_section}\n"
+            if _secondary_section else ""
+        )
+
         # ── Prompt — two variants depending on whether we have a message GUID ─
         # iFlow XML and message logs are pre-fetched and injected directly.
         # The LLM must skip tool calls for data that is already provided.
@@ -620,7 +636,7 @@ Error detected:
 
 === cross_iflow_patterns (proven fixes from other iFlows — use as reference) ===
 {cross_iflow_text}
-{_logs_section}{_iflow_section}
+{_logs_section}{_iflow_section}{_secondary_block}
 {_step_instructions}
 
 Return ONLY valid JSON (no markdown, no preamble):
@@ -671,7 +687,7 @@ AUTONOMOUS RCA — do NOT ask for human input. No message GUID is available.
 
 === cross_iflow_patterns (proven fixes from other iFlows — use as reference) ===
 {cross_iflow_text}
-{_iflow_section}
+{_iflow_section}{_secondary_block}
 Error detected:
 - iFlow:      {iflow_id}
 - Error Type: {error_type}

@@ -180,11 +180,14 @@ class FixApplier:
             "[FixApplier] update-iflow preflight: iflow=%s filepath=%r xml_len=%d",
             ctx.iflow_id, ctx.original_filepath, len(vr.patched_xml),
         )
+        _files = [{"filepath": ctx.original_filepath, "content": vr.patched_xml}]
+        for _sfp, _sfc in (ctx.secondary_files or {}).items():
+            _files.append({"filepath": _sfp, "content": _sfc})
         update_result = await self._mcp.execute_integration_tool(
             "update-iflow",
             {
                 "id": ctx.iflow_id,
-                "files": [{"filepath": ctx.original_filepath, "content": vr.patched_xml}],
+                "files": _files,
                 "autoDeploy": False,
             },
         )
