@@ -623,6 +623,12 @@ Rules:
                     "fix_applied": _fix_applied_desc,
                     "outcome":    _outcome,
                     "key_steps":  fix_result.get("steps", []) if fix_result.get("fix_applied") else [],
+                    "fixes_json": json.dumps(
+                        [
+                            vars(f) if hasattr(f, "__dict__") else (f if isinstance(f, dict) else {})
+                            for f in (rca.get("fixes") or [])
+                        ]
+                    ) if (_outcome == "SUCCESS" and rca.get("fixes")) else None,
                 })
                 return final_status
             finally:

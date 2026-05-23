@@ -516,11 +516,19 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
             lines = ["=== PROVEN FIXES FROM OTHER IFLOWS (same error type) ==="]
             for _cp in _cross_patterns:
                 if _cp.get("iflow_id") != iflow_id:
+                    _fj_raw = _cp.get("fixes_json") or _cp.get("FIXES_JSON") or ""
+                    _fj_example = ""
+                    if _fj_raw:
+                        try:
+                            _fj_example = f" | fixes_example: {str(_fj_raw)[:300]}"
+                        except Exception:
+                            pass
                     lines.append(
                         f"iFlow: {_cp.get('iflow_id')} | "
                         f"root_cause: {(_cp.get('root_cause') or '')[:120]} | "
                         f"fix: {(_cp.get('fix_applied') or '')[:150]} | "
                         f"success_count: {_cp.get('success_count', 0)}"
+                        f"{_fj_example}"
                     )
             if len(lines) > 1:
                 cross_iflow_text = "\n".join(lines)

@@ -242,6 +242,7 @@ def _migrate_fix_patterns_table(conn) -> None:
         ("SUCCESS_COUNT",        "success_count",        "INTEGER DEFAULT 0"),
         ("REPLAY_SUCCESS_COUNT", "replay_success_count", "INTEGER DEFAULT 0"),
         ("KEY_STEPS",            "key_steps",            "NVARCHAR(2000)"),
+        ("FIXES_JSON",           "fixes_json",           "NCLOB"),
         ("SUPERVISOR_STRATEGY",  "supervisor_strategy",  "NVARCHAR(50)"),
     ]
     schema_q = os.getenv("HANA_SCHEMA", "")
@@ -1206,12 +1207,13 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
         key_steps_json = _json.dumps(
             [str(s)[:200] for s in raw_steps if s][:8]  # at most 8 steps, 200 chars each
         ) if raw_steps else None
+        fixes_json_str = data.get("fixes_json") or None
 
         # Try full SELECT with success_count; fall back if column doesn't exist yet
         _has_success_count = True
         try:
             cur.execute(
-                f'SELECT pattern_id, applied_count, fix_applied, "success_count", "replay_success_count", "key_steps" FROM "{_FIX_TABLE}" WHERE error_signature=?',
+                f'SELECT pattern_id, applied_count, fix_applied, "success_count", "replay_success_count", "key_steps", "FIXES_JSON" FROM "{_FIX_TABLE}" WHERE error_signature=?',
                 (sig,),
             )
         except Exception:
@@ -1233,12 +1235,13 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                     new_success = (existing.get("success_count") or 0)  # don't increment, but don't reset
                 new_replay  = (existing.get("replay_success_count") or 0) + (1 if replay_success else 0)
                 new_steps   = key_steps_json if (outcome == "SUCCESS" and key_steps_json) else existing.get("key_steps")
+                new_fixes_json = fixes_json_str if (outcome == "SUCCESS" and fixes_json_str) else existing.get("fixes_json") or existing.get("FIXES_JSON")
                 cur.execute(
                     f"""UPDATE "{_FIX_TABLE}"
                        SET applied_count=?, outcome=?, last_seen=?,
-                           "success_count"=?, "replay_success_count"=?, "key_steps"=?
+                           "success_count"=?, "replay_success_count"=?, "key_steps"=?, "FIXES_JSON"=?
                        WHERE pattern_id=?""",
-                    (existing["applied_count"] + 1, outcome, now, new_success, new_replay, new_steps, existing["pattern_id"]),
+                    (existing["applied_count"] + 1, outcome, now, new_success, new_replay, new_steps, new_fixes_json, existing["pattern_id"]),
                 )
             else:
                 cur.execute(
@@ -1251,8 +1254,8 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                     f"""INSERT INTO "{_FIX_TABLE}"
                        (pattern_id, error_signature, iflow_id, error_type,
                         root_cause, fix_applied, outcome, applied_count, last_seen,
-                        "success_count", "replay_success_count", "key_steps")
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        "success_count", "replay_success_count", "key_steps", "FIXES_JSON")
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         str(uuid.uuid4()), sig,
                         data.get("iflow_id", ""), data.get("error_type", ""),
@@ -1260,18 +1263,21 @@ def upsert_fix_pattern(data: Dict, replay_success: bool = False):
                         1 if outcome == "SUCCESS" else 0,  # PARTIAL does not increment success_count on first insert
                         1 if replay_success else 0,
                         key_steps_json if outcome == "SUCCESS" else None,
+                        fixes_json_str if outcome == "SUCCESS" else None,
                     ),
                 )
             else:
                 cur.execute(
                     f"""INSERT INTO "{_FIX_TABLE}"
                        (pattern_id, error_signature, iflow_id, error_type,
-                        root_cause, fix_applied, outcome, applied_count, last_seen)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                        root_cause, fix_applied, outcome, applied_count, last_seen,
+                        "FIXES_JSON")
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (
                         str(uuid.uuid4()), sig,
                         data.get("iflow_id", ""), data.get("error_type", ""),
                         data.get("root_cause", ""), fix, outcome, 1, now,
+                        fixes_json_str if outcome == "SUCCESS" else None,
                     ),
                 )
         conn.commit()
