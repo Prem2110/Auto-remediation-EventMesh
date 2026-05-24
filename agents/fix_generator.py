@@ -26,11 +26,10 @@ from core.constants import (
     CPI_IFLOW_XML_PATTERNS,
     FIX_AND_DEPLOY_PROMPT_TEMPLATE,
 )
+from core.runtime_config import cfg as _cfg
 from core.validators import _fix_ctx
 
 logger = logging.getLogger(__name__)
-
-_WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "false").lower() == "true"
 
 # Validation errors the free-XML agent cannot self-correct: structural regressions
 # it introduced itself (e.g. removed a CBR default route while rewriting routing).
@@ -147,9 +146,11 @@ class FixGenerator:
         if not mcp_tools:
             mcp_tools = [t for t in self._mcp.tools if t.server == "integration_suite"]
 
+        _web_search_enabled = _cfg.get("WEB_SEARCH_ENABLED")
+
         local_tools = [validate_iflow_xml, record_fix_outcome]
 
-        if _WEB_SEARCH_ENABLED:
+        if _web_search_enabled:
             @_tool
             async def web_search_sap_fix(query: str) -> str:
                 """
@@ -190,7 +191,7 @@ class FixGenerator:
             "\nproperty is not confirmed by the iFlow XML or RCA, call web_search_sap_fix with a"
             "\nspecific query (e.g. 'HTTP receiver adapter OAuth2 credential name format SAP CPI')."
             "\nUse ONLY confirmed values from the search — never apply a guessed value.\n"
-        ) if _WEB_SEARCH_ENABLED else ""
+        ) if _web_search_enabled else ""
 
         system_prompt = """You are the FixAgent in a SAP CPI self-healing pipeline.
 Your ONLY job is to fix and deploy broken SAP CPI iFlows.

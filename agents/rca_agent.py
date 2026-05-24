@@ -25,12 +25,11 @@ from agents.base import StepLogger, TestExecutionTracker, extract_token_counts
 from agents.classifier_agent import ClassifierAgent
 from core.constants import FALLBACK_FIX_BY_ERROR_TYPE
 from db.database import get_similar_patterns, log_agent_event
+from core.runtime_config import cfg as _cfg
 from utils.utils import clean_error_message, get_hana_timestamp
 from utils.vector_store import get_vector_store
 
 logger = logging.getLogger(__name__)
-
-_WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "false").lower() == "true"
 
 # Default property to inspect per error type when RCA returns fixes:[] but
 # affected_component is known.  Used by the post-RCA XML fill-in pass.
@@ -257,20 +256,22 @@ class RCAAgent:
         if not rca_mcp_tools:
             rca_mcp_tools = [t for t in _mcp.tools if t.server == "integration_suite"]
 
+        _web_search_enabled = _cfg.get("WEB_SEARCH_ENABLED")
+
         local_tools = [get_vector_store_notes, get_cross_iflow_patterns]
-        if _WEB_SEARCH_ENABLED:
+        if _web_search_enabled:
             local_tools.append(web_search_sap_error)
         all_tools = local_tools + rca_mcp_tools
 
         _web_search_line = (
             "- web_search_sap_error      — search the web for SAP CPI solutions (use if SAP Notes are insufficient)\n"
-            if _WEB_SEARCH_ENABLED else ""
+            if _web_search_enabled else ""
         )
         _web_search_rule = (
             "- Call web_search_sap_error if SAP Notes and patterns do not provide a clear fix.\n"
-            if _WEB_SEARCH_ENABLED else ""
+            if _web_search_enabled else ""
         )
-        _max_calls = "8" if _WEB_SEARCH_ENABLED else "6"
+        _max_calls = "8" if _web_search_enabled else "6"
 
         system_prompt = f"""You are an SAP CPI Root Cause Analysis agent.
 
@@ -378,7 +379,7 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
         )
         logger.info(
             "[RCA] Agent ready — %d local tools + %d MCP tools (web_search=%s).",
-            len(local_tools), len(rca_mcp_tools), _WEB_SEARCH_ENABLED,
+            len(local_tools), len(rca_mcp_tools), _web_search_enabled,
         )
 
     # ── main entry point ─────────────────────────────────────────────────────

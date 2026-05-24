@@ -89,6 +89,16 @@ SETTINGS_SCHEMA: list[dict] = [
         "group":          "Fix Behaviour",
         "when_effective": "Next MCP tool call that encounters an error.",
     },
+    {
+        "key":            "WEB_SEARCH_ENABLED",
+        "type":           "bool",
+        "default":        False,
+        "label":          "Enable Web Search (DuckDuckGo)",
+        "description":    "Allow the RCA and fix-generator agents to search the web via DuckDuckGo when SAP Notes and internal patterns are insufficient. Adds latency to each agent run.",
+        "impact":         "medium",
+        "group":          "Fix Behaviour",
+        "when_effective": "Next agent invocation. In-progress RCA or fix runs are not affected.",
+    },
     # ── Throughput ───────────────────────────────────────────────────────────
     {
         "key":            "FAILED_MESSAGE_FETCH_LIMIT",
