@@ -50,7 +50,7 @@ writing the final outcome to the database.
 | Layer | Technology |
 |---|---|
 | API framework | FastAPI + Uvicorn |
-| Agent orchestration | LangChain (tool-calling agents) |
+| Agent orchestration | LangChain `create_agent` (0.3+ unified API) + `langchain_core.tools @tool` |
 | LLM | SAP AI Core — GPT-4 / Claude Sonnet via OpenAI-compatible API |
 | MCP tool protocol | fastmcp `>=2.14.5`, langchain-mcp-adapters |
 | Event bus | SAP Event Mesh (`em_automation`, namespace `default/sierra.automation/1`) |
@@ -265,8 +265,23 @@ binding (`VCAP_SERVICES` on CF). The app must have the Destination service insta
 
 ## 4. Agent Roles
 
+All LangChain agents use `create_agent(model, tools, system_prompt)` from `langchain.agents`
+(LangChain 0.3+ unified API). Local tools are defined with the `@tool` decorator from
+`langchain_core.tools`. MCP tools are bridged in as `BaseTool` subclasses via
+`core/mcp_manager.py → MultiMCP`. The ObserverAgent is **not** a LangChain agent — it is
+a plain async OData client.
+
 ### Stage 1 — Orchestrator (`/agents/orchestrator`)
 
+- **LangChain construct:** `create_agent` via `build_agent()`
+- **Tools (5 local `@tool` wrappers):**
+  | Tool | Purpose |
+  |---|---|
+  | `run_observer(task)` | Trigger ObserverAgent |
+  | `run_classifier(incident_json)` | Delegate to ClassifierAgent |
+  | `run_rca(incident_json)` | Delegate to RCAAgent |
+  | `run_fix(rca_json)` | Delegate to FixSupervisor |
+  | `run_verifier(fix_json)` | Delegate to VerifierAgent |
 - **Input:** Raw CPI error event JSON (SAP Event Mesh push)
 - **Responsibilities:**
   - Normalize the AEM multimap envelope into a flat incident dict
@@ -280,6 +295,7 @@ binding (`VCAP_SERVICES` on CF). The app must have the Destination service insta
 
 ### Stage 2 — Observer (`/agents/observer`)
 
+- **LangChain construct:** None — pure async OData client (`SAPErrorFetcher`), no agent executor
 - **Input:** `{"stage": "observer", "incident_id": "<uuid>"}`
 - **Responsibilities:**
   - Read incident from DB
@@ -291,30 +307,67 @@ binding (`VCAP_SERVICES` on CF). The app must have the Destination service insta
 
 ### Stage 3 — RCA Agent (`/agents/rca`)
 
+- **LangChain construct:** `create_agent` via `build_agent()`
+- **Tools:**
+  | Tool | Type | Purpose |
+  |---|---|---|
+  | `get_vector_store_notes(error_description)` | local `@tool` | HANA vector search for SAP Notes |
+  | `get_cross_iflow_patterns(error_type, fragment)` | local `@tool` | Historical fix pattern lookup |
+  | `web_search_sap_error(query)` | local `@tool` | DuckDuckGo search (gated by `WEB_SEARCH_ENABLED`) |
+  | `get-iflow` | MCP — `integration_suite` | Read iFlow XML (read-only) |
+  | `get_message_logs` | MCP — `integration_suite` | Read CPI message logs (read-only) |
+  | `list-iflows` | MCP — `integration_suite` | List available iFlows (read-only) |
+  | `get_iflow_example` | MCP — `integration_suite` | Fetch reference iFlow XML (read-only) |
 - **Input:** `{"stage": "rca", "incident_id": "<uuid>"}`
 - **Responsibilities:**
   - Read enriched incident from DB
-  - Run an LLM agent with a restricted tool set (`get-iflow`, `get_message_logs`)
   - Read the iFlow XML and CPI message logs to determine root cause
-  - Update DB: `root_cause`, `proposed_fix`, `rca_confidence`, `affected_component`
+  - Update DB: `root_cause`, `proposed_fix`, `fixes[]`, `rca_confidence`, `affected_component`
   - Status progression: `RCA_IN_PROGRESS` → `RCA_COMPLETE`
 - **Publishes to:** `default/sierra.automation/1/autofix/orbit/fixer`
 - **On failure:** Sets status `RCA_FAILED`
 
 ### Stage 4 — Fixer Agent (`/agents/fixer`)
 
+The fixer is implemented as a supervised multi-component system. `FixPlanner` and
+`FixGenerator` each instantiate their own `create_agent` instance; `FixSupervisor`
+coordinates them.
+
+#### FixPlannerAgent — read-only diagnosis
+
+- **LangChain construct:** `create_agent` with a single read-only MCP tool
+- **Tools:**
+  | Tool | Type | Purpose |
+  |---|---|---|
+  | `get-iflow` | MCP — `integration_suite` | Read iFlow XML to identify operations |
+
+#### FixGeneratorAgent — free-XML LLM fix loop
+
+- **LangChain construct:** `create_agent`
+- **Tools:**
+  | Tool | Type | Purpose |
+  |---|---|---|
+  | `validate_iflow_xml(xml_content)` | local `@tool` | 7-point structural validation; returns `FATAL:` on regressions |
+  | `record_fix_outcome(...)` | local `@tool` | Persist fix result to `EM_FIX_PATTERNS` |
+  | `web_search_sap_fix(query)` | local `@tool` | Web search for adapter/config guidance (optional) |
+  | `get-iflow` | MCP — `integration_suite` | Read current iFlow XML |
+  | `update-iflow` | MCP — `integration_suite` | Upload patched XML |
+  | `deploy-iflow` | MCP — `integration_suite` | Redeploy iFlow to runtime |
+  | `list-iflow-examples` | MCP — `integration_suite` | List reference iFlows |
+  | `get-iflow-example` | MCP — `integration_suite` | Fetch reference iFlow XML |
+  | `get_message_logs` | MCP — `integration_suite` | Read post-fix logs |
+
+**Strategy rotation (FixSupervisor):**
+
+  1. **`direct_patch`** — applies RCA `fixes[]` list directly to iFlow XML; no LLM, no network call; atomic multi-property patching in a single XML parse pass
+  2. **`component_replace`** — swaps the broken component with a validated reference iFlow component
+  3. **`structured`** — applies structured operation list (change_type / field / target_component) via XML patcher
+  4. **`free_xml`** — full FixGeneratorAgent loop: `get-iflow` → fix → `validate_iflow_xml` → `update-iflow` → `deploy-iflow`
+
+  Strategies are retried up to 3 times. Non-recoverable stages (`locked`, `timeout`,
+  `validation_blocked`) halt immediately without retry.
+
 - **Input:** `{"stage": "fixer", "incident_id": "<uuid>"}`
-- **Responsibilities:**
-  - Read incident + RCA results from DB
-  - Run the fix pipeline via `FixSupervisor`, which rotates through four strategies in priority order:
-    1. **`direct_patch`** — applies RCA-specified property changes directly to iFlow XML (no LLM, no network call); supports multiple simultaneous property changes from a single RCA pass
-    2. **`component_replace`** — swaps the broken component with a validated reference iFlow component
-    3. **`structured`** — applies structured operation list (change_type / field / target_component) via XML patcher
-    4. **`free_xml`** — full LLM agent loop: `get-iflow` → fix XML → `validate_iflow_xml` → `update-iflow` → `deploy-iflow`
-  - Strategies are retried up to 3 times; non-recoverable stages (`locked`, `timeout`, `validation_blocked`, etc.) halt immediately without retry
-  - For `free_xml`: `validate_iflow_xml` detects structural regressions and returns a `FATAL:` response; the agent stops immediately instead of burning its full tool budget
-  - Update DB: `fix_summary`, `fix_applied`, `status`
-  - Only publish to verifier if fix was successfully applied and deployed; otherwise halt
 - **Publishes to:** `default/sierra.automation/1/autofix/orbit/verifier` (success only)
 - **On failure:** Sets status `FIX_FAILED` / `FIX_FAILED_UPDATE` / `FIX_FAILED_DEPLOY`
 
@@ -323,25 +376,42 @@ binding (`VCAP_SERVICES` on CF). The app must have the Destination service insta
 | Module | Role |
 |---|---|
 | `fix_supervisor.py` | Orchestrates strategy rotation and retry logic |
-| `fix_planner.py` | Selects strategy; runs direct_patch / component_replace / structured diagnosis |
-| `fix_generator.py` | Runs the free-XML LLM agent; scales timeout by XML size (120 s / 300 s) |
-| `fix_validator.py` | Pre-validates patched XML before sending to SAP CPI |
-| `fix_applier.py` | Calls SAP MCP tools; evaluates LLM tool-call history for free-XML mode |
-| `fix_context.py` | Frozen dataclass — shared contract across all sub-components |
-| `fix_component_replacer.py` | Fetches reference iFlow and merges the target component |
-| `fix_xml_analyst.py` | Static XML component-map summary injected into the LLM prompt |
+| `fix_planner.py` | Strategy selection; direct_patch; component_replace; structured |
+| `fix_generator.py` | Free-XML LLM agent; FATAL: early-bail; timeout scaling (120 s / 300 s) |
+| `fix_validator.py` | Pre-validates patched XML before SAP CPI update |
+| `fix_applier.py` | Executes MCP calls; evaluates LLM tool-call history for free-XML mode |
+| `fix_context.py` | Frozen `FixContext` dataclass — shared pipeline contract |
+| `fix_component_replacer.py` | Reference iFlow fetch + component merge |
+| `fix_xml_analyst.py` | Static XML component-map summary injected into LLM prompts |
 
 ### Stage 5 — Verifier Agent (`/agents/verifier`) — Terminal
 
+- **LangChain construct:** `create_agent` via `build_agent()`
+- **Tools:**
+  | Tool | Type | Purpose |
+  |---|---|---|
+  | `check_iflow_runtime_status(iflow_id)` | local `@tool` | Poll CPI for `DeployState`/`Status` |
+  | all `mcp_testing` tools | MCP — `mcp_testing` | Test execution, payload replay, validation |
+  | `get-iflow` | MCP — `integration_suite` | Read iFlow for payload schema inspection |
+  | `get_message_logs` | MCP — `integration_suite` | Post-fix error verification (optional) |
 - **Input:** `{"stage": "verifier", "incident_id": "<uuid>"}`
 - **Responsibilities:**
-  - Read incident from DB
   - Check iFlow runtime status via `check_iflow_runtime_status` tool
   - For HTTP-triggered iFlows: execute a test payload via `test_iflow_with_payload`
   - For non-HTTP iFlows: runtime `Started` state is sufficient confirmation
   - Write final DB status: `FIX_VERIFIED` or `FIX_FAILED_RUNTIME`
 - **Publishes to:** Nothing — this is the terminal stage
 - **On failure:** Sets status `FIX_FAILED_RUNTIME`
+
+### ClassifierAgent (internal, no dedicated HTTP endpoint)
+
+- **LangChain construct:** `create_agent` (fallback only — primary path is rule-based, zero-latency)
+- **Tools:**
+  | Tool | Type | Purpose |
+  |---|---|---|
+  | `lookup_error_pattern(error_message)` | local `@tool` | Rule-based error classification |
+  | `search_similar_past_errors(error_signature)` | local `@tool` | Historical pattern lookup |
+  | `get-iflow` | MCP — `integration_suite` | Fetch iFlow XML for ambiguous cases (optional) |
 
 ---
 

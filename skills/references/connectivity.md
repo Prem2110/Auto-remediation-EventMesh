@@ -80,7 +80,7 @@ Requires:
 - CC configured for principal propagation
 - IDP trust between BTP and on-prem (often via STS or SAP NW SSO)
 - User identity mapping (cloud user ↔ on-prem user)
-
+`
 See `references/security.md` for failure modes.
 
 ---
