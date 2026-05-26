@@ -1,0 +1,48 @@
+# Local secrets — must NOT be pushed to BTP CF
+.env
+.env.*
+
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local log files (ephemeral on CF — logs go to stdout)
+logs/
+*.log
+
+# Lock file (CF buildpack uses requirements.txt)
+uv.lock
+.python-version
+
+# Dev tooling
+.vscode/
+.idea/
+mkdocs.yml
+site/
+docs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Frontend build artifacts (served separately or via static hosting)
+frontend/node_modules/
+frontend/.vite/
+
+# Stale entry points (main.py is the live app)
+main_legacy.py
+main_v2.py
+
+# Utility / one-off scripts (not part of the running app)
+scrape_sap_docs.py
+vectorize_docs.py

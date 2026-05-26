@@ -1,0 +1,1995 @@
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import SvgIcon from "../../components/icons/SvgIcon.tsx";
+import {
+  fetchFailedMessagesPaginated,
+  fetchMessageStatusCounts,
+  fetchMonitorMessageDetail,
+  analyzeMessage,
+  explainError,
+  generateFixPatch,
+  applyMessageFix,
+  fetchFixStatus,
+  fetchTickets,
+  updateTicket,
+  retryItsmPush,
+  fetchPendingApprovalsPaginated,
+  approveIncident,
+} from "../../services/api.ts";
+import { useServerTable, resolveItems, resolveTotal, resolveTotalPages } from "../../hooks/useServerTable.ts";
+import { Pagination } from "../../components/pagination/Pagination.tsx";
+import type {
+  IMonitorMessage,
+  IFilterState,
+  IMessageDetail,
+  IFixPatchResponse,
+  IFieldChange,
+  IFixPlanStep,
+  IHistoryTimelineEntry,
+  IErrorExplanation,
+} from "../../types/index.ts";
+import styles from "./observability.module.css";
+import EventMeshFlow from "./EventMeshFlow.tsx";
+
+/* ── Strip raw agent noise from fix_summary strings ──────────────────── */
+function cleanFixSummary(raw: string): string {
+  if (!raw) return raw;
+
+  // 1. Drop everything from __TOOLS_INVOKED__ onwards (agent metadata suffix)
+  let text = raw.replace(/\s*__TOOLS_INVOKED__.*$/s, "").trim();
+
+  // 2. If a JSON blob is embedded, prefer its "summary" field; otherwise use
+  //    the human-readable text that precedes the opening brace.
+  const braceIdx = text.indexOf("{");
+  if (braceIdx !== -1) {
+    const jsonCandidate = text.slice(braceIdx);
+    try {
+      const parsed = JSON.parse(jsonCandidate) as Record<string, unknown>;
+      const summary = (parsed.summary as string | undefined)?.trim();
+      if (summary) return summary;
+    } catch {
+      // not valid JSON — fall through
+    }
+    // Fall back: keep whatever text came before the brace
+    const before = text.slice(0, braceIdx).trim();
+    if (before) return before;
+  }
+
+  return text;
+}
+
+/* ── Top-level tab type ───────────────────────────────────────────────── */
+type MainTabKey = "errortypeguide" | "messages" | "tickets" | "approvals" | "eventmesh";
+
+/* ── Ticket and Approval interfaces ───────────────────────────────────── */
+interface Ticket {
+  ticket_id: string;
+  incident_id: string;
+  iflow_id: string;
+  error_type: string;
+  title: string;
+  description: string;
+  priority: string;
+  status: string;
+  assigned_to: string | null;
+  resolution_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  itsm_ticket_id: string | null;
+  itsm_ticket_number: string | null;
+}
+
+interface Approval {
+  incident_id: string;
+  iflow_id: string;
+  error_type: string;
+  error_message: string;
+  root_cause: string;
+  proposed_fix: string;
+  rca_confidence: number;
+  status: string;
+  created_at: string;
+  pending_since: string;
+  message_guid: string;
+}
+
+/* ── Status config ───────────────────────────────────────────────────── */
+type StatusCfg = { label: string; color: string; bg: string; dot: string };
+
+const RED:    StatusCfg = { label: "Failed",        color: "#dc2626", bg: "#fee2e2", dot: "#ef4444" };
+const GREEN:  StatusCfg = { label: "Success",       color: "#16a34a", bg: "#dcfce7", dot: "#22c55e" };
+const BLUE:   StatusCfg = { label: "Processing",    color: "#2563eb", bg: "#dbeafe", dot: "#3b82f6" };
+const AMBER:  StatusCfg = { label: "Retry",         color: "#d97706", bg: "#fef3c7", dot: "#f59e0b" };
+const PURPLE: StatusCfg = { label: "Pending",       color: "#7c3aed", bg: "#ede9fe", dot: "#8b5cf6" };
+const GREY:   StatusCfg = { label: "Unknown",       color: "#6b7280", bg: "#f3f4f6", dot: "#9ca3af" };
+
+const STATUS_CONFIG: Record<string, StatusCfg> = {
+  FAILED:     RED,
+  SUCCESS:    GREEN,
+  PROCESSING: BLUE,
+  RETRY:      AMBER,
+  DETECTED:                        { ...RED,    label: "Detected" },
+  CLASSIFIED:                      { ...BLUE,   label: "Classified" },
+  RCA_IN_PROGRESS:                 { ...BLUE,   label: "Analyzing" },
+  RCA_COMPLETE:                    { ...BLUE,   label: "RCA Done" },
+  RCA_FAILED:                      { ...RED,    label: "RCA Failed" },
+  FIX_IN_PROGRESS:                 { ...AMBER,  label: "Fixing" },
+  FIX_FAILED:                      { ...RED,    label: "Fix Failed" },
+  FIX_FAILED_UPDATE:               { ...RED,    label: "Fix Failed (Update)" },
+  FIX_FAILED_DEPLOY:               { ...RED,    label: "Fix Failed (Deploy)" },
+  FIX_FAILED_RUNTIME:              { ...RED,    label: "Fix Failed (Runtime)" },
+  FIX_APPLIED_PENDING_VERIFICATION:{ ...AMBER,  label: "Verifying" },
+  AUTO_FIXED:                      { ...GREEN,  label: "Auto-Fixed" },
+  HUMAN_FIXED:                     { ...GREEN,  label: "Fixed" },
+  FIX_VERIFIED:                    { ...GREEN,  label: "Verified" },
+  PENDING_APPROVAL:                { ...PURPLE, label: "Pending Approval" },
+  AWAITING_APPROVAL:               { ...PURPLE, label: "Awaiting Approval" },
+  TICKET_CREATED:                  { ...PURPLE, label: "Ticket Created" },
+  ARTIFACT_MISSING:                { ...GREY,   label: "Artifact Missing or Deleted" },
+  PIPELINE_ERROR:                  { ...RED,    label: "Pipeline Error" },
+  REJECTED:                        { ...GREY,   label: "Rejected" },
+  RETRIED:                         { ...GREEN,  label: "Retried" },
+};
+
+function StatusPill({ status }: { status: string }) {
+  const key = (status || "").toUpperCase();
+  const cfg = STATUS_CONFIG[key] ?? { ...GREY, label: status || "Unknown" };
+  return (
+    <span className={styles.statusPill} style={{ color: cfg.color, background: cfg.bg }}>
+      <span className={styles.statusDot} style={{ background: cfg.dot }} />
+      {cfg.label}
+    </span>
+  );
+}
+
+const TERMINAL_STATUSES = new Set([
+  "AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED", "FIX_DEPLOYED",
+  "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME",
+  "PIPELINE_ERROR", "REJECTED", "TICKET_CREATED", "ARTIFACT_MISSING",
+  "HUMAN_INITIATED_FIX",
+]);
+
+const SUCCESS_STATUSES = new Set([
+  "AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED",
+  "FIX_DEPLOYED", "HUMAN_INITIATED_FIX",
+]);
+
+/* ── Tab definitions ─────────────────────────────────────────────────── */
+type TabKey = "error" | "ai" | "properties" | "artifact" | "attachments" | "history";
+
+const TABS: { key: TabKey; label: string; tip: string }[] = [
+  { key: "error",       label: "Error Details",                       tip: "Raw error message, error type and processing timestamps from SAP CPI" },
+  { key: "ai",          label: "AI Recommendations & Suggested Fix",  tip: "AI-generated diagnosis, proposed fix and confidence score from SAP AI Core" },
+  { key: "properties",  label: "Properties",                          tip: "Message properties, adapter configuration and business context" },
+  { key: "artifact",    label: "Artifact",                            tip: "iFlow artifact metadata: version, deployment info and runtime node" },
+  { key: "attachments", label: "Attachments",                         tip: "Message payload attachments from the CPI processing log" },
+  { key: "history",     label: "History",                             tip: "Timeline of status changes for this remediation incident" },
+];
+
+const INITIAL_FILTERS: IFilterState = {
+  statuses: [], types: [], artifacts: [],
+  dateFrom: "", dateTo: "", idQuery: "", searchQuery: "",
+};
+
+const CARD_TIPS: Record<string, string> = {
+  FAILED:     "Messages in FAILED, FIX_FAILED, RCA_FAILED or DETECTED state — need attention",
+  SUCCESS:    "Messages that reached AUTO_FIXED, HUMAN_FIXED or FIX_VERIFIED state",
+  PROCESSING: "Messages currently in RCA, classification or fix-in-progress stages",
+  RETRY:      "Messages pending approval, ticket created or scheduled for retry",
+};
+
+const SUMMARY_CARD_KEYS = ["FAILED", "SUCCESS", "PROCESSING", "RETRY"] as const;
+
+const ANALYZE_STEPS = [
+  "Analyzing error pattern and stack trace...",
+  "Identifying root cause from iFlow configuration...",
+  "Searching SAP knowledge base for known fixes...",
+  "Generating fix recommendation...",
+];
+
+/* ── Error type reference data ────────────────────────────────────────── */
+type ErrorTypeMeta = { label: string; description: string; action: "AUTO_FIX" | "TICKET_CREATED" | "APPROVAL" | "RETRY"; dot: string };
+
+const ERROR_TYPE_META: Record<string, ErrorTypeMeta> = {
+  MAPPING_ERROR:        { label: "Mapping Error",        description: "Message mapping structural issue — source/target field mismatch or wrong XSD.",                          action: "AUTO_FIX",       dot: "#22c55e" },
+  DATA_VALIDATION:      { label: "Data Validation",      description: "Payload fails schema validation — missing required field or wrong data type.",                             action: "AUTO_FIX",       dot: "#22c55e" },
+  AUTH_CONFIG_ERROR:    { label: "Auth Config Error",    description: "Wrong credential alias or security material reference inside the iFlow.",                                  action: "AUTO_FIX",       dot: "#22c55e" },
+  ADAPTER_CONFIG_ERROR: { label: "Adapter Config Error", description: "Receiver adapter misconfigured — endpoint URL or protocol settings wrong (HTTP 4xx).",                    action: "AUTO_FIX",       dot: "#22c55e" },
+  GROOVY_ERROR:         { label: "Groovy Error",         description: "Groovy script step threw an uncaught exception — logic or null-reference bug.",                           action: "AUTO_FIX",       dot: "#22c55e" },
+  SCRIPT_ERROR:         { label: "Script Error",         description: "Script step execution failure — syntax error or missing variable.",                                        action: "AUTO_FIX",       dot: "#22c55e" },
+  SOAP_ERROR:           { label: "SOAP Error",           description: "SOAP adapter configuration issue — WSDL mismatch or SOAPAction header wrong.",                            action: "AUTO_FIX",       dot: "#22c55e" },
+  ODATA_ERROR:          { label: "OData Error",          description: "OData adapter error — entity set path or query options misconfigured.",                                   action: "AUTO_FIX",       dot: "#22c55e" },
+  ROUTING_ERROR:        { label: "Routing Error",        description: "Message routing misconfiguration — router condition does not match any branch.",                           action: "AUTO_FIX",       dot: "#22c55e" },
+  PROPERTY_ERROR:       { label: "Property Error",       description: "Exchange property referenced in a step does not exist or has the wrong name.",                             action: "AUTO_FIX",       dot: "#22c55e" },
+  SSL_ERROR:            { label: "SSL Error",            description: "SSL/TLS certificate error — certificate expired, untrusted CA, or wrong trust store.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  BACKEND_ERROR:        { label: "Backend Error",        description: "Backend service returned HTTP 5xx — the target system is down or returning errors.",                       action: "TICKET_CREATED", dot: "#ef4444" },
+  SFTP_ERROR:           { label: "SFTP Error",           description: "SFTP server-side issue — check directory path, permissions, and server availability.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  DUPLICATE_ERROR:      { label: "Duplicate Error",      description: "Duplicate record rejected by the target system — idempotency issue requires a source-side fix.",           action: "TICKET_CREATED", dot: "#ef4444" },
+  PAYLOAD_SIZE_ERROR:   { label: "Payload Size Error",   description: "Payload exceeds the size limit — message splitting or infrastructure change required.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  IDOC_ERROR:           { label: "IDoc Error",           description: "IDoc processing failure in SAP ERP — SAP Basis or functional team must investigate.",                      action: "TICKET_CREATED", dot: "#ef4444" },
+  RESOURCE_ERROR:       { label: "Resource Error",       description: "Out-of-memory or CPU exhaustion on the integration node — infrastructure team needed.",                    action: "TICKET_CREATED", dot: "#ef4444" },
+  AUTH_ERROR:           { label: "Auth Error",           description: "Authentication failed but cause is ambiguous — could be credentials or iFlow config.",                     action: "APPROVAL",       dot: "#f59e0b" },
+  UNKNOWN_ERROR:        { label: "Unknown Error",        description: "Error could not be classified by the rule engine or LLM — human review required before any fix.",         action: "APPROVAL",       dot: "#f59e0b" },
+  CONNECTIVITY_ERROR:   { label: "Connectivity Error",   description: "Transient network issue — connection refused or timed out. Agent retries automatically.",                  action: "RETRY",          dot: "#3b82f6" },
+};
+
+const ACTION_GROUPS: { key: ErrorTypeMeta["action"]; iconName: "lightning" | "tickets" | "user" | "loop"; label: string; desc: string; color: string; bg: string }[] = [
+  { key: "AUTO_FIX",       iconName: "lightning", label: "Auto-Fix",          desc: "Agent resolves automatically — no manual action needed",  color: "#15803d", bg: "#f0fdf4" },
+  { key: "TICKET_CREATED", iconName: "tickets",   label: "Ticket Created",    desc: "Escalated to a human team — a ticket has been created",   color: "#b91c1c", bg: "#fff5f5" },
+  { key: "APPROVAL",       iconName: "user",      label: "Awaiting Approval", desc: "Agent needs human sign-off before applying any fix",      color: "#92400e", bg: "#fffbeb" },
+  { key: "RETRY",          iconName: "loop",      label: "Retry",             desc: "Transient issue — agent retries the iFlow automatically", color: "#1e40af", bg: "#eff6ff" },
+];
+
+/* ── Error Type Guide Tab ─────────────────────────────────────────────── */
+function ErrorTypeGuideTab() {
+  const [activeGroup, setActiveGroup] = useState<ErrorTypeMeta["action"] | "ALL">("AUTO_FIX");
+  const [search, setSearch] = useState("");
+
+  const groupCounts: Record<string, number> = {};
+  for (const m of Object.values(ERROR_TYPE_META)) {
+    groupCounts[m.action] = (groupCounts[m.action] ?? 0) + 1;
+  }
+
+  const filtered = Object.entries(ERROR_TYPE_META).filter(([type, meta]) => {
+    const matchesGroup = activeGroup === "ALL" || meta.action === activeGroup;
+    const q = search.toLowerCase();
+    const matchesSearch = !q || type.toLowerCase().includes(q) || meta.label.toLowerCase().includes(q) || meta.description.toLowerCase().includes(q);
+    return matchesGroup && matchesSearch;
+  });
+
+  const activeGroupMeta = ACTION_GROUPS.find(g => g.key === activeGroup);
+
+  return (
+    <div className={styles.errorGuideTabContent}>
+      {/* Filter pills */}
+      <div className={styles.errorGuideFilters}>
+        <div className={styles.errorGuidePills}>
+          {ACTION_GROUPS.map((group) => (
+            <button
+              key={group.key}
+              className={`${styles.errorGuidePill} ${activeGroup === group.key ? styles.errorGuidePillActive : ""}`}
+              style={activeGroup === group.key ? { background: group.bg, color: group.color, borderColor: group.color } : {}}
+              onClick={() => setActiveGroup(group.key)}
+            >
+              {activeGroup === group.key && <span className={styles.errorGuidePillDot} style={{ background: group.color }} />}
+              {group.label} ({groupCounts[group.key] ?? 0})
+            </button>
+          ))}
+        </div>
+        <div className={styles.errorGuideSearch}>
+          <span className={styles.errorGuideSearchIcon}>🔍</span>
+          <input
+            className={styles.errorGuideSearchInput}
+            placeholder="search type guide"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Group description */}
+      {activeGroupMeta && (
+        <p className={styles.errorGuideGroupDesc}>{activeGroupMeta.desc}</p>
+      )}
+
+      {/* Cards grid */}
+      <div className={styles.errorGuideCardsGrid}>
+        {filtered.map(([type, meta]) => (
+          <div key={type} className={styles.errorGuideCardNew} style={{ borderLeft: `3px solid ${meta.dot}` }}>
+            <span className={styles.errorGuideCardNewLabel}>{meta.label}</span>
+            <span className={styles.errorGuideCardNewType}>{type}</span>
+            <p className={styles.errorGuideCardNewDesc}>{meta.description}</p>
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <div className={styles.errorGuideEmpty}>No error types match your search.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Field-change highlight component ────────────────────────────────── */
+function FieldChangeHighlight({ changes }: { changes: IFieldChange[] }) {
+  if (!changes?.length) return null;
+  return (
+    <div className={styles.fieldChanges}>
+      {changes.map((fc, i) => (
+        <div key={i} className={styles.fieldChangeRow}>
+          Field <span className={styles.oldField}>{fc.old_field}</span> was renamed to{" "}
+          <span className={styles.newField}>{fc.new_field}</span> but message mapping still references{" "}
+          <span className={styles.oldField}>{fc.old_field}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Confidence badge ────────────────────────────────────────────────── */
+function ConfidenceBadge({ value, label }: { value: number; label: string }) {
+  const pct = Math.round(value * 100);
+  const color = value >= 0.9 ? "#16a34a" : value >= 0.7 ? "#d97706" : "#dc2626";
+  return (
+    <div className={styles.confidenceSection}>
+      <span className={styles.confidenceVal} style={{ color }}>
+        Confidence: {value.toFixed(2)} ({label})
+      </span>
+      <div className={styles.confidenceBar}>
+        <div className={styles.confidenceFill} style={{ width: `${pct}%`, background: color }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── Fix Plan Step component ─────────────────────────────────────────── */
+function FixPlanSteps({ steps }: { steps: IFixPlanStep[] }) {
+  return (
+    <div className={styles.fixPlanSteps}>
+      {steps.map((s) => (
+        <div key={s.step_number} className={styles.fixPlanStep}>
+          <div className={styles.fixStepHeader}>
+            <span className={styles.fixStepNum}>{s.step_number}.</span>
+            <span className={styles.fixStepTitle}>{s.title}</span>
+          </div>
+          <p className={styles.fixStepDesc}>{s.description}</p>
+          {s.sub_steps?.length > 0 && (
+            <ul className={styles.fixSubSteps}>
+              {s.sub_steps.map((sub, j) => <li key={j}>{sub}</li>)}
+            </ul>
+          )}
+          {s.note && <div className={styles.fixStepNote}>{s.note}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Pipeline stage rail (shown during fix execution) ───────────────── */
+// Slot mapping (matches backend _LABEL_TO_SLOT):
+//  0=Submit  1=Get iFlow  2=Analyze  3=Patch  4=Deploy  5=Verify
+const FIX_STAGES = ["Submit", "Get iFlow", "Analyze", "Patch", "Deploy", "Verify"] as const;
+
+function PipelineStageRail({ stepIndex, totalSteps, currentStep }: { stepIndex: number; totalSteps: number; currentStep?: string }) {
+  const slots = FIX_STAGES.length;
+  const allDone = stepIndex >= totalSteps || (currentStep || "").toLowerCase().includes("complete");
+  const active = allDone
+    ? slots  // beyond last slot — all are "done"
+    : totalSteps >= slots
+      // Direct 1:1 mapping: backend emits step indices 0–5 matching the 6 visual slots
+      ? Math.min(stepIndex, slots - 1)
+      // Legacy proportional mapping for older backends
+      : Math.min(
+          stepIndex <= 0 ? 0 : Math.round((stepIndex / Math.max(totalSteps, 1)) * (slots - 1)),
+          slots - 1
+        );
+
+  // Strip internal "Agent: " prefix for display; trim ellipsis for compactness
+  const subLabel = currentStep
+    ? currentStep.replace(/^Agent:\s*/i, "").replace(/…$/, "")
+    : "";
+
+  return (
+    <div className={styles.stageRail}>
+      {FIX_STAGES.map((label, i) => {
+        const done     = i < active;
+        const isActive = !allDone && i === active;
+        return (
+          <div key={label} style={{ display: "contents" }}>
+            <div className={styles.stageStep}>
+              <div
+                className={[
+                  styles.stageDot,
+                  done     ? styles.stageDotDone   : "",
+                  isActive ? styles.stageDotActive : "",
+                ].filter(Boolean).join(" ")}
+              >
+                {done ? "✓" : i + 1}
+              </div>
+              <span
+                className={[
+                  styles.stageLabel,
+                  isActive ? styles.stageLabelActive : "",
+                  done     ? styles.stageLabelDone   : "",
+                ].filter(Boolean).join(" ")}
+              >
+                {label}
+              </span>
+              {isActive && subLabel && (
+                <span className={styles.stageLabelSub} title={subLabel}>
+                  {subLabel}
+                </span>
+              )}
+            </div>
+            {i < slots - 1 && (
+              <div className={[styles.stageConnector, done ? styles.stageConnectorDone : ""].filter(Boolean).join(" ")} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Timeline component for History tab ──────────────────────────────── */
+function Timeline({ entries }: { entries: IHistoryTimelineEntry[] }) {
+  const statusIcon: Record<string, string> = {
+    completed: "✓", failed: "✕", pending: "○",
+    in_progress: "↻", info: "i",
+  };
+  const statusColor: Record<string, string> = {
+    completed: "#16a34a", failed: "#dc2626", pending: "#d97706",
+    in_progress: "#2563eb", info: "#6b7280",
+  };
+  return (
+    <div className={styles.timeline}>
+      {entries.map((e, i) => (
+        <div key={i} className={styles.timelineEntry}>
+          <div className={styles.timelineDot} style={{ background: statusColor[e.status] || "#6b7280" }}>
+            {statusIcon[e.status] ?? "·"}
+          </div>
+          <div className={styles.timelineContent}>
+            <div className={styles.timelineStep}>{e.step}</div>
+            <div className={styles.timelineDesc}>{e.description}</div>
+            {e.timestamp && <div className={styles.timelineTs}>{e.timestamp}</div>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Ticket description parser ───────────────────────────────────────── */
+function parseTicketDescription(desc: string): Record<string, string> {
+  if (!desc) return {};
+  const markerPattern = /\b(iFlow|Error|Root cause|Proposed fix|Incident ID|Occurrence count|RCA confidence):\s*/g;
+  const parts = desc.split(markerPattern);
+  // parts: [preamble, key1, val1, key2, val2, ...]  (split with capturing group)
+  const result: Record<string, string> = {};
+  for (let i = 1; i < parts.length; i += 2) {
+    const key = parts[i].toLowerCase().replace(/\s+/g, '_');
+    const val = (parts[i + 1] || '').trim();
+    result[key] = val;
+  }
+  return result;
+}
+
+/* ── Rich text renderer ──────────────────────────────────────────────── */
+function RichText({ text }: { text: string }) {
+  if (!text) return null;
+  const lines = text.split(/\n/).filter((l) => l.trim());
+  return (
+    <div className={styles.richText}>
+      {lines.map((line, i) => {
+        const isBullet = /^[-•*]\s/.test(line);
+        const isNum    = /^\d+\.\s/.test(line);
+        if (isBullet) return (
+          <div key={i} className={styles.richBullet}>
+            <span className={styles.richBulletDot}>•</span>
+            <span>{line.replace(/^[-•*]\s/, "")}</span>
+          </div>
+        );
+        if (isNum) return (
+          <div key={i} className={styles.richBullet}>
+            <span className={styles.richBulletDot}>{line.match(/^\d+/)?.[0]}.</span>
+            <span>{line.replace(/^\d+\.\s/, "")}</span>
+          </div>
+        );
+        return <p key={i} className={styles.richPara}>{line}</p>;
+      })}
+    </div>
+  );
+}
+
+/* ── AI Error Explanation card ────────────────────────────────────────── */
+const CATEGORY_COLORS: Record<string, { color: string; bg: string }> = {
+  HTTP_ERROR:          { color: "#b91c1c", bg: "#fee2e2" },
+  MAPPING_ERROR:       { color: "#92400e", bg: "#fef3c7" },
+  CONNECTIVITY_ERROR:  { color: "#1e40af", bg: "#dbeafe" },
+  AUTH_ERROR:          { color: "#6b21a8", bg: "#f3e8ff" },
+  DATA_ERROR:          { color: "#92400e", bg: "#fef3c7" },
+  TIMEOUT_ERROR:       { color: "#9a3412", bg: "#ffedd5" },
+  CONFIG_ERROR:        { color: "#1e40af", bg: "#dbeafe" },
+  RUNTIME_ERROR:       { color: "#b91c1c", bg: "#fee2e2" },
+};
+
+function ErrorExplanationCard({ exp }: { exp: IErrorExplanation }) {
+  const catStyle = CATEGORY_COLORS[exp.error_category] ?? { color: "#374151", bg: "#f3f4f6" };
+  return (
+    <div className={styles.explainCard}>
+      <div className={styles.explainCardHeader}>
+        <span className={styles.explainSparkle}><SvgIcon name="rca" size={15} /></span>
+        <span className={styles.explainCardTitle}>AI Error Analysis</span>
+        <span className={styles.explainCategoryBadge} style={{ color: catStyle.color, background: catStyle.bg }}>
+          {exp.category_label || exp.error_category}
+        </span>
+      </div>
+
+      {exp.summary && (
+        <div className={styles.explainSummaryBox}>
+          <p className={styles.explainSummaryText}>{exp.summary}</p>
+        </div>
+      )}
+
+      {exp.what_happened && (
+        <div className={styles.explainSection}>
+          <div className={styles.explainSectionLabel}>What Happened</div>
+          <p className={styles.explainSectionBody}>{exp.what_happened}</p>
+        </div>
+      )}
+
+      {exp.likely_causes?.length > 0 && (
+        <div className={styles.explainSection}>
+          <div className={styles.explainSectionLabel}>Likely Causes</div>
+          <ul className={styles.explainList}>
+            {exp.likely_causes.map((c, i) => <li key={i}>{c}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {exp.recommended_actions?.length > 0 && (
+        <div className={styles.explainSection}>
+          <div className={styles.explainSectionLabel}>Recommended Actions</div>
+          <ol className={styles.explainList}>
+            {exp.recommended_actions.map((a, i) => <li key={i}>{a}</li>)}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+   ════════════════════════════════════════════════════════════════════════ */
+export default function Observability() {
+  // Main tab state
+  const [mainTab, setMainTab] = useState<MainTabKey>("messages");
+  const [filters, setFilters] = useState<IFilterState>(INITIAL_FILTERS);
+  const [selectedGuid, setSelectedGuid] = useState<string | null>(null);
+  const [selectedMsg, setSelectedMsg] = useState<IMonitorMessage | null>(null);
+  const [detail, setDetail] = useState<IMessageDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>("error");
+
+  // Error explanation state
+  const [errorExplain, setErrorExplain]           = useState<IErrorExplanation | null>(null);
+  const [errorExplainLoading, setErrorExplainLoading] = useState(false);
+  const [errorExplainErr, setErrorExplainErr]     = useState<string | null>(null);
+
+  // Fix-related state
+  const [fixPatch, setFixPatch] = useState<IFixPatchResponse | null>(null);
+  const [fixPatchLoading, setFixPatchLoading] = useState(false);
+  const [fixState, setFixState] = useState<"idle" | "loading" | "success" | "error" | "skipped" | "deployed_unverified">("idle");
+  const [fixResult, setFixResult] = useState<string>("");
+  const [fixNextSteps, setFixNextSteps] = useState<string | null>(null);
+  const [fixProgress, setFixProgress] = useState<{
+    currentStep: string; stepIndex: number; totalSteps: number; stepsDone: string[];
+  } | null>(null);
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [analyzeStep, setAnalyzeStep] = useState(0);
+
+  // Approval action feedback
+  const [approvalActionError, setApprovalActionError] = useState<string | null>(null);
+  const [bulkActionLoading, setBulkActionLoading] = useState<"approving" | "rejecting" | null>(null);
+
+  // Ticket resolution + pagination state
+  const [resolvingTicketId,  setResolvingTicketId]  = useState<string | null>(null);
+  const [confirmingTicketId, setConfirmingTicketId] = useState<string | null>(null);
+  const [resolveNotes,       setResolveNotes]       = useState<Record<string, string>>({});
+  const [ticketActionError,  setTicketActionError]  = useState<string | null>(null);
+  const [retryingItsmId, setRetryingItsmId] = useState<string | null>(null);
+
+  // ── Messages tab: server-driven ──
+  const msgTable = useServerTable<IMonitorMessage>("monitor-messages", {
+    defaultPageSize: 10,
+    defaultSortBy:   "created_at",
+  });
+  const [activeStatusGroup, setActiveStatusGroup] = useState<string | null>(null);
+
+  const { data: msgData, isLoading: msgLoading, isFetching: msgFetching, refetch: refetchMessages } = useQuery({
+    queryKey: [...msgTable.queryKey, activeStatusGroup, filters.idQuery],
+    queryFn:  () => fetchFailedMessagesPaginated(
+      msgTable.state.page,
+      msgTable.state.pageSize,
+      activeStatusGroup ?? undefined,
+      undefined,
+      filters.idQuery || undefined,
+      undefined,
+      msgTable.state.sortBy,
+      msgTable.state.sortOrder,
+    ),
+    refetchInterval: 30_000,
+    staleTime:       20_000,
+    enabled:         mainTab === "messages",
+  });
+
+  const _msgRaw      = (msgData as unknown ?? {}) as Record<string, unknown>;
+  const messages     = resolveItems(_msgRaw) as IMonitorMessage[];
+  const msgTotal     = resolveTotal(_msgRaw);
+  const msgTotalPages = resolveTotalPages(_msgRaw, msgTable.state.pageSize);
+
+  const { data: statusCounts } = useQuery({
+    queryKey: ["message-status-counts"],
+    queryFn:  fetchMessageStatusCounts,
+    refetchInterval: 30_000,
+    staleTime:       20_000,
+    enabled:         mainTab === "messages",
+  });
+
+  // Reset to page 1 when filter or search changes
+  useEffect(() => { msgTable.setPage(1); }, [filters.idQuery, activeStatusGroup]);
+
+  // ── Tickets: server-driven table ──
+  const ticketTable = useServerTable("escalation-tickets", { defaultPageSize: 10, defaultSortBy: "created_at" });
+  const { data: ticketsData, isLoading: ticketsLoading, refetch: refetchTickets } = useQuery({
+    queryKey: ticketTable.queryKey,
+    queryFn:  () => fetchTickets(
+      ticketTable.state.page,
+      ticketTable.state.pageSize,
+      ticketTable.state.sortBy,
+      ticketTable.state.sortOrder,
+    ),
+    refetchInterval: 30_000,
+    enabled: mainTab === "tickets",
+  });
+
+  // ── Approvals: server-driven table ──
+  const approvalTable = useServerTable("pending-approvals", { defaultPageSize: 10, defaultSortBy: "created_at" });
+  const { data: approvalsData, isLoading: approvalsLoading, refetch: refetchApprovals } = useQuery({
+    queryKey: approvalTable.queryKey,
+    queryFn:  () => fetchPendingApprovalsPaginated(
+      approvalTable.state.page,
+      approvalTable.state.pageSize,
+      approvalTable.state.sortBy,
+      approvalTable.state.sortOrder,
+    ),
+    refetchInterval: 30_000,
+    enabled: mainTab === "approvals",
+  });
+
+  // Tickets — server-driven
+  const ticketsRaw       = ticketsData as Record<string, unknown> | undefined;
+  const tickets          = (resolveItems(ticketsRaw ?? {})) as Ticket[];
+  const ticketsTotal     = resolveTotal(ticketsRaw ?? {});
+  const ticketTotalPages = resolveTotalPages(ticketsRaw ?? {}, ticketTable.state.pageSize);
+
+  // Approvals — server-driven
+  const approvalsRaw       = approvalsData as Record<string, unknown> | undefined;
+  const approvals          = (resolveItems(approvalsRaw ?? {})) as Approval[];
+  const approvalsTotal     = resolveTotal(approvalsRaw ?? {});
+  const approvalTotalPages = resolveTotalPages(approvalsRaw ?? {}, approvalTable.state.pageSize);
+  const pagedApprovals     = approvals; // server already sliced
+
+  /* ── Approval actions ──────────────────────────────────────────────── */
+  const handleApprove = useCallback(async (incidentId: string) => {
+    setApprovalActionError(null);
+    try {
+      await approveIncident(incidentId, true, "Approved via UI");
+      refetchApprovals();
+    } catch {
+      setApprovalActionError("Approval failed — network error. Please check your connection.");
+    }
+  }, [refetchApprovals]);
+
+  const handleReject = useCallback(async (incidentId: string) => {
+    setApprovalActionError(null);
+    try {
+      await approveIncident(incidentId, false, "Rejected via UI");
+      refetchApprovals();
+    } catch {
+      setApprovalActionError("Rejection failed — network error. Please check your connection.");
+    }
+  }, [refetchApprovals]);
+
+  const handleApproveAll = useCallback(async () => {
+    const pending = (approvalsData?.pending || []) as Approval[];
+    const targets = pending.filter((a) => a.status === "AWAITING_APPROVAL");
+    if (!targets.length) return;
+    setApprovalActionError(null);
+    setBulkActionLoading("approving");
+    const errors: string[] = [];
+    await Promise.allSettled(
+      targets.map((a) =>
+        approveIncident(a.incident_id, true, "Bulk approved via UI").catch(() => {
+          errors.push(a.incident_id);
+        })
+      )
+    );
+    setBulkActionLoading(null);
+    if (errors.length) setApprovalActionError(`${errors.length} approval(s) failed. Others succeeded.`);
+    refetchApprovals();
+  }, [approvalsData, refetchApprovals]);
+
+  const handleRejectAll = useCallback(async () => {
+    const pending = (approvalsData?.pending || []) as Approval[];
+    const targets = pending.filter((a) => a.status === "AWAITING_APPROVAL");
+    if (!targets.length) return;
+    setApprovalActionError(null);
+    setBulkActionLoading("rejecting");
+    const errors: string[] = [];
+    await Promise.allSettled(
+      targets.map((a) =>
+        approveIncident(a.incident_id, false, "Bulk rejected via UI").catch(() => {
+          errors.push(a.incident_id);
+        })
+      )
+    );
+    setBulkActionLoading(null);
+    if (errors.length) setApprovalActionError(`${errors.length} rejection(s) failed. Others succeeded.`);
+    refetchApprovals();
+  }, [approvalsData, refetchApprovals]);
+
+  /* ── Mark ticket resolved ─────────────────────────────────────────── */
+  const handleMarkResolved = useCallback(async (ticketId: string, currentStatus: string, notes: string) => {
+    setConfirmingTicketId(null);
+    setResolvingTicketId(ticketId);
+    setTicketActionError(null);
+    try {
+      if (currentStatus.toUpperCase() === "OPEN") {
+        await updateTicket(ticketId, { status: "IN_PROGRESS" });
+      }
+      await updateTicket(ticketId, { status: "RESOLVED", resolution_notes: notes.trim() || undefined });
+      setResolveNotes((prev) => { const n = { ...prev }; delete n[ticketId]; return n; });
+      ticketTable.setPage(1);
+      refetchTickets();
+    } catch (e) {
+      setTicketActionError(e instanceof Error ? e.message : "Failed to update ticket");
+    } finally {
+      setResolvingTicketId(null);
+    }
+  }, [refetchTickets]);
+
+  /* ── Select a message and load full detail ─────────────────────────── */
+  const handleSelect = useCallback(async (msg: IMonitorMessage) => {
+    const guid = msg.message_guid;
+    if (!guid) return;
+    // Cancel any running fix poll for the previous message
+    pollAbortRef.current.cancelled = true;
+    setSelectedGuid(guid);
+    setSelectedMsg(msg);
+    setDetail(null);
+    setFixPatch(null);
+    setFixState("idle");
+    setFixResult("");
+    setFixNextSteps(null);
+    setFixProgress(null);
+    setActiveTab("error");
+    setErrorExplain(null);
+    setErrorExplainLoading(false);
+    setErrorExplainErr(null);
+    setDetailLoading(true);
+    try {
+      const d = await fetchMonitorMessageDetail(guid) as IMessageDetail;
+      setDetail(d);
+
+      // Restore previously generated fix plan from DB
+      if (d.ai_recommendation?.fix_patch) {
+        setFixPatch(d.ai_recommendation.fix_patch);
+      }
+
+      // Restore fix outcome state from incident status
+      const incStatus = (d.incident_status || "").toUpperCase();
+      const incidentId = d.incident_id || "";
+      if (incStatus === "HUMAN_INITIATED_FIX") {
+        setFixState("skipped");
+        setFixResult(d.ai_recommendation?.fix_summary || "iFlow was already running — no changes were applied.");
+      } else if (incStatus === "FIX_DEPLOYED") {
+        setFixState("deployed_unverified");
+        setFixResult(d.ai_recommendation?.fix_summary || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
+        if (incidentId) fetchFixStatus(incidentId).then((fs: unknown) => {
+          const r = fs as Record<string, unknown>;
+          if (r?.next_steps) setFixNextSteps(r.next_steps as string);
+        }).catch(() => undefined);
+      } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(incStatus)) {
+        setFixState("success");
+        setFixResult(d.ai_recommendation?.fix_summary || "Fix applied and deployed successfully.");
+        if (incidentId) fetchFixStatus(incidentId).then((fs: unknown) => {
+          const r = fs as Record<string, unknown>;
+          if (r?.next_steps) setFixNextSteps(r.next_steps as string);
+        }).catch(() => undefined);
+      } else if (["FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME"].includes(incStatus)) {
+        setFixState("error");
+        setFixResult(d.ai_recommendation?.fix_summary || "Fix failed — see history for details.");
+      }
+
+      if (d.ai_recommendation?.diagnosis) {
+        setActiveTab("ai");
+      }
+    } catch {
+      // Keep previous state
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  /* ── Run / re-run AI analysis ──────────────────────────────────────── */
+  const handleAnalyze = useCallback(async () => {
+    if (!selectedGuid) return;
+    setAnalyzeLoading(true);
+    try {
+      await analyzeMessage(selectedGuid);
+      const d = await fetchMonitorMessageDetail(selectedGuid) as IMessageDetail;
+      setDetail(d);
+      setActiveTab("ai");
+    } catch {
+      // handled
+    } finally {
+      setAnalyzeLoading(false);
+    }
+  }, [selectedGuid]);
+
+  /* ── Explain error ─────────────────────────────────────────────────── */
+  const handleExplainError = useCallback(async () => {
+    if (!selectedGuid) return;
+    setErrorExplainLoading(true);
+    setErrorExplainErr(null);
+    try {
+      const exp = await explainError(selectedGuid) as IErrorExplanation;
+      setErrorExplain(exp);
+    } catch (e) {
+      setErrorExplainErr(e instanceof Error ? e.message : "Failed to explain error");
+    } finally {
+      setErrorExplainLoading(false);
+    }
+  }, [selectedGuid]);
+
+  /* ── Generate fix patch ────────────────────────────────────────────── */
+  const handleGenerateFixPatch = useCallback(async () => {
+    if (!selectedGuid) return;
+    setFixPatchLoading(true);
+    try {
+      const patch = await generateFixPatch(selectedGuid) as IFixPatchResponse;
+      setFixPatch(patch);
+    } catch {
+      // handled
+    } finally {
+      setFixPatchLoading(false);
+    }
+  }, [selectedGuid]);
+
+  /* ── Live fix polling (shared by handleApplyFix and auto-resume) ──── */
+  const pollAbortRef = useRef<{ cancelled: boolean }>({ cancelled: false });
+
+  const startFixPolling = useCallback(async (incidentId: string) => {
+    let resolved = false;
+    for (let i = 0; i < 120; i++) {
+      if (pollAbortRef.current.cancelled) break;
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const s = await fetchFixStatus(incidentId) as Record<string, unknown>;
+        const st = (s.status as string || "").toUpperCase();
+
+        // Update the live step progress from the backend
+        setFixProgress({
+          currentStep: (s.current_step as string) || st,
+          stepIndex:   (s.step_index as number)  ?? 1,
+          totalSteps:  (s.total_steps as number) || 6,
+          stepsDone:   (s.steps_done as string[]) || [],
+        });
+
+        const stepLabel = ((s.current_step as string) || "").toLowerCase();
+        const stepImpliesDone = stepLabel.includes("complete") || stepLabel.includes("applied and") || stepLabel.includes("deployed successfully");
+        if (TERMINAL_STATUSES.has(st) || stepImpliesDone) {
+          resolved = true;
+          setFixProgress(null);
+          if (st === "HUMAN_INITIATED_FIX") {
+            setFixState("skipped");
+            setFixResult((s.fix_summary as string) || "iFlow was already running — no changes were applied.");
+          } else if (st === "FIX_DEPLOYED") {
+            setFixState("deployed_unverified");
+            setFixResult((s.fix_summary as string) || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
+            setFixNextSteps((s.next_steps as string) || null);
+          } else if (SUCCESS_STATUSES.has(st) || stepImpliesDone) {
+            setFixState("success");
+            setFixResult((s.fix_summary as string) || "Fix applied and deployed successfully.");
+            setFixNextSteps((s.next_steps as string) || null);
+          } else {
+            setFixState("error");
+            setFixResult((s.fix_summary as string) || `Fix failed (${st}).`);
+          }
+          break;
+        }
+      } catch {
+        // keep polling — transient network errors
+      }
+    }
+    if (!resolved && !pollAbortRef.current.cancelled) {
+      setFixProgress(null);
+      setFixState("error");
+      setFixResult("Fix is taking longer than expected. Click 'Check Status' to poll again, or reload the message.");
+    }
+  }, []);
+
+  /* ── Apply fix ──────────────────────────────────────────────────────── */
+  const handleApplyFix = useCallback(async () => {
+    if (!selectedGuid) return;
+    // Human explicitly clicking Apply Fix always bypasses the "Started" pre-flight guard.
+    // That guard only makes sense for autonomous AI runs — not deliberate human actions.
+    const isForce = true;
+    setFixState("loading");
+    setFixResult("");
+    setFixProgress({ currentStep: "Submitting fix request…", stepIndex: 0, totalSteps: 6, stepsDone: [] });
+    pollAbortRef.current.cancelled = false;
+    try {
+      const proposedFix =
+        fixPatch?.summary_structured?.proposed_fix ||
+        detail?.ai_recommendation?.proposed_fix ||
+        undefined;
+      const result = await applyMessageFix(selectedGuid, "user", proposedFix, isForce) as Record<string, unknown>;
+      const incidentId = (result.incident_id as string) || detail?.incident_id || "";
+
+      const syncStatus = (result.status as string || "").toUpperCase();
+      const syncFixApplied = result.fix_applied === true;
+      const syncDeploy = result.deploy_success === true;
+
+      if (syncStatus === "HUMAN_INITIATED_FIX") {
+        setFixProgress(null);
+        setFixState("skipped");
+        setFixResult((result.summary as string) || "iFlow was already running — no changes were applied.");
+      } else if (syncStatus === "FIX_DEPLOYED") {
+        setFixProgress(null);
+        setFixState("deployed_unverified");
+        setFixResult((result.summary as string) || "Fix deployed but XML validation had warnings — verify the iFlow manually.");
+        setFixNextSteps((result.next_steps as string) || null);
+      } else if (SUCCESS_STATUSES.has(syncStatus) || (syncFixApplied && syncDeploy)) {
+        setFixProgress(null);
+        setFixState("success");
+        setFixResult((result.summary as string) || "Fix applied and deployed successfully.");
+        setFixNextSteps((result.next_steps as string) || null);
+      } else if (syncStatus === "FIX_FAILED") {
+        setFixProgress(null);
+        setFixState("error");
+        setFixResult((result.summary as string) || "Fix failed.");
+      } else if (incidentId) {
+        await startFixPolling(incidentId);
+      } else {
+        setFixProgress(null);
+        setFixState("success");
+        setFixResult((result.message as string) || "Fix queued. Refresh later for status.");
+      }
+
+      try {
+        const d = await fetchMonitorMessageDetail(selectedGuid) as IMessageDetail;
+        setDetail(d);
+      } catch { /* ignore */ }
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : "Fix failed";
+      // 409 = another session already triggered the fix — connect to live progress
+      if (errMsg.includes("409") || errMsg.toLowerCase().includes("already in progress")) {
+        const incidentId = detail?.incident_id || "";
+        if (incidentId) {
+          setFixResult("");
+          setFixProgress({ currentStep: "Fix already in progress — connecting…", stepIndex: 0, totalSteps: 6, stepsDone: [] });
+          await startFixPolling(incidentId);
+        } else {
+          setFixState("error");
+          setFixProgress(null);
+          setFixResult("Fix already in progress by another user. Reload this message to see status.");
+        }
+      } else {
+        setFixState("error");
+        setFixProgress(null);
+        setFixResult(errMsg);
+      }
+    }
+  }, [selectedGuid, fixPatch, detail, startFixPolling]);
+
+  /* ── Manual status re-check (after timeout or user request) ────────── */
+  const handleCheckStatus = useCallback(async () => {
+    const incidentId = detail?.incident_id || "";
+    if (!incidentId) return;
+    setFixState("loading");
+    setFixResult("");
+    setFixProgress({ currentStep: "Reconnecting to fix pipeline…", stepIndex: 0, totalSteps: 6, stepsDone: [] });
+    pollAbortRef.current.cancelled = false;
+    await startFixPolling(incidentId);
+  }, [detail, startFixPolling]);
+
+  /* ── Auto-resume fix state from DB on message select ───────────────── */
+  useEffect(() => {
+    if (!detail) return;
+    const st = (detail.status || "").toUpperCase();
+    const incidentId = detail.incident_id || "";
+
+    // Only auto-restore if the user hasn't manually triggered anything this session
+    if (fixState !== "idle") return;
+
+    if (["FIX_IN_PROGRESS", "RCA_IN_PROGRESS", "FIX_APPLIED_PENDING_VERIFICATION"].includes(st)) {
+      const stepLabel =
+        st === "RCA_IN_PROGRESS"                   ? "Analyzing root cause…" :
+        st === "FIX_APPLIED_PENDING_VERIFICATION"  ? "Verifying fix…" :
+                                                     "Fix in progress…";
+      setFixState("loading");
+      setFixProgress({ currentStep: stepLabel, stepIndex: 0, totalSteps: 6, stepsDone: [] });
+      if (incidentId) {
+        // Full live polling
+        pollAbortRef.current.cancelled = false;
+        startFixPolling(incidentId);
+      }
+      // No incidentId: still show the loading indicator; user can see the state
+    } else if (["AUTO_FIXED", "HUMAN_FIXED", "FIX_VERIFIED", "RETRIED"].includes(st)) {
+      setFixState("success");
+      setFixResult(detail.ai_recommendation?.fix_summary || "Fix applied and deployed.");
+      if (incidentId) fetchFixStatus(incidentId).then((fs: unknown) => {
+        const r = fs as Record<string, unknown>;
+        if (r?.next_steps) setFixNextSteps(r.next_steps as string);
+      }).catch(() => undefined);
+    } else if (["FIX_FAILED", "PIPELINE_ERROR"].includes(st)) {
+      setFixState("error");
+      setFixResult(detail.ai_recommendation?.fix_summary || "Fix failed.");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail]);
+
+  useEffect(() => {
+    return () => { pollAbortRef.current.cancelled = true; };
+  }, [selectedGuid]);
+
+  useEffect(() => {
+    if (!analyzeLoading) { setAnalyzeStep(0); return; }
+    const t = setInterval(() => setAnalyzeStep(s => (s + 1) % ANALYZE_STEPS.length), 1800);
+    return () => clearInterval(t);
+  }, [analyzeLoading]);
+
+  /* ════════════════════════════════════════════════════════════════════
+     RENDER
+     ════════════════════════════════════════════════════════════════════ */
+  return (
+    <div className={styles.page}>
+
+      {/* ── Page Header ── */}
+      <div className={styles.pageHeader}>
+        <h2 className={styles.pageTitle}>Observability</h2>
+      </div>
+
+      {/* ── Main Tab Navigation ── */}
+      <div className={styles.mainTabBar}>
+        <button
+          className={`${styles.mainTab} ${mainTab === "messages" ? styles.mainTabActive : ""}`}
+          onClick={() => setMainTab("messages")}
+        >
+          Messages
+        </button>
+        <button
+          className={`${styles.mainTab} ${mainTab === "tickets" ? styles.mainTabActive : ""}`}
+          onClick={() => setMainTab("tickets")}
+        >
+          Tickets
+        </button>
+        <button
+          className={`${styles.mainTab} ${mainTab === "approvals" ? styles.mainTabActive : ""}`}
+          onClick={() => setMainTab("approvals")}
+        >
+          Approvals
+        </button>
+        <button
+          className={`${styles.mainTab} ${mainTab === "errortypeguide" ? styles.mainTabActive : ""}`}
+          onClick={() => setMainTab("errortypeguide")}
+        >
+          Error Type Guide
+        </button>
+      </div>
+
+      {/* ══ ERROR TYPE GUIDE TAB ══ */}
+      {mainTab === "errortypeguide" && (
+        <div className={styles.errorGuideTab}>
+          <ErrorTypeGuideTab />
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          MESSAGES TAB
+          ══════════════════════════════════════════════════════════════════ */}
+      <div style={{ display: mainTab === "messages" ? "contents" : "none" }}>
+          {/* ── Summary cards ── */}
+          <div className={styles.summaryRow}>
+            {SUMMARY_CARD_KEYS.map((k) => {
+              const cfg = STATUS_CONFIG[k];
+              const isActive = activeStatusGroup === k;
+              const count = statusCounts ? statusCounts[k as keyof typeof statusCounts] : undefined;
+              return (
+                <div
+                  key={k}
+                  className={`${styles.summaryCard} ${isActive ? styles.summaryCardActive : ""}`}
+                  style={{ borderTop: `3px solid ${cfg.dot}` }}
+                  onClick={() => setActiveStatusGroup(isActive ? null : k)}
+                  data-tip={CARD_TIPS[k]}
+                >
+                  <span className={styles.summaryCount} style={{ color: cfg.color }}>
+                    {count !== undefined ? count.toLocaleString() : "–"}
+                  </span>
+                  <span className={styles.summaryLabel} style={{ color: cfg.color }}>{cfg.label}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Active filter chip */}
+          {activeStatusGroup && (
+            <div className={styles.chipRow}>
+              {(() => {
+                const cfg = STATUS_CONFIG[activeStatusGroup];
+                return (
+                  <span className={styles.filterChip} style={{ background: cfg.bg, color: cfg.color, borderColor: cfg.dot }}>
+                    {cfg.label}
+                    <button onClick={() => setActiveStatusGroup(null)} data-tip="Remove this filter">x</button>
+                  </span>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* ── Two-column layout ── */}
+          <div className={styles.columns}>
+            {/* Message list */}
+            <div className={`${styles.listCol} ${selectedGuid ? styles.listColNarrow : ""}`}>
+              <div className={styles.listColHeader}>
+                <span className={styles.listColTitle}>Integration Artifact</span>
+                <div className={styles.listColControls}>
+                  <div className={styles.listColSearch}>
+                    <span className={styles.listColSearchIcon}>🔍</span>
+                    <input
+                      className={styles.listColSearchInput}
+                      placeholder="search message ID / iflow name"
+                      value={filters.idQuery}
+                      onChange={(e) => setFilters((f) => ({ ...f, idQuery: e.target.value }))}
+                    />
+                  </div>
+                  <select
+                    className={styles.listColStatusSelect}
+                    value={activeStatusGroup ?? ""}
+                    onChange={(e) => setActiveStatusGroup(e.target.value || null)}
+                  >
+                    <option value="">All Status</option>
+                    <option value="FAILED">Failed</option>
+                    <option value="SUCCESS">Success</option>
+                    <option value="PROCESSING">Processing</option>
+                    <option value="RETRY">Retry / Pending</option>
+                  </select>
+                  <button className={styles.listColRefreshBtn} onClick={() => refetchMessages()} disabled={msgFetching}>
+                    Refresh
+                  </button>
+                  <button className={styles.listColResetBtn} onClick={() => { setActiveStatusGroup(null); setFilters(INITIAL_FILTERS); msgTable.setPage(1); }}>Reset</button>
+                </div>
+              </div>
+              {msgLoading ? (
+                <div className={styles.messageList}>
+                  {Array.from({ length: msgTable.state.pageSize }).map((_, i) => (
+                    <div key={i} className={styles.skeletonRow}>
+                      <div className={styles.skeletonName} />
+                      <div className={styles.skeletonBadge} />
+                    </div>
+                  ))}
+                </div>
+              ) : messages.length === 0 ? (
+                <div className={styles.msgEmptyState}>
+                  <img src="/empty-messages.svg" alt="" className={styles.msgEmptyImg} draggable={false} />
+                  <p className={styles.msgEmptyTitle}>No messages found</p>
+                  <p className={styles.msgEmptyHint}>Errors detected by the autonomous monitor will appear here.</p>
+                </div>
+              ) : (
+                <div className={`${styles.messageList} ${msgFetching && !msgLoading ? styles.messageListFetching : ""}`}>
+                  {messages.map((msg, i) => {
+                    const cfg = STATUS_CONFIG[msg.status?.toUpperCase()] ?? STATUS_CONFIG.FAILED;
+                    const isSelected = selectedGuid !== null && selectedGuid === msg.message_guid;
+                    return (
+                      <div
+                        key={msg.message_guid || i}
+                        className={`${styles.messageRow} ${isSelected ? styles.messageRowSelected : ""}`}
+                        style={{ borderLeft: `3px solid ${isSelected ? cfg.dot : "transparent"}` }}
+                        onClick={() => handleSelect(msg)}
+                      >
+                        <div className={styles.messageMain}>
+                          <span className={styles.messageName}>
+                            {msg.iflow_display || msg.title || "Unknown"}
+                          </span>
+                          <StatusPill status={msg.status} />
+                        </div>
+                        <div className={styles.messageMeta}>
+                          <span className={styles.metaItem}>{msg.log_start || msg.updatedAt || "--"}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── Refetch indicator ── */}
+              {msgFetching && !msgLoading && (
+                <div className={styles.refetchBadge}>
+                  <span className={styles.refetchSpinner} /> Updating…
+                </div>
+              )}
+
+              {/* ── Server-side pagination — hidden when detail panel is open ── */}
+              {!msgLoading && msgTotal > 0 && !selectedGuid && (
+                <Pagination
+                  currentPage={msgTable.state.page}
+                  totalPages={msgTotalPages}
+                  pageSize={msgTable.state.pageSize}
+                  totalCount={msgTotal}
+                  hasNextPage={msgTable.state.page < msgTotalPages}
+                  hasPreviousPage={msgTable.state.page > 1}
+                  onPageChange={msgTable.setPage}
+                  onPageSizeChange={msgTable.setPageSize}
+                  label="messages"
+                />
+              )}
+            </div>
+
+            {/* ── Detail panel ── */}
+            {selectedGuid && (
+              <div className={styles.detailPanel}>
+                {/* Header */}
+                <div className={styles.detailHeader}>
+                  <div className={styles.detailHeaderLeft}>
+                    <h3 className={styles.detailTitle} title={detail?.iflow_display || selectedMsg?.iflow_display || selectedGuid || undefined}>
+                      {detail?.iflow_display || selectedMsg?.iflow_display || selectedGuid}
+                    </h3>
+                    <StatusPill status={detail?.status || selectedMsg?.status || "UNKNOWN"} />
+                    {detail?.last_updated && (
+                      <span className={styles.detailUpdated}>
+                        Last Updated at: {detail.last_updated}
+                      </span>
+                    )}
+                  </div>
+                  <div className={styles.detailHeaderRight}>
+                    <button
+                      className={styles.recheckBtn}
+                      onClick={handleAnalyze}
+                      disabled={analyzeLoading}
+                      data-tip="Re-run AI analysis — useful after applying a fix to get fresh diagnosis and recommendations"
+                    >
+                      {analyzeLoading ? "Analyzing..." : "Recheck"}
+                    </button>
+                    <button className={styles.closeBtn} onClick={() => { setSelectedGuid(null); setSelectedMsg(null); setDetail(null); }} data-tip="Close detail panel">x</button>
+                  </div>
+                </div>
+
+                {/* Tab bar */}
+                <div className={styles.tabBar}>
+                  {TABS.map((tab) => (
+                    <button
+                      key={tab.key}
+                      className={`${styles.tab} ${activeTab === tab.key ? styles.tabActive : ""}`}
+                      onClick={() => setActiveTab(tab.key)}
+                      data-tip={tab.tip}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Tab content */}
+                {detailLoading ? (
+                  <div className={styles.centered}>
+                    <div className={styles.spinner} />
+                    <span>Loading details...</span>
+                  </div>
+                ) : detail ? (
+                  <div className={styles.detailBody}>
+                    {/* ─── Error Details tab ─── */}
+                    {activeTab === "error" && (
+                      <div className={styles.tabContent}>
+                        <div className={styles.errorBox}>
+                          <code className={styles.errorCode}>
+                            {detail.error_details.error_message || detail.error_details.raw_error_text || "No error details available"}
+                          </code>
+                        </div>
+                        {detail.error_details.error_type && (
+                          <div className={styles.detailMeta}>
+                            <span className={styles.metaLabel}>Error Type:</span>
+                            <span className={styles.metaValue}>{detail.error_details.error_type}</span>
+                          </div>
+                        )}
+                        {detail.error_details.log_start && (
+                          <div className={styles.detailMeta}>
+                            <span className={styles.metaLabel}>Processing Start:</span>
+                            <span className={styles.metaValue}>{detail.error_details.log_start}</span>
+                          </div>
+                        )}
+                        {detail.error_details.log_end && (
+                          <div className={styles.detailMeta}>
+                            <span className={styles.metaLabel}>Processing End:</span>
+                            <span className={styles.metaValue}>{detail.error_details.log_end}</span>
+                          </div>
+                        )}
+
+                        {/* ── AI Error Explanation ── */}
+                        <div className={styles.explainTrigger}>
+                          {errorExplain ? (
+                            <ErrorExplanationCard exp={errorExplain} />
+                          ) : (
+                            <button
+                              className={styles.explainBtn}
+                              onClick={handleExplainError}
+                              disabled={errorExplainLoading}
+                              data-tip="Ask SAP AI Core to explain this error in plain English with likely causes and recommended actions"
+                            >
+                              {errorExplainLoading
+                                ? <><span className={styles.explainSpinner} /> Analyzing error...</>
+                                : <><span className={styles.explainSparkle}><SvgIcon name="rca" size={14} /></span> Explain with AI</>
+                              }
+                            </button>
+                          )}
+                          {errorExplainErr && (
+                            <div className={styles.explainErrText}>{errorExplainErr}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ─── AI Recommendations & Suggested Fix tab ─── */}
+                    {activeTab === "ai" && (
+                      <div className={styles.tabContent}>
+                        {analyzeLoading ? (
+                          <div className={styles.aiThinkingLoader}>
+                            <div className={styles.aiThinkingHeader}>
+                              <div className={styles.aiThinkingAvatar}>AI</div>
+                              <span className={styles.aiThinkingTitle}>SAP AI Core</span>
+                              <div className={styles.aiThinkingDots}>
+                                <span /><span /><span />
+                              </div>
+                            </div>
+                            <div key={analyzeStep} className={styles.aiThinkingStep}>
+                              {ANALYZE_STEPS[analyzeStep]}
+                            </div>
+                            <div className={styles.aiThinkingBar}>
+                              <div className={styles.aiThinkingBarFill} />
+                            </div>
+                          </div>
+                        ) : !detail.ai_recommendation?.diagnosis ? (
+                          <div className={styles.noRcaBox}>
+                            <p>No AI analysis available yet for this message.</p>
+                            <button className={styles.analyzeBtn} onClick={handleAnalyze} disabled={analyzeLoading} data-tip="Trigger SAP AI Core to analyze this message and generate a root cause and fix recommendation">
+                              Run AI Analysis
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            {/* AI Recommendations header */}
+                            <div className={styles.aiHeader}>
+                              <span className={styles.aiIcon}><SvgIcon name="rca" size={16} /></span>
+                              <span className={styles.aiTitle}>AI Recommendations & Suggested Fix</span>
+                            </div>
+
+                            {/* Diagnosis */}
+                            {detail.ai_recommendation.diagnosis && (
+                              <div className={styles.aiSection}>
+                                <div className={styles.aiSectionLabel}>Diagnosis:</div>
+                                <div className={styles.aiSectionText}>
+                                  <RichText text={detail.ai_recommendation.diagnosis} />
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Field change highlights */}
+                            <FieldChangeHighlight changes={detail.ai_recommendation.field_changes} />
+
+                            {/* Proposed fix */}
+                            {detail.ai_recommendation.proposed_fix && (
+                              <div className={styles.aiSection}>
+                                <div className={styles.aiSectionLabel}>Suggested Fix:</div>
+                                <div className={styles.aiSectionText}>
+                                  <RichText text={detail.ai_recommendation.proposed_fix} />
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Confidence */}
+                            {detail.ai_recommendation.confidence > 0 && (
+                              <div data-tip="AI confidence in the root cause: ≥90% = High (green), 70–89% = Medium (amber), <70% = Low (red)">
+                                <ConfidenceBadge
+                                  value={detail.ai_recommendation.confidence}
+                                  label={detail.ai_recommendation.confidence_label}
+                                />
+                              </div>
+                            )}
+
+                            {/* Fix Patch section — action bar lives in the sticky footer */}
+                            {fixPatch && (
+                              <div className={styles.fixPatchSection}>
+                                <h4 className={styles.fixPatchTitle}>Steps (Fix Plan)</h4>
+                                {fixPatch.summary && (
+                                  <div className={styles.fixPatchSummary}>
+                                    <strong>Summary:</strong> {fixPatch.summary}
+                                  </div>
+                                )}
+                                <FixPlanSteps steps={fixPatch.steps} />
+                              </div>
+                            )}
+
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ─── Properties tab ─── */}
+                    {activeTab === "properties" && (
+                      <div className={styles.tabContent}>
+                        <h4 className={styles.propGroupTitle}>Message Properties</h4>
+                        <div className={styles.propGrid}>
+                          {Object.entries(detail.properties.message || {}).map(([k, v]) => v ? (
+                            <div key={k} className={styles.propRow}>
+                              <span className={styles.propLabel}>{k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+                              <span className={styles.propValue}>{String(v)}</span>
+                            </div>
+                          ) : null)}
+                        </div>
+                        {detail.properties.adapter && Object.values(detail.properties.adapter).some(Boolean) && (
+                          <>
+                            <h4 className={styles.propGroupTitle}>Adapter</h4>
+                            <div className={styles.propGrid}>
+                              {Object.entries(detail.properties.adapter).map(([k, v]) => v ? (
+                                <div key={k} className={styles.propRow}>
+                                  <span className={styles.propLabel}>{k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+                                  <span className={styles.propValue}>{String(v)}</span>
+                                </div>
+                              ) : null)}
+                            </div>
+                          </>
+                        )}
+                        {detail.properties.business_context && Object.values(detail.properties.business_context).some(Boolean) && (
+                          <>
+                            <h4 className={styles.propGroupTitle}>Business Context</h4>
+                            <div className={styles.propGrid}>
+                              {Object.entries(detail.properties.business_context).map(([k, v]) => v ? (
+                                <div key={k} className={styles.propRow}>
+                                  <span className={styles.propLabel}>{k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+                                  <span className={styles.propValue}>{String(v)}</span>
+                                </div>
+                              ) : null)}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ─── Artifact tab ─── */}
+                    {activeTab === "artifact" && (
+                      <div className={styles.tabContent}>
+                        <div className={styles.propGrid}>
+                          {[
+                            ["Name",         detail.artifact.name],
+                            ["Artifact ID",  detail.artifact.artifact_id],
+                            ["Version",      detail.artifact.version],
+                            ["Package",      detail.artifact.package],
+                            ["Deployed On",  detail.artifact.deployed_on],
+                            ["Deployed By",  detail.artifact.deployed_by],
+                            ["Runtime Node", detail.artifact.runtime_node],
+                            ["Status",       detail.artifact.status],
+                          ].map(([label, val]) => val ? (
+                            <div key={label} className={styles.propRow}>
+                              <span className={styles.propLabel}>{label}</span>
+                              <span className={styles.propValue}>{String(val)}</span>
+                            </div>
+                          ) : null)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ─── Attachments tab ─── */}
+                    {activeTab === "attachments" && (
+                      <div className={styles.tabContent}>
+                        {detail.attachments?.length > 0 ? (
+                          <div>Attachments available: {detail.attachments.length}</div>
+                        ) : (
+                          <div className={styles.emptyTab}>No attachments available for this message.</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ─── History tab ─── */}
+                    {activeTab === "history" && (
+                      <div className={styles.tabContent}>
+                        {detail.history?.length > 0 ? (
+                          <Timeline entries={detail.history} />
+                        ) : (
+                          <div className={styles.emptyTab}>No history entries yet.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className={styles.centered}>
+                    <span>Could not load message details.</span>
+                  </div>
+                )}
+
+                {/* ── Sticky fix-action footer ───────────────────────────────
+                     Sibling of detailBody — always visible regardless of scroll */}
+                {detail && activeTab === "ai" && detail.ai_recommendation?.diagnosis && (
+                  <div className={styles.fixFooter}>
+                    {fixState === "loading" && fixProgress && (
+                      <div className={styles.fixProgressInline}>
+                        <PipelineStageRail
+                          stepIndex={fixProgress.stepIndex}
+                          totalSteps={fixProgress.totalSteps}
+                          currentStep={fixProgress.currentStep}
+                        />
+                        <div className={styles.fixProgressCurrentStep}>
+                          <span className={styles.fixProgressSpinner} />
+                          <span>{fixProgress.currentStep}</span>
+                        </div>
+                      </div>
+                    )}
+                    {fixResult && (
+                      <div className={`${styles.fixResultBanner} ${styles[`fixResultBanner_${fixState}`] || ""}`}>
+                        {cleanFixSummary(fixResult)}
+                      </div>
+                    )}
+                    {fixNextSteps && (fixState === "success" || fixState === "deployed_unverified") && (
+                      <div className={styles.fixNextStepsBanner}>
+                        <strong>What to verify:</strong> {fixNextSteps}
+                      </div>
+                    )}
+                    <div className={styles.fixFooterActions}>
+                      {fixPatch ? (
+                        <>
+                          {fixState !== "skipped" && fixState !== "deployed_unverified" && (
+                            <button
+                              className={`${styles.applyFixBtn} ${styles[`applyFixBtn_${fixState}`] || ""}`}
+                              onClick={handleApplyFix}
+                              disabled={fixState === "loading" || fixState === "success"}
+                              data-tip="Execute the fix pipeline: get-iflow → validate → update-iflow → deploy-iflow via the SAP IS API"
+                            >
+                              {fixState === "idle"    && <><SvgIcon name="lightning" size={13} style={{ marginRight: "0.35rem", verticalAlign: "middle" }} />Apply Fix</>}
+                              {fixState === "loading" && <><span className={styles.btnSpinner} /> Applying...</>}
+                              {fixState === "success" && "✓ Fix Applied"}
+                              {fixState === "error"   && "↺ Retry Fix"}
+                            </button>
+                          )}
+                          {fixState === "skipped" && (
+                            <>
+                              <span className={styles.alreadyRunningBadge}>⚠ Already Running — No Changes Applied</span>
+                              <button
+                                className={styles.forceApplyBtn}
+                                onClick={handleApplyFix}
+                                data-tip="iFlow is in Started state but may still have wrong configuration. Force-apply the fix anyway."
+                              >
+                                Force Apply Fix
+                              </button>
+                            </>
+                          )}
+                          {fixState === "deployed_unverified" && (
+                            <span className={styles.deployedUnverifiedBadge}>⚠ Deployed — Verify iFlow Manually</span>
+                          )}
+                          {fixState === "error" && detail?.incident_id && (
+                            <button
+                              className={styles.checkStatusBtn}
+                              onClick={handleCheckStatus}
+                            >
+                              Check Status
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        detail.ai_recommendation.can_generate_fix && (
+                          <button
+                            className={styles.generateFixBtn}
+                            onClick={handleGenerateFixPatch}
+                            disabled={fixPatchLoading}
+                            data-tip="Ask the AI to generate a detailed step-by-step fix plan with XML change instructions"
+                          >
+                            {fixPatchLoading
+                              ? <><span className={styles.btnSpinner} /> Generating...</>
+                              : <><SvgIcon name="wrench" size={14} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />Generate Fix Patch</>}
+                          </button>
+                        )
+                      )}
+                      {fixPatch && fixState === "idle" && (
+                        <span className={styles.fixFooterHint}>
+                          Fix plan ready — click Apply Fix to execute the automated patch &amp; deploy.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TICKETS TAB
+          ══════════════════════════════════════════════════════════════════ */}
+      {mainTab === "tickets" && (
+        <div className={styles.ticketsContainer}>
+          <div className={styles.ticketsHeader}>
+            <div>
+              <h2>Escalation Tickets</h2>
+              <p className={styles.tabDescription}>Incidents that could not be auto-remediated are escalated here as tickets for manual review and resolution.</p>
+            </div>
+            <button onClick={() => refetchTickets()} disabled={ticketsLoading}>
+              {ticketsLoading ? "Loading..." : "Refresh"}
+            </button>
+          </div>
+
+          {/* KPI Cards for Tickets */}
+          {!ticketsLoading && tickets.length > 0 && (
+            <div className={styles.kpiRow}>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #dc2626" }}>
+                <span className={styles.kpiValue} style={{ color: "#dc2626" }}>
+                  {tickets.filter(t => ["CRITICAL", "HIGH"].includes((t.priority || "").toUpperCase())).length}
+                </span>
+                <span className={styles.kpiLabel}>High Priority</span>
+              </div>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #d97706" }}>
+                <span className={styles.kpiValue} style={{ color: "#d97706" }}>
+                  {tickets.filter(t => (t.status || "").toUpperCase() === "OPEN").length}
+                </span>
+                <span className={styles.kpiLabel}>Open Tickets</span>
+              </div>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #2563eb" }}>
+                <span className={styles.kpiValue} style={{ color: "#2563eb" }}>
+                  {tickets.filter(t => (t.status || "").toUpperCase() === "IN_PROGRESS").length}
+                </span>
+                <span className={styles.kpiLabel}>In Progress</span>
+              </div>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #16a34a" }}>
+                <span className={styles.kpiValue} style={{ color: "#16a34a" }}>
+                  {tickets.filter(t => (t.status || "").toUpperCase() === "RESOLVED").length}
+                </span>
+                <span className={styles.kpiLabel}>Resolved</span>
+              </div>
+            </div>
+          )}
+          
+          {ticketActionError && (
+            <div className={styles.approvalErrorBanner}>
+              {ticketActionError}
+              <button onClick={() => setTicketActionError(null)} aria-label="Dismiss">✕</button>
+            </div>
+          )}
+
+          {ticketsLoading ? (
+            <div className={styles.centered}>
+              <div className={styles.spinner} />
+              <span>Loading tickets...</span>
+            </div>
+          ) : tickets.length === 0 ? (
+            <div className={styles.ticketEmptyState}>
+              <img src="/empty-tickets.svg" alt="" className={styles.ticketEmptyImg} draggable={false} />
+              <p className={styles.ticketEmptyTitle}>No Tickets Created</p>
+              <p className={styles.ticketEmptyHint}>Incidents that could not be auto-remediated will appear here.</p>
+            </div>
+          ) : (
+            <div className={styles.ticketsList}>
+              {tickets.map((ticket) => (
+                <div key={ticket.ticket_id} className={styles.ticketCard}>
+                  <div className={styles.ticketHeader}>
+                    <div>
+                      <h3>{ticket.title.replace(/^\[SAP CPI\]\s*/i, '')}</h3>
+                      <span className={styles.ticketId}>#{ticket.ticket_id}</span>
+                    </div>
+                    <div className={styles.ticketBadges}>
+                      <span className={`${styles.badge} ${styles[`priority_${ticket.priority.toLowerCase()}`]}`}>
+                        {ticket.priority}
+                      </span>
+                      <span className={`${styles.badge} ${styles[`status_${ticket.status.toLowerCase().replace(/\s+/g, '_')}`]}`}>
+                        {ticket.status}
+                      </span>
+                      {!(ticket.itsm_ticket_id || ticket.itsm_ticket_number) && (ticket.status || "").toUpperCase() !== "RESOLVED" && (
+                        <span className={styles.itsmFailBadge}>⚠ ITSM sync failed</span>
+                      )}
+                    </div>
+                    {!(ticket.itsm_ticket_id || ticket.itsm_ticket_number) && (ticket.status || "").toUpperCase() !== "RESOLVED" && (
+                      <button
+                        className={styles.btnRetryItsm}
+                        disabled={retryingItsmId === ticket.ticket_id}
+                        onClick={async () => {
+                          setRetryingItsmId(ticket.ticket_id);
+                          try {
+                            await retryItsmPush(ticket.ticket_id);
+                            refetchTickets();
+                          } catch {
+                            setTicketActionError("ITSM retry failed — check app logs");
+                          } finally {
+                            setRetryingItsmId(null);
+                          }
+                        }}
+                      >
+                        {retryingItsmId === ticket.ticket_id ? "Retrying…" : "↻ Retry ITSM"}
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className={styles.ticketBody}>
+                    <div className={styles.ticketMeta}>
+                      <span><strong>iFlow:</strong> {ticket.iflow_id}</span>
+                      <span><strong>Error Type:</strong> {ticket.error_type}</span>
+                      {ticket.assigned_to && <span><strong>Assigned To:</strong> {ticket.assigned_to}</span>}
+                      {(ticket.itsm_ticket_number || ticket.itsm_ticket_id) && (
+                        <span className={styles.itsmIdBadge}>
+                          <strong>ITSM</strong> {ticket.itsm_ticket_number || ticket.itsm_ticket_id}
+                        </span>
+                      )}
+                    </div>
+
+                    {(() => {
+                      const parsed = parseTicketDescription(ticket.description);
+                      const hasStructure = parsed.error || parsed.root_cause || parsed.proposed_fix;
+                      if (!hasStructure) return <p className={styles.ticketDescription}>{ticket.description}</p>;
+                      return (
+                        <div className={styles.ticketSections}>
+                          {parsed.error && (
+                            <div className={styles.approvalSection}>
+                              <strong>Error Message</strong>
+                              <p className={styles.errorText}>{parsed.error}</p>
+                            </div>
+                          )}
+                          {parsed.root_cause && (
+                            <div className={styles.approvalSection}>
+                              <strong>Root Cause</strong>
+                              <p>{parsed.root_cause}</p>
+                            </div>
+                          )}
+                          {parsed.proposed_fix && (
+                            <div className={styles.approvalSection}>
+                              <strong>Proposed Fix</strong>
+                              <p className={styles.fixText}>{parsed.proposed_fix}</p>
+                            </div>
+                          )}
+                          {(parsed.occurrence_count || parsed.rca_confidence) && (
+                            <div className={styles.ticketSectionMeta}>
+                              {parsed.occurrence_count && (
+                                <span><strong>Occurrences:</strong> {parsed.occurrence_count}</span>
+                              )}
+                              {parsed.rca_confidence && !isNaN(parseFloat(parsed.rca_confidence)) && (
+                                <span><strong>RCA Confidence:</strong> {(parseFloat(parsed.rca_confidence) * 100).toFixed(0)}%</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {ticket.resolution_notes && (
+                      <div className={styles.ticketResolution}>
+                        <strong>Resolution:</strong>
+                        <p>{ticket.resolution_notes}</p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className={`${styles.ticketFooter} ${confirmingTicketId === ticket.ticket_id ? styles.ticketFooterConfirming : ""}`}>
+                    <div className={styles.ticketFooterMeta}>
+                      <span>Created: {new Date(ticket.created_at).toLocaleString()}</span>
+                      <span>Updated: {new Date(ticket.updated_at).toLocaleString()}</span>
+                      {(ticket.status || "").toUpperCase() === "RESOLVED" ? (
+                        <span style={{ color: "#16a34a", fontSize: "0.82rem", fontWeight: 600, marginLeft: "auto" }}>✓ Resolved</span>
+                      ) : confirmingTicketId !== ticket.ticket_id ? (
+                        <button
+                          className={`${styles.btn} ${styles.btnApprove}`}
+                          style={{ flex: "none", padding: "0.4rem 1rem", fontSize: "0.82rem", marginLeft: "auto" }}
+                          disabled={resolvingTicketId === ticket.ticket_id}
+                          onClick={() => setConfirmingTicketId(ticket.ticket_id)}
+                          title="Mark this ticket as resolved"
+                        >
+                          ✓ Mark Resolved
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {confirmingTicketId === ticket.ticket_id && (
+                      <div className={styles.resolveConfirm}>
+                        <span className={styles.resolveConfirmLabel}>
+                          ✏ Resolution notes
+                        </span>
+                        <textarea
+                          className={styles.resolveNotesInput}
+                          placeholder="Describe what was done to fix this issue (optional)…"
+                          rows={3}
+                          value={resolveNotes[ticket.ticket_id] ?? ""}
+                          onChange={(e) =>
+                            setResolveNotes((prev) => ({ ...prev, [ticket.ticket_id]: e.target.value }))
+                          }
+                          autoFocus
+                        />
+                        <div className={styles.resolveConfirmActions}>
+                          <button
+                            className={styles.btnCancelResolve}
+                            onClick={() => setConfirmingTicketId(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className={styles.btnConfirmResolve}
+                            disabled={resolvingTicketId === ticket.ticket_id}
+                            onClick={() => handleMarkResolved(ticket.ticket_id, ticket.status, resolveNotes[ticket.ticket_id] ?? "")}
+                          >
+                            {resolvingTicketId === ticket.ticket_id ? "Resolving…" : "✓ Confirm Resolve"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── pagination ── */}
+          {!ticketsLoading && ticketsTotal > 0 && (
+            <Pagination
+              currentPage={ticketTable.state.page}
+              totalPages={ticketTotalPages}
+              pageSize={ticketTable.state.pageSize}
+              totalCount={ticketsTotal}
+              hasNextPage={ticketTable.state.page < ticketTotalPages}
+              hasPreviousPage={ticketTable.state.page > 1}
+              onPageChange={ticketTable.setPage}
+              onPageSizeChange={ticketTable.setPageSize}
+              label="tickets"
+            />
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          APPROVALS TAB
+          ══════════════════════════════════════════════════════════════════ */}
+      {/* ══════════════════════════════════════════════════════════════════
+          EVENT MESH TAB
+          ══════════════════════════════════════════════════════════════════ */}
+      {mainTab === "eventmesh" && <EventMeshFlow />}
+
+      {mainTab === "approvals" && (
+        <div className={styles.approvalsContainer}>
+          <div className={styles.approvalsHeader}>
+            <div>
+              <h2>Pending Approvals</h2>
+              <p className={styles.tabDescription}>AI-proposed fixes awaiting human sign-off before being deployed to SAP CPI. Review and approve or reject each one below.</p>
+            </div>
+            <div className={styles.approvalsHeaderActions}>
+              <button
+                className={`${styles.btn} ${styles.btnApprove}`}
+                onClick={handleApproveAll}
+                disabled={!!bulkActionLoading || approvalsLoading || approvals.filter(a => a.status === "AWAITING_APPROVAL").length === 0}
+                title="Approve all awaiting incidents at once"
+              >
+                {bulkActionLoading === "approving" ? "Approving..." : "✓ Approve All"}
+              </button>
+              <button
+                className={`${styles.btn} ${styles.btnReject}`}
+                onClick={handleRejectAll}
+                disabled={!!bulkActionLoading || approvalsLoading || approvals.filter(a => a.status === "AWAITING_APPROVAL").length === 0}
+                title="Reject all awaiting incidents at once"
+              >
+                {bulkActionLoading === "rejecting" ? "Rejecting..." : "✗ Reject All"}
+              </button>
+              <button onClick={() => refetchApprovals()} disabled={approvalsLoading || !!bulkActionLoading}>
+                {approvalsLoading ? "Loading..." : "Refresh"}
+              </button>
+            </div>
+          </div>
+
+          {approvalActionError && (
+            <div className={styles.approvalErrorBanner}>
+              {approvalActionError}
+              <button onClick={() => setApprovalActionError(null)} aria-label="Dismiss">✕</button>
+            </div>
+          )}
+
+          {/* KPI Cards for Approvals */}
+          {!approvalsLoading && approvals.length > 0 && (
+            <div className={styles.kpiRow}>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #7c3aed" }}>
+                <span className={styles.kpiValue} style={{ color: "#7c3aed" }}>
+                  {approvals.filter(a => a.status === "AWAITING_APPROVAL").length}
+                </span>
+                <span className={styles.kpiLabel}>Awaiting Approval</span>
+              </div>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #16a34a" }}>
+                <span className={styles.kpiValue} style={{ color: "#16a34a" }}>
+                  {approvals.filter(a => a.rca_confidence >= 0.9).length}
+                </span>
+                <span className={styles.kpiLabel}>High Confidence (≥90%)</span>
+              </div>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #d97706" }}>
+                <span className={styles.kpiValue} style={{ color: "#d97706" }}>
+                  {approvals.filter(a => a.rca_confidence >= 0.7 && a.rca_confidence < 0.9).length}
+                </span>
+                <span className={styles.kpiLabel}>Medium Confidence (70-89%)</span>
+              </div>
+              <div className={styles.kpiCard} style={{ borderTop: "3px solid #dc2626" }}>
+                <span className={styles.kpiValue} style={{ color: "#dc2626" }}>
+                  {approvals.filter(a => a.rca_confidence < 0.7).length}
+                </span>
+                <span className={styles.kpiLabel}>Low Confidence (&lt;70%)</span>
+              </div>
+            </div>
+          )}
+          
+          {approvalsLoading ? (
+            <div className={styles.centered}>
+              <div className={styles.spinner} />
+              <span>Loading approvals...</span>
+            </div>
+          ) : approvals.length === 0 ? (
+            <div className={styles.ticketEmptyState}>
+              <img src="/empty-approvals.svg" alt="" className={styles.ticketEmptyImg} draggable={false} />
+              <p className={styles.ticketEmptyTitle}>No Pending Approvals</p>
+              <p className={styles.ticketEmptyHint}>You're all caught up! There are no pending approvals at the moment.</p>
+            </div>
+          ) : (
+            <div className={styles.approvalsList}>
+              {pagedApprovals.map((approval) => (
+                <div key={approval.incident_id} className={styles.approvalCard}>
+                  <div className={styles.approvalHeader}>
+                    <div>
+                      <h3>{approval.iflow_id}</h3>
+                      <span className={styles.approvalId}>{approval.incident_id}</span>
+                    </div>
+                    <StatusPill status={approval.status} />
+                  </div>
+                  
+                  <div className={styles.approvalBody}>
+                    <div className={styles.approvalSection}>
+                      <strong>Error Type:</strong>
+                      <span>{approval.error_type}</span>
+                    </div>
+                    
+                    <div className={styles.approvalSection}>
+                      <strong>Error Message:</strong>
+                      <p className={styles.errorText}>{approval.error_message}</p>
+                    </div>
+                    
+                    <div className={styles.approvalSection}>
+                      <strong>Root Cause:</strong>
+                      <p>{approval.root_cause}</p>
+                    </div>
+                    
+                    <div className={styles.approvalSection}>
+                      <strong>Proposed Fix:</strong>
+                      <p className={styles.fixText}>{approval.proposed_fix}</p>
+                    </div>
+                    
+                    <div className={styles.approvalMeta}>
+                      <span><strong>Confidence:</strong> {(approval.rca_confidence * 100).toFixed(0)}%</span>
+                      <span><strong>Created:</strong> {new Date(approval.created_at).toLocaleString()}</span>
+                      <span><strong>Pending Since:</strong> {new Date(approval.pending_since).toLocaleString()}</span>
+                    </div>
+                  </div>
+                  
+                  {approval.status === "AWAITING_APPROVAL" && (
+                    <div className={styles.approvalActions}>
+                      <button
+                        className={`${styles.btn} ${styles.btnApprove}`}
+                        onClick={() => handleApprove(approval.incident_id)}
+                      >
+                        ✓ Approve
+                      </button>
+                      <button
+                        className={`${styles.btn} ${styles.btnReject}`}
+                        onClick={() => handleReject(approval.incident_id)}
+                      >
+                        ✗ Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Approvals pagination ── */}
+          {!approvalsLoading && approvalsTotal > 0 && (
+            <Pagination
+              currentPage={approvalTable.state.page}
+              totalPages={approvalTotalPages}
+              pageSize={approvalTable.state.pageSize}
+              totalCount={approvalsTotal}
+              hasNextPage={approvalTable.state.page < approvalTotalPages}
+              hasPreviousPage={approvalTable.state.page > 1}
+              onPageChange={approvalTable.setPage}
+              onPageSizeChange={approvalTable.setPageSize}
+              label="approvals"
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

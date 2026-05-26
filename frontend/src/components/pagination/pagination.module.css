@@ -1,0 +1,111 @@
+.paginationContainer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background-color: var(--orbit-bg-hover, #f8f9fa);
+  border-radius: 4px;
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e9ecef);
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.info {
+  color: var(--orbit-text-muted, #666);
+  font-weight: 500;
+  flex: 0 0 auto;
+}
+
+.controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  background-color: var(--orbit-card-bg, #fff);
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #dee2e6);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--orbit-text-primary, #333);
+  transition: all 0.2s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background-color: var(--orbit-bg-hover, #e9ecef);
+  border-color: var(--orbit-card-border, #adb5bd);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pageInfo {
+  color: var(--orbit-text-primary, #333);
+  font-weight: 500;
+  min-width: 100px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.btnActive {
+  background-color: var(--orbit-primary, #1e3a5f) !important;
+  color: #fff !important;
+  border-color: var(--orbit-primary, #1e3a5f) !important;
+}
+
+.btnCurrent {
+  font-weight: 700;
+}
+
+.dots {
+  font-size: 0.9rem;
+  color: #9ca3af;
+  padding: 0 0.25rem;
+  align-self: center;
+}
+
+.sortableHeader {
+  white-space: nowrap;
+}
+
+.sortableHeaderActive {
+  color: var(--orbit-primary, #1e3a5f);
+}
+
+.sortArrow {
+  font-size: 0.75rem;
+  margin-left: 0.2rem;
+  opacity: 0.7;
+}
+
+.pageSizeSelect {
+  padding: 0.5rem;
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-input-border, #dee2e6);
+  border-radius: 4px;
+  background-color: var(--orbit-input-bg, #fff);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.pageSizeSelect:hover {
+  border-color: var(--orbit-card-border, #adb5bd);
+}
+
+@media (max-width: 768px) {
+  .paginationContainer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .info {
+    text-align: center;
+  }
+}

@@ -1,0 +1,2537 @@
+"""
+main_v2.py
+==========
+SAP CPI Self-Healing Agent — refactored multi-agent entry point.
+
+This file contains ONLY:
+  - FastAPI app setup + CORS middleware
+  - Lifespan: create all agents, wire dependencies, start autonomous loop
+  - All HTTP endpoints (delegating to the appropriate agent)
+  - POST /event-mesh/events  — Event Mesh webhook entry point
+
+All business logic lives in:
+  core/        — mcp_manager, validators, constants, state
+  agents/      — classifier, observer, rca, fix, verifier, orchestrator
+  event_mesh/  — event_bus
+
+To promote this to the live main.py:
+  mv main.py main_legacy.py && mv main_v2.py main.py
+"""
+
+import asyncio
+import json
+import logging
+import os
+import sys
+import uuid
+from collections import deque
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, UTC
+from typing import Any, Dict, List, Optional
+
+import httpx
+from dotenv import load_dotenv
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+# ─────────────────────────────────────────────
+# ENV + LOGGING
+# ─────────────────────────────────────────────
+load_dotenv()
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+# Import and configure logging to file + console
+from utils.logger_config import configure_logging
+configure_logging(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────
+# CORE IMPORTS
+# ─────────────────────────────────────────────
+from core.constants import (
+    AUTO_DEPLOY_AFTER_FIX,
+    AUTO_FIX_ALL_CPI_ERRORS,
+    AUTO_FIX_CONFIDENCE,
+    BURST_DEDUP_WINDOW_SECONDS,
+    FAILED_MESSAGE_FETCH_LIMIT,
+    FIX_INTENT_KEYWORDS,
+    RUNTIME_ERROR_FETCH_LIMIT,
+    SUGGEST_FIX_CONFIDENCE,
+)
+from core.mcp_manager import MultiMCP
+from core.runtime_config import cfg as _runtime_cfg, SETTINGS_SCHEMA
+from core.state import FIX_PROGRESS, RUNTIME_FLAGS, get_fix_progress
+
+# ─────────────────────────────────────────────
+# AGENT IMPORTS
+# ─────────────────────────────────────────────
+from agents.base import ApprovalRequest, DirectFixRequest, QueryRequest, QueryResponse
+from agents.classifier_agent import ClassifierAgent
+from agents.fix_agent import FixAgent
+from agents.observer_agent import ObserverAgent, SAPErrorFetcher
+from agents.orchestrator_agent import OrchestratorAgent
+from agents.rca_agent import RCAAgent
+from agents.verifier_agent import VerifierAgent
+
+# ─────────────────────────────────────────────
+# Event Mesh
+# ─────────────────────────────────────────────
+from event_mesh.event_bus import event_bus
+# solace_client removed — Event Mesh delivers via HTTP webhook push
+
+# ─────────────────────────────────────────────
+# DATABASE
+# ─────────────────────────────────────────────
+from db.database import (
+    create_incident,
+    get_all_history,
+    count_all_incidents,
+    get_all_incidents,
+    get_stage_counts,
+    get_incident_by_id,
+    get_incident_by_message_guid,
+    get_open_incident_by_signature,
+    get_pending_approvals,
+    get_escalation_tickets,
+    get_escalation_ticket_by_id,
+    create_escalation_ticket,
+    update_escalation_ticket,
+    get_recent_incident_by_group_key,
+    get_similar_patterns,
+    get_testsuite_log_entries,
+    get_xsd_files_by_session,
+    create_query_history,
+    update_query_history,
+    update_incident,
+    increment_incident_occurrence,
+    ensure_em_schema,
+    ensure_fix_patterns_schema,
+    ensure_settings_schema,
+    generate_orbit_id,
+    get_all_settings,
+    upsert_setting,
+    delete_setting,
+    set_db_source,
+)
+from storage.storage import upload_multiple_files
+from utils.utils import get_hana_timestamp
+
+# ─────────────────────────────────────────────
+# GLOBALS — set during lifespan
+# ─────────────────────────────────────────────
+mcp:          Optional[MultiMCP]          = None
+observer:     Optional[ObserverAgent]     = None
+orchestrator: Optional[OrchestratorAgent] = None
+
+# ─────────────────────────────────────────────
+# EVENT MESH WEBHOOK COUNTER
+# ─────────────────────────────────────────────
+_WEBHOOK_LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "event_mesh_webhook.log")
+os.makedirs(os.path.dirname(_WEBHOOK_LOG_PATH), exist_ok=True)
+
+def _load_webhook_counter() -> int:
+    try:
+        with open(_WEBHOOK_LOG_PATH, "r", encoding="utf-8") as f:
+            return sum(1 for line in f if line.strip())
+    except FileNotFoundError:
+        return 0
+
+_webhook_counter: int = _load_webhook_counter()
+
+# ─────────────────────────────────────────────
+# AGENT WEBHOOK ROLLING COUNTER (7-day window, in-memory)
+# ─────────────────────────────────────────────
+_AGENT_WEBHOOK_WINDOW = timedelta(days=7)
+_agent_webhook_ts: deque[datetime] = deque()
+
+
+def _record_agent_webhook() -> None:
+    """Append now to the rolling deque and drop entries older than 7 days."""
+    now = datetime.now(UTC)
+    _agent_webhook_ts.append(now)
+    cutoff = now - _AGENT_WEBHOOK_WINDOW
+    while _agent_webhook_ts and _agent_webhook_ts[0] < cutoff:
+        _agent_webhook_ts.popleft()
+
+
+def _agent_webhook_count() -> int:
+    """Return number of agent webhook hits recorded in the last 7 days."""
+    cutoff = datetime.now(UTC) - _AGENT_WEBHOOK_WINDOW
+    # deque is sorted by insertion time; trim stale from the left then count
+    while _agent_webhook_ts and _agent_webhook_ts[0] < cutoff:
+        _agent_webhook_ts.popleft()
+    return len(_agent_webhook_ts)
+
+
+# ─────────────────────────────────────────────
+# CPI MONITOR BACKGROUND TASK
+# ─────────────────────────────────────────────
+
+async def _run_cpi_monitor() -> None:
+    """
+    Background polling loop: query CPI for FAILED messages every
+    CPI_POLL_INTERVAL_SECONDS (default 600) and publish each new failure
+    to the Event Mesh topic default/sierra.automation/1/autofix/in.
+
+    All errors are caught and logged — this loop must never crash the app.
+    """
+    try:
+        from cpi_monitor.cpi_poller import poll_failed_messages, _POLL_INTERVAL
+        from cpi_monitor.error_publisher import publish_failed_messages
+    except Exception as exc:
+        logger.error("[CPI_MONITOR] Module import failed — poller disabled: %s", exc)
+        return
+
+    while True:
+        try:
+            messages = await poll_failed_messages()
+            if messages:
+                logger.info("[CPI_MONITOR] Found %d failed messages", len(messages))
+                await publish_failed_messages(messages)
+            await asyncio.sleep(_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            logger.info("[CPI_MONITOR] Poller cancelled - stopping.")
+            raise
+        except Exception as exc:
+            logger.error("[CPI_MONITOR] Unhandled poller error: %s", exc)
+            await asyncio.sleep(_POLL_INTERVAL)
+
+
+async def _run_pending_deploy_sweeper() -> None:
+    """
+    Background task: every 5 minutes retry any incident stuck in
+    FIX_APPLIED_PENDING_VERIFICATION by triggering a deploy-only fix pass.
+    """
+    _SWEEP_INTERVAL = int(os.getenv("PENDING_DEPLOY_SWEEP_INTERVAL_SECONDS", "300"))
+    while True:
+        try:
+            await asyncio.sleep(_SWEEP_INTERVAL)
+        except asyncio.CancelledError:
+            logger.info("[SWEEPER] Cancelled - stopping.")
+            raise
+        try:
+            pending = get_all_incidents(status="FIX_APPLIED_PENDING_VERIFICATION", limit=10)["incidents"]
+            if not pending:
+                continue
+            logger.info("[SWEEPER] Found %d pending-deploy incident(s) — retrying", len(pending))
+            for incident in pending:
+                iflow_id    = incident.get("iflow_id") or incident.get("artifact_id")
+                incident_id = incident.get("id") or incident.get("incident_id")
+                if not iflow_id or not incident_id or orchestrator is None:
+                    continue
+                try:
+                    deploy_result = await mcp.execute_integration_tool(
+                        "deploy-iflow", {"id": iflow_id}
+                    )
+                    from agents.fix_applier import FixApplier  # noqa: PLC0415
+                    if FixApplier._deploy_succeeded(str(deploy_result.get("output", ""))):
+                        from db.database import update_incident_status  # noqa: PLC0415
+                        update_incident_status(incident_id, "AUTO_FIXED")
+                        logger.info("[SWEEPER] iflow=%s deployed — status → AUTO_FIXED", iflow_id)
+                    else:
+                        logger.warning("[SWEEPER] iflow=%s deploy still failing", iflow_id)
+                except Exception as _exc:
+                    logger.warning("[SWEEPER] iflow=%s sweep error: %s", iflow_id, _exc)
+        except asyncio.CancelledError:
+            logger.info("[SWEEPER] Cancelled - stopping.")
+            raise
+        except Exception as exc:
+            logger.error("[SWEEPER] Unhandled sweeper error: %s", exc)
+
+
+# ─────────────────────────────────────────────
+# LIFESPAN
+# ─────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global mcp, observer, orchestrator
+
+    # Create Event Mesh tables on startup (no-op if they already exist)
+    ensure_em_schema()
+    ensure_fix_patterns_schema()
+    ensure_settings_schema()
+    _runtime_cfg.load_from_db()
+
+    # Register in-process pipeline fallback handlers.
+    # These fire via _dispatch_local ONLY when EventMesh REST publish fails or is disabled,
+    # so when EventMesh is working they are not called (no double-processing).
+    try:
+        event_bus.subscribe(event_bus.make_topic("observer"), _run_observer_task)
+        event_bus.subscribe(event_bus.make_topic("rca"),      _run_rca_task)
+        event_bus.subscribe(event_bus.make_topic("fixer"),    _run_fixer_task)
+        event_bus.subscribe(event_bus.make_topic("verifier"), _run_verifier_task)
+        logger.info("[EventBus] In-process pipeline fallback handlers registered")
+    except RuntimeError as _em_sub_exc:
+        logger.warning("[EventBus] Could not register in-process handlers (EM_QUEUE_PREFIX not set?): %s", _em_sub_exc)
+
+    # Create the MCP infrastructure only if servers are configured
+    from core.constants import MCP_SERVERS
+    if MCP_SERVERS:
+        mcp = MultiMCP()
+    else:
+        mcp = None
+        logger.info("[Startup] MCP servers disabled - skipping MCP initialization")
+
+    # Create all specialist agents (not yet wired)
+    _rca      = RCAAgent(mcp)
+    _fix      = FixAgent(mcp)
+    _verifier = VerifierAgent(mcp)
+    observer  = ObserverAgent(mcp)
+
+    # Create orchestrator with all specialist references
+    orchestrator = OrchestratorAgent(mcp, _rca, _fix, _verifier)
+
+    # Wire observer ↔ orchestrator (late injection to avoid circular import)
+    observer.set_orchestrator(orchestrator)
+    orchestrator.set_observer(observer)   # must be set before start() so OData fallback works at boot
+
+    # Wire error_fetcher → fix agent and verifier agent (shared token cache)
+    _fix.set_error_fetcher(observer.error_fetcher)
+    _verifier.set_error_fetcher(observer.error_fetcher)
+
+    async def _init_background():
+        try:
+            if mcp:
+                logger.info("[Startup] Initialising MCP servers in background…")
+                await mcp.connect()
+                await mcp.discover_tools()
+                try:
+                    await mcp.build_agent()              # full-toolset shared agent
+                    logger.info("[Startup] Shared MCP agent ready — %d tools.", len(mcp.tools))
+                except Exception as mcp_exc:
+                    # Discovery failure must not prevent specialist agents from building
+                    # with their local tools (vector store, patterns, etc.)
+                    logger.error("[Startup] Shared MCP agent build failed (specialist agents will still build): %s", mcp_exc)
+            else:
+                logger.info("[Startup] MCP disabled - skipping MCP initialization")
+
+            # Build all specialist agents in parallel — independent of each other.
+            # return_exceptions=True ensures one failure doesn't abort the rest.
+            results = await asyncio.gather(
+                observer.build_agent(),
+                orchestrator._classifier.build_agent(mcp),
+                _rca.build_agent(),
+                _fix.build_agent(),
+                _verifier.build_agent(),
+                return_exceptions=True,
+            )
+            agent_names = ["observer", "classifier", "rca", "fix", "verifier"]
+            for name, result in zip(agent_names, results):
+                if isinstance(result, BaseException):
+                    logger.error("[Startup] %s agent build failed: %s", name, result)
+                else:
+                    logger.info("[Startup] %s agent ready.", name)
+
+            await orchestrator.build_agent(observer=observer)  # depends on all above being ready
+            logger.info("[Startup] All specialist agents built — orchestrator ready to process messages.")
+        except asyncio.CancelledError:
+            logger.info("[Startup] Background initialisation cancelled - stopping.")
+            raise
+        except Exception as exc:
+            logger.error("[Startup] Agent initialisation failed: %s", exc)
+        finally:
+            # Always mark ready so /autonomous/status returns True and webhooks are accepted.
+            # If MCP discovery partially failed, whatever tools loaded are still usable.
+            orchestrator._agents_ready = True
+            tool_count = len(mcp.tools) if mcp else 0
+            logger.info(
+                "[Startup] pipeline_running=True — MCP tools loaded: %d, agents_ready: True",
+                tool_count,
+            )
+
+    from jobs.itsm_poller import run_itsm_poller
+    _bg_tasks = [
+        asyncio.create_task(_init_background(), name="init_background"),
+        asyncio.create_task(_run_cpi_monitor(), name="cpi_monitor"),
+        asyncio.create_task(_run_pending_deploy_sweeper(), name="pending_deploy_sweeper"),
+        asyncio.create_task(run_itsm_poller(classifier=orchestrator._classifier), name="itsm_poller"),
+    ]
+    logger.info("[CPI_MONITOR] Poller started, interval=%ds", int(os.getenv("CPI_POLL_INTERVAL_SECONDS", "600")))
+    logger.info("[Startup] FastAPI ready — agents initialising in background.")
+    logger.info("[Startup] Event-driven mode active — waiting for SAP Event Mesh webhooks")
+    yield
+
+    # Shutdown: cancel background loops so Ctrl+C exits promptly (esp. on Windows).
+    for t in _bg_tasks:
+        t.cancel()
+    await asyncio.gather(*_bg_tasks, return_exceptions=True)
+
+
+# ─────────────────────────────────────────────
+# APP
+# ─────────────────────────────────────────────
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
+)
+
+# ── Smart Monitoring routers ──────────────────
+from smart_monitoring import router as _sm_router          # noqa: E402
+from smart_monitoring_dashboard import router as _sm_dash  # noqa: E402
+app.include_router(_sm_router)
+app.include_router(_sm_dash)
+
+
+# ─────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────
+
+def _guard() -> None:
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Agents not ready — still initialising.")
+
+
+def _resolve_incident(incident_ref: str) -> Optional[Dict]:
+    return get_incident_by_id(incident_ref) or get_incident_by_message_guid(incident_ref)
+
+
+def parse_query_request(
+    query:   str           = Form(...),
+    id:      Optional[str] = Form(None),
+    user_id: str           = Form(...),
+) -> QueryRequest:
+    return QueryRequest(query=query, id=id, user_id=user_id)
+
+
+def _has_fix_intent(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in FIX_INTENT_KEYWORDS)
+
+
+# ─────────────────────────────────────────────
+# ROOT
+# ─────────────────────────────────────────────
+
+@app.get("/")
+async def root():
+    return {"status": "running", "service": "CPI MCP Servers + Autonomous Ops", "version": "4.0.0"}
+
+
+# ─────────────────────────────────────────────
+# /query — chatbot
+# ─────────────────────────────────────────────
+
+@app.post("/query", response_model=QueryResponse)
+async def query_endpoint(
+    req:   QueryRequest               = Depends(parse_query_request),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    _guard()
+    timestamp  = get_hana_timestamp()
+    session_id = req.id or str(uuid.uuid4())
+    result: Dict[str, Any] = {}
+
+    try:
+        if files:
+            try:
+                await upload_multiple_files(session_id, files, timestamp, req.user_id)
+            except Exception as exc:
+                logger.warning("File upload failed: %s", exc)
+
+        xsd_files      = get_xsd_files_by_session(session_id)
+        enhanced_query = req.query
+        if xsd_files:
+            xsd_context = "\n\n--- XSD Files Available in This Session ---\n"
+            for xsd in xsd_files:
+                xsd_context += (
+                    f"\nFile: {xsd['file_id']}\n"
+                    f"Target Namespace: {xsd['target_namespace']}\n"
+                    f"Elements: {xsd['element_count']}, Types: {xsd['type_count']}\n"
+                    f"XSD Content:\n```xml\n{xsd['content']}\n```\n"
+                )
+            enhanced_query = xsd_context + "\n\n" + req.query
+
+        fix_triggered = False
+        if _has_fix_intent(req.query):
+            pending     = get_all_incidents(status="AWAITING_APPROVAL",              limit=5)["incidents"]
+            rca_done    = get_all_incidents(status="RCA_COMPLETE",                   limit=5)["incidents"]
+            fix_failed  = get_all_incidents(status="FIX_FAILED",                     limit=5)["incidents"]
+            fix_failed_deploy = get_all_incidents(status="FIX_FAILED_DEPLOY",        limit=3)["incidents"]
+            fix_failed_update = get_all_incidents(status="FIX_FAILED_UPDATE",        limit=3)["incidents"]
+            candidates  = pending + rca_done + fix_failed + fix_failed_deploy + fix_failed_update
+
+            matched_incident = None
+            for inc in candidates:
+                if (inc.get("iflow_id", "").lower() in req.query.lower()
+                        or inc.get("incident_id", "") in req.query):
+                    matched_incident = inc
+                    break
+            if not matched_incident and len(candidates) == 1:
+                matched_incident = candidates[0]
+
+            if matched_incident and matched_incident.get("proposed_fix"):
+                fix_triggered = True
+                logger.info("[Query] Fix intent → incident: %s", matched_incident["incident_id"])
+                fix_result = await orchestrator._fix.ask_fix_and_deploy(
+                    iflow_id=matched_incident["iflow_id"],
+                    error_message=matched_incident.get("error_message", ""),
+                    proposed_fix=matched_incident.get("proposed_fix", ""),
+                    root_cause=matched_incident.get("root_cause", ""),
+                    error_type=matched_incident.get("error_type", "UNKNOWN"),
+                    affected_component=matched_incident.get("affected_component", ""),
+                    user_id=req.user_id,
+                    session_id=session_id,
+                    timestamp=timestamp,
+                )
+                final_status = "HUMAN_INITIATED_FIX" if fix_result["success"] else (
+                    "FIX_FAILED_DEPLOY" if fix_result.get("failed_stage") == "deploy"
+                    else "FIX_FAILED_UPDATE" if fix_result.get("failed_stage") in ("update", "get")
+                    else "FIX_FAILED"
+                )
+                update_incident(matched_incident["incident_id"], {
+                    "status":      final_status,
+                    "fix_summary": fix_result["summary"],
+                    "resolved_at": get_hana_timestamp() if fix_result["success"] else None,
+                    "verification_status": "VERIFIED" if fix_result["success"] else "PENDING",
+                })
+                result = {"answer": fix_result["summary"], "steps": fix_result.get("steps", [])}
+            elif candidates:
+                fix_triggered = True
+                result = {
+                    "answer": (
+                        "Multiple actionable incidents exist. Please specify the incident_id or "
+                        "iFlow ID you want to fix."
+                    ),
+                    "steps": [],
+                }
+
+        if not fix_triggered:
+            result = await orchestrator.ask(enhanced_query, req.user_id, session_id, timestamp)
+
+        question = req.query.strip()
+        if not req.id:
+            create_query_history(session_id, question, result.get("answer") or "Request failed!", timestamp, req.user_id)
+        else:
+            update_query_history(session_id, question, result.get("answer") or "Request failed!", timestamp)
+
+    except Exception as exc:
+        logger.error("query_endpoint error: %s", exc)
+        result = {"error": str(exc)}
+
+    return QueryResponse(
+        response=result.get("answer") or "Request failed! Try again.",
+        id=session_id,
+        error=result,
+    )
+
+
+# ─────────────────────────────────────────────
+# /fix — direct fix
+# ─────────────────────────────────────────────
+
+@app.post("/fix")
+async def direct_fix_endpoint(req: DirectFixRequest):
+    _guard()
+    timestamp  = get_hana_timestamp()
+    session_id = f"direct_fix_{uuid.uuid4()}"
+
+    proposed_fix       = req.proposed_fix or ""
+    root_cause         = ""
+    error_type         = "UNKNOWN"
+    affected_component = ""
+    confidence         = 0.0
+
+    if not proposed_fix:
+        clf            = orchestrator._classifier.classify_error(req.error_message)
+        fake_incident  = {
+            "incident_id":   generate_orbit_id(),
+            "iflow_id":      req.iflow_id,
+            "error_message": req.error_message,
+            "error_type":    clf["error_type"],
+            "message_guid":  "",
+        }
+        rca            = await orchestrator._rca.run_rca(fake_incident)
+        proposed_fix       = rca.get("proposed_fix", "")
+        root_cause         = rca.get("root_cause", "")
+        error_type         = rca.get("error_type", clf["error_type"])
+        affected_component = rca.get("affected_component", "")
+        confidence         = rca.get("confidence", 0.0)
+
+    if not proposed_fix:
+        return {
+            "success": False, "fix_applied": False, "deploy_success": False,
+            "summary": "Could not determine a proposed fix. Please provide proposed_fix.",
+            "rca_confidence": confidence,
+        }
+
+    fix_result = await orchestrator._fix.ask_fix_and_deploy(
+        iflow_id=req.iflow_id,
+        error_message=req.error_message,
+        proposed_fix=proposed_fix,
+        root_cause=root_cause,
+        error_type=error_type,
+        affected_component=affected_component,
+        user_id=req.user_id,
+        session_id=session_id,
+        timestamp=timestamp,
+    )
+    return {
+        "iflow_id":       req.iflow_id,
+        "fix_applied":    fix_result.get("fix_applied", False),
+        "deploy_success": fix_result.get("deploy_success", False),
+        "success":        fix_result.get("success", False),
+        "summary":        fix_result.get("summary", ""),
+        "rca_confidence": confidence,
+        "proposed_fix":   proposed_fix,
+        "steps_count":    len(fix_result.get("steps", [])),
+    }
+
+
+# ─────────────────────────────────────────────
+# HISTORY / TEST SUITE
+# ─────────────────────────────────────────────
+
+@app.get("/get_all_history")
+async def get_history_endpoint(user_id: Optional[str] = None):
+    try:
+        return {"history": get_all_history(user_id)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/get_testsuite_logs")
+async def get_testsuite_logs(user_id: Optional[str] = None):
+    try:
+        return {"ts_logs": get_testsuite_log_entries(user_id)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─────────────────────────────────────────────
+# AUTONOMOUS CONTROL
+# ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+# AUTO-FIX CONFIGURATION
+# ─────────────────────────────────────────────
+
+@app.get("/api/config/auto-fix")
+async def get_auto_fix_status():
+    try:
+        from config.config import Config  # noqa: PLC0415
+        enabled   = Config.get_auto_fix_enabled()
+        env_value = os.getenv("AUTO_FIX_ENABLED", "false").lower() == "true"
+        return {
+            "enabled":     enabled,
+            "source":      "runtime" if enabled != env_value else "env",
+            "env_default": env_value,
+            "timestamp":   get_hana_timestamp(),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/config/auto-fix")
+async def set_auto_fix_status(enabled: bool):
+    try:
+        from config.config import Config  # noqa: PLC0415
+        if Config.set_auto_fix_enabled(enabled):
+            return {"success": True, "enabled": enabled,
+                    "message": f"Auto-fix {'enabled' if enabled else 'disabled'} successfully",
+                    "timestamp": get_hana_timestamp()}
+        raise HTTPException(status_code=500, detail="Failed to update configuration")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/config/auto-fix/reset")
+async def reset_auto_fix_to_env():
+    try:
+        from config.config import Config  # noqa: PLC0415
+        if Config.reset_auto_fix_to_env():
+            env_value = os.getenv("AUTO_FIX_ENABLED", "false").lower() == "true"
+            return {"success": True, "enabled": env_value,
+                    "message": "Auto-fix reset to .env configuration",
+                    "timestamp": get_hana_timestamp()}
+        raise HTTPException(status_code=500, detail="Failed to reset configuration")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─────────────────────────────────────────────
+# SAP CPI ERROR INVENTORY
+# ─────────────────────────────────────────────
+
+@app.get("/autonomous/cpi/errors")
+async def get_cpi_error_inventory(
+    message_limit:  int = FAILED_MESSAGE_FETCH_LIMIT,
+    artifact_limit: int = RUNTIME_ERROR_FETCH_LIMIT,
+):
+    _guard()
+    try:
+        return await observer.error_fetcher.fetch_cpi_error_inventory(
+            message_limit=message_limit, artifact_limit=artifact_limit
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/autonomous/cpi/messages/errors")
+async def get_cpi_message_errors(limit: int = FAILED_MESSAGE_FETCH_LIMIT):
+    _guard()
+    try:
+        raw_errors = await observer.error_fetcher.fetch_failed_messages(limit=limit)
+        normalized = []
+        for raw in raw_errors:
+            guid    = raw.get("MessageGuid", "")
+            details = await observer.error_fetcher.fetch_error_details(guid) if guid else {}
+            normalized.append(observer.error_fetcher.normalize(raw, details))
+        return {"count": len(normalized), "messages": normalized}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/autonomous/cpi/runtime_artifacts/errors")
+async def get_cpi_runtime_artifact_errors(limit: int = RUNTIME_ERROR_FETCH_LIMIT):
+    _guard()
+    try:
+        artifacts = await observer.error_fetcher.fetch_runtime_artifact_errors(limit=limit)
+        return {"count": len(artifacts), "artifacts": artifacts}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/autonomous/cpi/runtime_artifacts/{artifact_id}")
+async def get_cpi_runtime_artifact_detail(artifact_id: str):
+    _guard()
+    try:
+        detail     = await observer.error_fetcher.fetch_runtime_artifact_detail(artifact_id)
+        error_info = await observer.error_fetcher.fetch_runtime_artifact_error_detail(artifact_id)
+        if not detail and not error_info:
+            raise HTTPException(status_code=404, detail="Runtime artifact not found")
+        return {"artifact_id": artifact_id, "detail": detail, "error_information": error_info}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─────────────────────────────────────────────
+# PIPELINE STATUS  (polled by frontend fetchPipelineStatus)
+# ─────────────────────────────────────────────
+
+@app.get("/autonomous/status")
+async def autonomous_status():
+    """Return whether the agent pipeline is ready to process events."""
+    agents_ready = bool(orchestrator and orchestrator._agents_ready)
+    tool_count   = len(mcp.tools) if mcp else 0
+    logger.debug("[Autonomous/status] agents_ready=%s tool_count=%d", agents_ready, tool_count)
+    return {
+        "running":      agents_ready,
+        "agents_ready": agents_ready,
+        "tool_count":   tool_count,
+    }
+
+
+# ─────────────────────────────────────────────
+# RUNTIME SETTINGS
+# ─────────────────────────────────────────────
+
+@app.get("/settings")
+async def get_settings():
+    """Return all tunable runtime settings with their current values and schema metadata."""
+    return {"settings": _runtime_cfg.all_with_schema()}
+
+
+@app.patch("/settings")
+async def patch_settings(payload: dict):
+    """
+    Update one or more runtime settings immediately (no restart needed).
+    Body: { "key": value, ... }
+    Unknown keys or keys not in SETTINGS_SCHEMA are ignored.
+    """
+    import json as _json
+    schema_index = {s["key"]: s for s in SETTINGS_SCHEMA}
+    updated: list[dict] = []
+    errors:  list[dict] = []
+
+    for key, raw_value in payload.items():
+        schema = schema_index.get(key)
+        if schema is None:
+            errors.append({"key": key, "error": "unknown setting key"})
+            continue
+        dtype = schema["type"]
+        try:
+            if dtype == "int":
+                coerced = int(raw_value)
+            elif dtype == "float":
+                coerced = float(raw_value)
+            elif dtype == "bool":
+                coerced = bool(raw_value) if isinstance(raw_value, bool) else str(raw_value).lower() in ("true", "1", "yes")
+            elif dtype == "json":
+                coerced = raw_value if isinstance(raw_value, dict) else _json.loads(str(raw_value))
+            else:
+                coerced = str(raw_value)
+
+            _runtime_cfg.set(key, coerced)
+
+            db_value = _json.dumps(coerced) if dtype == "json" else str(coerced).lower() if dtype == "bool" else str(coerced)
+            upsert_setting(key, db_value, dtype, updated_by="api")
+
+            # Sync AUTO_FIX_ALL_CPI_ERRORS into RUNTIME_FLAGS so orchestrator picks it up
+            if key == "AUTO_FIX_ALL_CPI_ERRORS":
+                RUNTIME_FLAGS["auto_fix_enabled"] = coerced
+
+            updated.append({"key": key, "value": coerced})
+            logger.info("[Settings] Updated %s = %r", key, coerced)
+        except Exception as exc:
+            errors.append({"key": key, "error": str(exc)})
+
+    return {"updated": updated, "errors": errors}
+
+
+@app.delete("/settings/{key}")
+async def reset_setting(key: str):
+    """Reset a single setting to its compiled default by removing the DB override."""
+    schema_index = {s["key"]: s for s in SETTINGS_SCHEMA}
+    if key not in schema_index:
+        raise HTTPException(status_code=404, detail=f"Unknown setting key: {key}")
+    _runtime_cfg.reset(key)
+    try:
+        delete_setting(key)
+    except Exception:
+        pass
+    if key == "AUTO_FIX_ALL_CPI_ERRORS":
+        RUNTIME_FLAGS["auto_fix_enabled"] = schema_index[key]["default"]
+    return {"reset": key, "default": schema_index[key]["default"]}
+
+
+@app.post("/autonomous/start")
+async def autonomous_start():
+    """No-op in event-driven mode — always returns current readiness state."""
+    agents_ready = bool(orchestrator and orchestrator._agents_ready)
+    return {
+        "running": agents_ready,
+        "message": "Event-driven pipeline active" if agents_ready else "Agents still initialising",
+    }
+
+
+@app.post("/autonomous/stop")
+async def autonomous_stop():
+    """No-op in event-driven mode."""
+    return {"running": False, "message": "Event-driven mode: stop is not applicable"}
+
+
+@app.get("/autonomous/auto-fix")
+async def get_auto_fix():
+    return {"auto_fix_enabled": RUNTIME_FLAGS["auto_fix_enabled"]}
+
+
+@app.post("/autonomous/auto-fix/toggle")
+async def toggle_auto_fix():
+    RUNTIME_FLAGS["auto_fix_enabled"] = not RUNTIME_FLAGS["auto_fix_enabled"]
+    state = RUNTIME_FLAGS["auto_fix_enabled"]
+    logger.info("[Pipeline] auto_fix_enabled toggled → %s", state)
+    return {"auto_fix_enabled": state}
+
+
+# ─────────────────────────────────────────────
+# TOOLS LISTING
+# ─────────────────────────────────────────────
+
+@app.get("/autonomous/tools")
+async def list_loaded_tools(server: Optional[str] = None):
+    _guard()
+    grouped: Dict[str, List[Dict[str, str]]] = {}
+    for tool in mcp.tools:
+        if server and tool.server != server:
+            continue
+        grouped.setdefault(tool.server, []).append({
+            "agent_tool_name": tool.name,
+            "mcp_tool_name":   tool.mcp_tool_name,
+            "description":     tool.description,
+            "fields":          mcp.get_tool_field_names(tool.server, tool.mcp_tool_name),
+        })
+    if server:
+        return {"server": server, "tools": grouped.get(server, []),
+                "count": len(grouped.get(server, []))}
+    return {
+        "servers": grouped,
+        "counts":  {n: len(i) for n, i in grouped.items()},
+        "total":   sum(len(i) for i in grouped.values()),
+    }
+
+
+# ─────────────────────────────────────────────
+# INCIDENTS CRUD
+# ─────────────────────────────────────────────
+
+@app.get("/autonomous/incidents")
+async def get_incidents(status: Optional[str] = None, limit: int = 20, offset: int = 0):
+    try:
+        result = get_all_incidents(status=status, limit=limit, offset=offset)
+        incidents = result["incidents"]
+        def _is_sap_guid(value: str) -> bool:
+            import re
+            return bool(value) and len(value) >= 18 and bool(re.fullmatch(r"[A-Za-z0-9]{18,}", value))
+
+        for inc in incidents:
+            if not inc.get("iflow_name"):
+                raw_id = inc.get("iflow_id") or ""
+                inc["iflow_name"] = (
+                    "" if _is_sap_guid(raw_id) else raw_id
+                ) or inc.get("integration_flow_name") or ""
+        return {"incidents": incidents, "total": result["total"]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/autonomous/incidents/{incident_id}")
+async def get_incident(incident_id: str):
+    try:
+        incident = _resolve_incident(incident_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return incident
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/autonomous/incidents/{incident_id}/view_model")
+async def get_incident_view_model(incident_id: str):
+    _guard()
+    try:
+        incident = _resolve_incident(incident_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return await orchestrator.build_incident_view_model(incident)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/autonomous/incidents/{incident_id}/fix_progress")
+async def get_fix_progress_endpoint(incident_id: str):
+    progress = get_fix_progress(incident_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="No fix progress found for this incident")
+    return progress
+
+
+@app.post("/autonomous/incidents/{incident_id}/approve")
+async def approve_fix(
+    incident_id: str,
+    req: ApprovalRequest,
+    background_tasks: BackgroundTasks,
+):
+    _guard()
+    incident = _resolve_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    resolved_id = incident["incident_id"]
+    if incident.get("status") not in ("AWAITING_APPROVAL", "RCA_COMPLETE"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incident status '{incident.get('status')}' is not approvable",
+        )
+    if req.approved:
+        update_incident(resolved_id, {"status": "FIX_IN_PROGRESS"})
+        background_tasks.add_task(_apply_fix_background, resolved_id, dict(incident))
+        return {"status": "fix_started", "incident_id": resolved_id,
+                "message_guid": incident.get("message_guid")}
+    update_incident(resolved_id, {"status": "REJECTED", "comment": req.comment or "Rejected by user"})
+    return {"status": "rejected", "incident_id": resolved_id,
+            "message_guid": incident.get("message_guid")}
+
+
+@app.post("/autonomous/incidents/{incident_id}/generate_fix")
+async def generate_fix_for_incident(
+    incident_id: str,
+    background_tasks: BackgroundTasks,
+    sync: bool = False,
+):
+    _guard()
+    incident = _resolve_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if incident.get("status") not in (
+        "AWAITING_APPROVAL", "RCA_COMPLETE",
+        "FIX_FAILED", "FIX_FAILED_UPDATE", "FIX_FAILED_DEPLOY", "FIX_FAILED_RUNTIME",
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incident status '{incident.get('status')}' cannot generate a fix right now",
+        )
+    resolved_id = incident["incident_id"]
+    if sync:
+        try:
+            return await orchestrator.execute_incident_fix(dict(incident), human_approved=True)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+    update_incident(resolved_id, {"status": "FIX_IN_PROGRESS"})
+    background_tasks.add_task(_apply_fix_background, resolved_id, dict(incident))
+    return {"status": "fix_started", "message": "AI fix flow started in background",
+            "incident_id": resolved_id, "message_guid": incident.get("message_guid")}
+
+
+async def _apply_fix_background(incident_id: str, incident: Dict):
+    try:
+        await orchestrator.execute_incident_fix(dict(incident), human_approved=True)
+    except Exception as exc:
+        logger.error("[_apply_fix_background] %s", exc)
+        update_incident(incident_id, {"status": "FIX_FAILED", "fix_summary": str(exc)})
+
+
+@app.post("/autonomous/incidents/{incident_id}/retry_rca")
+async def retry_rca(incident_id: str, background_tasks: BackgroundTasks):
+    _guard()
+    incident = _resolve_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if incident.get("status") in {
+        "FIX_VERIFIED", "HUMAN_INITIATED_FIX", "RETRIED", "REJECTED", "TICKET_CREATED",
+    }:
+        raise HTTPException(
+            status_code=400, detail=f"Status '{incident.get('status')}' cannot be retried"
+        )
+    resolved_id = incident["incident_id"]
+    update_incident(resolved_id, {"status": "RCA_IN_PROGRESS"})
+    background_tasks.add_task(_retry_rca_background, resolved_id, dict(incident))
+    return {"status": "rca_started", "incident_id": resolved_id}
+
+
+async def _retry_rca_background(incident_id: str, incident: Dict):
+    try:
+        rca = await orchestrator._rca.run_rca(incident)
+        update_incident(incident_id, {
+            "status":             "RCA_COMPLETE",
+            "root_cause":         rca.get("root_cause", ""),
+            "proposed_fix":       rca.get("proposed_fix", ""),
+            "rca_confidence":     rca.get("confidence", 0.0),
+            "affected_component": rca.get("affected_component", ""),
+        })
+        await orchestrator.remediation_gate(dict(incident), rca)
+    except Exception as exc:
+        logger.error("[_retry_rca_background] %s", exc)
+        update_incident(incident_id, {"status": "RCA_FAILED", "root_cause": str(exc)})
+
+
+@app.get("/autonomous/incidents/{incident_id}/fix_patterns")
+async def get_fix_patterns_endpoint(incident_id: str):
+    incident = _resolve_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    clf = ClassifierAgent()
+    sig     = clf.error_signature(
+        incident.get("iflow_id", ""),
+        incident.get("error_type", ""),
+        incident.get("error_message", ""),
+    )
+    patterns = get_similar_patterns(sig)
+    return {"patterns": patterns, "signature": sig}
+
+
+@app.get("/autonomous/pending_approvals")
+async def list_pending_approvals(
+    page: int = 1,
+    page_size: int = 10,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+):
+    if page < 1:
+        raise HTTPException(status_code=400, detail="page must be >= 1")
+    try:
+        offset = (page - 1) * page_size
+        result = get_pending_approvals(limit=page_size, offset=offset, sort_by=sort_by, sort_order=sort_order)
+        pending     = result["pending"]
+        total       = result["total"]
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        for inc in pending:
+            inc["approval_ref"]     = inc.get("incident_id")
+            inc["message_guid_ref"] = inc.get("message_guid")
+        return {
+            "pending":     pending,
+            "items":       pending,
+            "total":       total,
+            "page":        page,
+            "page_size":   page_size,
+            "total_pages": total_pages,
+            "has_next":    page < total_pages,
+            "has_previous": page > 1,
+            "sort_by":     sort_by,
+            "sort_order":  sort_order,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+_CRITICAL_ERROR_TYPES = frozenset({
+    "SSL_ERROR", "BACKEND_ERROR", "SFTP_ERROR", "DUPLICATE_ERROR",
+    "PAYLOAD_SIZE_ERROR", "IDOC_ERROR", "RESOURCE_ERROR",
+})
+
+
+def _auto_create_ticket(
+    incident: Dict[str, Any],
+    fix_result: Dict[str, Any],
+    fix_status: str,
+    incident_id: str,
+) -> None:
+    """Create an EM_ESCALATION_TICKETS row after a fix failure, idempotently."""
+    try:
+        existing = get_escalation_tickets(incident_id=incident_id, limit=1)["tickets"]
+        if existing:
+            return
+        error_type = (incident.get("error_type") or "UNKNOWN").upper()
+        priority   = "HIGH" if error_type in _CRITICAL_ERROR_TYPES else "MEDIUM"
+        iflow_id   = incident.get("iflow_id") or incident.get("integration_flow_name") or ""
+        description = (
+            f"iFlow: {iflow_id}\n"
+            f"Error: {(incident.get('error_message') or '')[:500]}\n"
+            f"Root cause: {(incident.get('root_cause') or '')[:500]}\n"
+            f"Proposed fix: {(incident.get('proposed_fix') or '')[:500]}\n"
+            f"Fix attempted: {(fix_result.get('summary') or '')[:500]}"
+        )
+        ticket_data: Dict[str, Any] = {
+            "incident_id": incident_id,
+            "iflow_id":    iflow_id,
+            "error_type":  error_type,
+            "title":       f"Fix Failed: {iflow_id} — {error_type}",
+            "description": description,
+            "priority":    priority,
+            "status":      "OPEN",
+            "assigned_to": None,
+            "created_at":  get_hana_timestamp(),
+        }
+        ticket_id = create_escalation_ticket(ticket_data)
+        update_incident(incident_id, {"ticket_id": ticket_id, "auto_escalated": 1, "status": "TICKET_CREATED"})
+        logger.info(
+            "[AutoTicket] Created ticket %s for incident %s (status=%s priority=%s)",
+            ticket_id, incident_id, fix_status, priority,
+        )
+    except Exception as exc:
+        logger.error("[AutoTicket] Failed to create ticket for incident %s: %s", incident_id, exc)
+
+
+@app.get("/autonomous/tickets")
+async def list_escalation_tickets(
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    search: Optional[str] = None,
+):
+    try:
+        result = get_escalation_tickets(
+            status=status,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            search=search,
+        )
+        total      = result["total"]
+        page_size  = limit or 20
+        page       = (offset // page_size) + 1 if page_size else 1
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        return {
+            "tickets":     result["tickets"],
+            "items":       result["tickets"],
+            "total":       total,
+            "page":        page,
+            "page_size":   page_size,
+            "total_pages": total_pages,
+            "has_next":    page < total_pages,
+            "has_previous": page > 1,
+            "sort_by":     sort_by,
+            "sort_order":  sort_order,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.patch("/autonomous/tickets/{ticket_id}")
+async def update_ticket_status(ticket_id: str, body: Dict[str, Any]):
+    """Transition ticket status: OPEN → IN_PROGRESS → RESOLVED."""
+    ticket = get_escalation_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    allowed_fields = {"status", "assigned_to", "resolution_notes"}
+    updates = {k: v for k, v in body.items() if k in allowed_fields}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    if "status" in updates:
+        valid_transitions: Dict[str, set] = {
+            "OPEN":        {"IN_PROGRESS"},
+            "IN_PROGRESS": {"RESOLVED", "OPEN"},
+            "RESOLVED":    set(),
+        }
+        current    = (ticket.get("status") or "OPEN").upper()
+        new_status = updates["status"].upper()
+        if new_status not in valid_transitions.get(current, set()):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status transition: {current} → {new_status}",
+            )
+        updates["status"] = new_status
+        if new_status == "RESOLVED":
+            updates["resolved_at"] = get_hana_timestamp()
+    try:
+        update_escalation_ticket(ticket_id, updates)
+        updated = get_escalation_ticket_by_id(ticket_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    # Push status change to ITSM tool (fire-and-forget; local update already succeeded)
+    new_status     = updates.get("status", "")
+    itsm_ticket_id = (ticket.get("itsm_ticket_id") or "").strip()
+    if new_status and itsm_ticket_id:
+        from integrations.itsm_client import patch_itsm_ticket as _patch_itsm
+        logger.info(
+            "[ITSM] Dispatching PATCH for ticket=%s itsm_id=%s new_status=%s",
+            ticket_id, itsm_ticket_id, new_status,
+        )
+        asyncio.create_task(
+            _patch_itsm(
+                itsm_ticket_id,
+                status=new_status,
+                resolution_notes=updates.get("resolution_notes", ""),
+                updated_by=body.get("updated_by", "Orbit UI"),
+            ),
+            name=f"itsm_patch_{ticket_id}",
+        )
+    elif new_status and not itsm_ticket_id:
+        logger.warning(
+            "[ITSM] Skipping PATCH — ticket=%s has no itsm_ticket_id stored in DB",
+            ticket_id,
+        )
+    elif not new_status:
+        logger.warning(
+            "[ITSM] Skipping PATCH — no status change in update body for ticket=%s",
+            ticket_id,
+        )
+
+    return {"ticket": updated}
+
+
+@app.post("/autonomous/tickets/{ticket_id}/retry-itsm")
+async def retry_itsm_push(ticket_id: str):
+    """Re-attempt ITSM ticket creation for a ticket whose initial push failed."""
+    ticket = get_escalation_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if (ticket.get("itsm_ticket_id") or "").strip():
+        return {"success": True, "message": "ITSM ticket already exists", "ticket": ticket}
+    try:
+        from integrations.itsm_client import create_itsm_ticket as _create_itsm
+        itsm_result = await _create_itsm({**ticket, "requester_id": os.getenv("ITSM_REQUESTER_ID", "")})
+        if not itsm_result:
+            raise HTTPException(status_code=502, detail="ITSM push failed — check app logs")
+        update_escalation_ticket(ticket_id, {
+            "itsm_ticket_id":     itsm_result["itsm_id"],
+            "itsm_ticket_number": itsm_result["ticket_number"],
+        })
+        updated = get_escalation_ticket_by_id(ticket_id)
+        logger.info("[ITSM] Retry push succeeded for ticket %s → %s", ticket_id, itsm_result["ticket_number"])
+        return {"success": True, "ticket": updated}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─────────────────────────────────────────────
+# MANUAL TRIGGER + TEST INCIDENT
+# ─────────────────────────────────────────────
+
+
+@app.post("/autonomous/test_incident")
+async def inject_test_incident(background_tasks: BackgroundTasks):
+    _guard()
+    incident_id = generate_orbit_id()
+    _group_key  = orchestrator.incident_group_key(  # type: ignore[union-attr]
+        {"iflow_id": "EH8-BPP-Material-UPSERT", "error_type": "MAPPING_ERROR"}
+    ) if orchestrator else ""
+    incident = {
+        "incident_id":          incident_id,
+        "message_guid":         "TEST-" + incident_id[:8],
+        "iflow_id":             "EH8-BPP-Material-UPSERT",
+        "sender":               "S4HANA",
+        "receiver":             "BPP",
+        "status":               "CLASSIFIED",
+        "error_type":           "MAPPING_ERROR",
+        "error_message":        "MappingException: Field 'NetPrice' does not exist in target structure.",
+        "correlation_id":       "COR-TEST-001",
+        "log_start":            get_hana_timestamp(),
+        "log_end":              get_hana_timestamp(),
+        "created_at":           get_hana_timestamp(),
+        "incident_group_key":   _group_key,
+        "occurrence_count":     1,
+        "last_seen":            get_hana_timestamp(),
+        "verification_status":  "UNVERIFIED",
+        "consecutive_failures": 0,
+        "auto_escalated":       0,
+        "tags":                 ["mapping", "schema"],
+    }
+    create_incident(incident)
+
+    # Route via Event Mesh — observer enriches, then rca → fixer → verifier
+    background_tasks.add_task(_run_observer_task, {"stage": "observer", "incident_id": incident_id})
+    return {"status": "test_incident_created", "incident_id": incident_id}
+
+
+# ─────────────────────────────────────────────
+# EVENT MESH STATUS
+# ─────────────────────────────────────────────
+
+@app.get("/event-mesh/status")
+async def event_mesh_status():
+    """Return SAP Event Mesh connectivity info and pipeline stage counts."""
+    queue_name = os.getenv("EVENT_MESH_QUEUE", "")
+
+    total_incidents      = count_all_incidents()
+    stage_counts         = get_stage_counts()
+    webhook_events_count = _agent_webhook_count()
+
+    return {
+        "event_mesh_queue":      queue_name,
+        "delivery_mode":         "webhook_push",
+        "webhook_active":        True,
+        "event_mesh_enabled":    True,
+        "messages_retrieved":    _webhook_counter,
+        "webhook_events_count":  webhook_events_count,
+        "queue_depth":           0,
+        "stage_counts":          stage_counts,
+        "total_incidents":       total_incidents,
+    }
+
+
+# ─────────────────────────────────────────────
+# EVENT MESH WEBHOOK
+# ─────────────────────────────────────────────
+
+@app.post("/event-mesh/events")
+async def event_mesh_webhook(event: Dict[str, Any]):
+    """
+    SAP Event Mesh webhook push endpoint.
+
+    SAP Event Mesh posts messages from queue default/sierra.automation/1/autofix/orbit/orchestrator
+    here via HTTPS POST.  The body is JSON — the multimap envelope produced
+    by the iFlow's XML-to-JSON converter step.
+
+    The message is handed directly to orchestrator._route_stage() which
+    dispatches based on the 'stage' field (defaults to 'observed' for new
+    CPI error events).
+    """
+    global _webhook_counter
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+
+    set_db_source("EVENT_MESH")   # inherited by the create_task below
+    _webhook_counter += 1
+    _ts = get_hana_timestamp()
+
+    # Extract a human-readable identifier from the multimap envelope if present
+    try:
+        messages = event.get("multimap:Messages", {})
+        first_msg = next(iter(messages.values()), [{}])
+        first_item = first_msg[0] if isinstance(first_msg, list) else first_msg
+        logs_block = first_item.get("MessageProcessingLogs", first_item)
+        _guid      = logs_block.get("MessageGuid", "")
+        _iflow     = logs_block.get("IntegrationFlowName", "")
+    except Exception:
+        _guid, _iflow = "", ""
+
+    _log_line = (
+        f"[{_ts}] count={_webhook_counter}"
+        f" guid={_guid or 'n/a'}"
+        f" iflow={_iflow or 'n/a'}\n"
+    )
+    with open(_WEBHOOK_LOG_PATH, "a", encoding="utf-8") as _lf:
+        _lf.write(_log_line)
+
+    asyncio.create_task(orchestrator._route_stage(event))
+    logger.info("[EventMesh] Webhook received #%d, dispatched to _route_stage", _webhook_counter)
+    return {"status": "accepted", "count": _webhook_counter}
+
+
+# ─────────────────────────────────────────────
+# AGENT-TO-AGENT WEBHOOK ENDPOINTS
+#
+# Strict linear event-driven pipeline:
+#
+#   /agents/orchestrator  → classify + create incident → publish observer
+#   /agents/observer      → enrich metadata            → publish rca
+#   /agents/rca           → root cause analysis        → publish fixer
+#   /agents/fixer         → apply fix + deploy         → publish verifier
+#   /agents/verifier      → verify fix worked          → (terminal)
+#
+# Each endpoint returns {"status": "accepted"} immediately and runs the
+# agent logic inside asyncio.create_task so the HTTP response is not blocked.
+# On failure the incident DB status is set to a FAIL variant; no publish occurs.
+# ─────────────────────────────────────────────
+
+
+# ── Stage 1: Orchestrator ────────────────────────────────────────────────────
+
+async def _run_orchestrator_task(event: Dict[str, Any]) -> None:
+    """
+    Classify the raw CPI error, apply dedup rules, create a new incident,
+    then publish to the observer queue.  Does NOT run RCA, fix, or verify.
+    """
+    try:
+        set_db_source("EVENT_MESH")
+
+        # Normalize the raw Event Mesh/iFlow message envelope
+        normalized = orchestrator._normalize_event_message(event)  # type: ignore[union-attr]
+        _error_msg = normalized.get("error_message", "")
+        _iflow_id  = normalized.get("iflow_id", "")
+
+        # Rule-based classify, LLM fallback when confidence is low
+        clf = orchestrator._classifier.classify_error(_error_msg)  # type: ignore[union-attr]
+        if clf.get("confidence", 0.0) < 0.70:
+            try:
+                llm_clf = await orchestrator._classifier.classify_with_llm(  # type: ignore[union-attr]
+                    _error_msg, _iflow_id
+                )
+                if llm_clf and llm_clf.get("confidence", 0.0) > clf.get("confidence", 0.0):
+                    clf = llm_clf
+            except Exception as _clf_exc:
+                logger.warning("[Agents/orchestrator] LLM classify fallback skipped: %s", _clf_exc)
+
+        normalized.update(clf)
+
+        # Signature dedup — skip when iflow_id is blank/placeholder
+        _iflow_for_dedup = normalized.get("iflow_id", "")
+        _skip_sig_dedup  = _iflow_for_dedup.lower() in ("", "unknown_iflow", "unknown", "n/a")
+        existing_sig = (
+            None if _skip_sig_dedup
+            else get_open_incident_by_signature(_iflow_for_dedup, normalized.get("error_type", ""))
+        )
+        if existing_sig:
+            increment_incident_occurrence(
+                existing_sig["incident_id"],
+                message_guid=normalized.get("message_guid") or None,
+                last_seen=get_hana_timestamp(),
+            )
+            logger.info(
+                "[Agents/orchestrator] Signature dedup → correlated into incident=%s",
+                existing_sig["incident_id"],
+            )
+            # Re-queue the existing incident so it progresses if it got stuck
+            # (e.g. CLASSIFIED with no EventMesh subscription delivering the message).
+            await orchestrator.resume_correlated_incident(dict(existing_sig), normalized)  # type: ignore[union-attr]
+            return
+
+        # Burst dedup — absorb rapid repeat errors within the dedup window
+        _group_key = orchestrator.incident_group_key(normalized)  # type: ignore[union-attr]
+        _recent    = get_recent_incident_by_group_key(_group_key, within_seconds=_runtime_cfg.get("BURST_DEDUP_WINDOW_SECONDS"))
+        if _recent:
+            increment_incident_occurrence(
+                _recent["incident_id"],
+                message_guid=normalized.get("message_guid") or None,
+                last_seen=get_hana_timestamp(),
+            )
+            logger.info(
+                "[Agents/orchestrator] Burst dedup → absorbed into incident=%s (group=%s)",
+                _recent["incident_id"], _group_key,
+            )
+            return
+
+        # Create new incident with CLASSIFIED status
+        incident_id = generate_orbit_id()
+        create_incident({
+            **normalized,
+            "incident_id":          incident_id,
+            "status":               "CLASSIFIED",
+            "created_at":           get_hana_timestamp(),
+            "incident_group_key":   _group_key,
+            "occurrence_count":     1,
+            "last_seen":            get_hana_timestamp(),
+            "verification_status":  "UNVERIFIED",
+            "consecutive_failures": 0,
+            "auto_escalated":       0,
+        })
+        logger.info(
+            "[Agents/orchestrator] Created incident=%s iflow=%s error_type=%s confidence=%.2f",
+            incident_id, _iflow_id, clf.get("error_type", ""), clf.get("confidence", 0.0),
+        )
+
+        # ── Short-circuit: definitively non-fixable errors skip observer/RCA/fixer ──
+        # Only triggers when the error is not XML-fixable AND the configured policy
+        # also says TICKET_CREATED — respects any user overrides in Settings.
+        _clf_type   = clf.get("error_type", "UNKNOWN_ERROR")
+        _clf_conf   = clf.get("confidence", 0.0)
+        _pol_action = (_runtime_cfg.get("REMEDIATION_POLICIES") or {}).get(_clf_type, {}).get("action", "")
+        if (
+            not orchestrator._classifier.is_iflow_fixable(_clf_type)  # type: ignore[union-attr]
+            and _clf_conf >= 0.80
+            and _pol_action == "TICKET_CREATED"
+        ):
+            _reason = orchestrator._classifier.fallback_root_cause(_clf_type, _error_msg)  # type: ignore[union-attr]
+            _ticket_id = await orchestrator._create_external_ticket(  # type: ignore[union-attr]
+                {**normalized, "incident_id": incident_id},
+                {"error_type": _clf_type, "confidence": _clf_conf, "root_cause": _reason, "proposed_fix": ""},
+                ticket_source="CLASSIFIER_ESCALATION",
+            )
+            update_incident(incident_id, {
+                "status":      "TICKET_CREATED",
+                "ticket_id":   _ticket_id,
+                "fix_summary": f"Error type '{_clf_type}' cannot be resolved by modifying iFlow XML. {_reason[:300]}",
+            })
+            logger.info(
+                "[Agents/orchestrator] Non-fixable '%s' (%.2f) → TICKET_CREATED incident=%s ticket=%s",
+                _clf_type, _clf_conf, incident_id, _ticket_id,
+            )
+            return
+
+        # Hand off to observer — publish to observer queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("observer"), {
+            "stage": "observer", "incident_id": incident_id,
+        })
+        logger.info("[Pipeline] incident=%s: orchestrator → observer (published)", incident_id)
+    except Exception as exc:
+        logger.error("[Agents/orchestrator] Task failed: %s", exc)
+
+
+@app.post("/agents/orchestrator")
+async def agent_orchestrator_webhook(request: Request, event: Dict[str, Any]):
+    """
+    Receives raw CPI error events from SAP Event Mesh.
+    Classifies the error, applies dedup rules, creates the incident,
+    then publishes to the observer queue.
+    """
+    body_bytes = await request.body()
+    logger.info(f"[Agents/orchestrator] RAW PAYLOAD: {body_bytes.decode('utf-8', errors='replace')[:500]}")
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    _record_agent_webhook()
+    asyncio.create_task(_run_orchestrator_task(event))
+    logger.info("[Agents/orchestrator] Webhook received, dispatched")
+    return {"status": "accepted"}
+
+
+# ── Stage 2: Observer ────────────────────────────────────────────────────────
+
+async def _run_observer_task(event: Dict[str, Any]) -> None:
+    """
+    Enrich the incident with OData metadata (sender, receiver, log timestamps),
+    then publish to the RCA queue.  Does NOT run RCA, fix, or verify.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/observer] Incident %s not found in DB", incident_id)
+            return
+
+        update_incident(incident_id, {"status": "OBSERVED"})
+
+        # Enrich with MessageProcessingLogs metadata from SAP OData
+        guid = incident.get("message_guid", "")
+        if guid and observer and observer.error_fetcher:
+            try:
+                meta = await observer.error_fetcher.fetch_message_metadata(guid)
+                enrichments: Dict[str, Any] = {}
+                if meta.get("IntegrationFlowName"):
+                    enrichments["iflow_id"]  = meta["IntegrationFlowName"]
+                for src, dst in (("Sender", "sender"), ("Receiver", "receiver"),
+                                 ("LogStart", "log_start"), ("LogEnd", "log_end")):
+                    if meta.get(src):
+                        enrichments[dst] = meta[src]
+                if enrichments:
+                    update_incident(incident_id, enrichments)
+                    logger.info(
+                        "[Agents/observer] Enriched incident=%s fields=%s",
+                        incident_id, list(enrichments.keys()),
+                    )
+            except Exception as _meta_exc:
+                logger.warning(
+                    "[Agents/observer] OData metadata fetch failed incident=%s: %s",
+                    incident_id, _meta_exc,
+                )
+
+        # Hand off to RCA — publish to rca queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("rca"), {
+            "stage": "rca", "incident_id": incident_id,
+        })
+        logger.info("[Pipeline] incident=%s: observer → rca (published)", incident_id)
+    except Exception as exc:
+        logger.error("[Agents/observer] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "OBS_FAILED", "error_message": str(exc)[:500]})
+            except Exception:
+                pass
+
+
+@app.post("/agents/observer")
+async def agent_observer_webhook(event: Dict[str, Any]):
+    """
+    Receives enrichment requests from the observer queue.
+    Fetches OData metadata, updates the incident, then publishes to the RCA queue.
+    """
+    if orchestrator is None:
+        logger.warning("[Agents/observer] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
+    _record_agent_webhook()
+    asyncio.create_task(_run_observer_task(event))
+    logger.info("[Agents/observer] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    return {"status": "accepted"}
+
+
+# ── Stage 3: RCA ─────────────────────────────────────────────────────────────
+
+async def _run_rca_task(event: Dict[str, Any]) -> None:
+    """
+    Run root cause analysis on the enriched incident, persist results,
+    then publish to the fixer queue.  Does NOT apply the fix or verify.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/rca] Incident %s not found in DB", incident_id)
+            return
+
+        update_incident(incident_id, {"status": "RCA_IN_PROGRESS"})
+        rca = await orchestrator._rca.run_rca(dict(incident))  # type: ignore[union-attr]
+
+        update_incident(incident_id, {
+            "status":             "RCA_COMPLETE",
+            "root_cause":         rca.get("root_cause", ""),
+            "proposed_fix":       rca.get("proposed_fix", ""),
+            "rca_confidence":     rca.get("confidence", 0.0),
+            "affected_component": rca.get("affected_component", ""),
+            "error_type":         rca.get("error_type") or incident.get("error_type", ""),
+        })
+        logger.info(
+            "[Agents/rca] RCA complete incident=%s confidence=%.2f",
+            incident_id, rca.get("confidence", 0.0),
+        )
+
+        # Hand off to fixer — publish to fixer queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("fixer"), {
+            "stage": "fixer", "incident_id": incident_id,
+        })
+        logger.info(
+            "[Pipeline] incident=%s: rca → fixer (published, confidence=%.2f)",
+            incident_id, rca.get("confidence", 0.0),
+        )
+    except Exception as exc:
+        logger.error("[Agents/rca] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "RCA_FAILED", "error_message": str(exc)[:500]})
+            except Exception:
+                pass
+
+
+@app.post("/agents/rca")
+async def agent_rca_webhook(event: Dict[str, Any]):
+    """
+    Receives RCA requests from the rca queue.
+    Runs root cause analysis, persists results, then publishes to the fixer queue.
+    """
+    if orchestrator is None:
+        logger.warning("[Agents/rca] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
+    _record_agent_webhook()
+    asyncio.create_task(_run_rca_task(event))
+    logger.info("[Agents/rca] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    return {"status": "accepted"}
+
+
+# ── Stage 4: Fixer ───────────────────────────────────────────────────────────
+
+async def _run_fixer_task(event: Dict[str, Any]) -> None:
+    """
+    Policy gate + fix: evaluate remediation policy, then apply fix and publish to verifier.
+    Handles AUTO_FIX, RETRY, AWAITING_APPROVAL, and TICKET_CREATED paths.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/fixer] Incident %s not found in DB", incident_id)
+            return
+
+        rca = {
+            "root_cause":         incident.get("root_cause", ""),
+            "proposed_fix":       incident.get("proposed_fix", ""),
+            "confidence":         incident.get("rca_confidence", 0.0),
+            "error_type":         incident.get("error_type", ""),
+            "affected_component": incident.get("affected_component", ""),
+        }
+        confidence  = rca["confidence"]
+        policy      = orchestrator.get_remediation_policy(dict(incident), rca)  # type: ignore[union-attr]
+        _error_type = rca.get("error_type") or incident.get("error_type") or "UNKNOWN_ERROR"
+
+        # ── Non-fixable error gate ────────────────────────────────────────────
+        if not orchestrator._classifier.is_iflow_fixable(_error_type) and confidence >= 0.80:  # type: ignore[union-attr]
+            ticket_id = await orchestrator._create_external_ticket(dict(incident), rca)  # type: ignore[union-attr]
+            update_incident(incident_id, {
+                "status":      "TICKET_CREATED",
+                "ticket_id":   ticket_id,
+                "fix_summary": f"Error type '{_error_type}' cannot be resolved by modifying iFlow XML.",
+            })
+            logger.info("[Agents/fixer] Non-fixable error incident=%s → TICKET_CREATED", incident_id)
+            return
+
+        # ── RETRY policy ──────────────────────────────────────────────────────
+        if policy["action"] == "RETRY" and confidence >= _runtime_cfg.get("SUGGEST_FIX_CONFIDENCE"):
+            retry_result = await orchestrator._verifier.retry_failed_message(dict(incident))  # type: ignore[union-attr]
+            if retry_result["success"]:
+                update_incident(incident_id, {
+                    "status":      "RETRIED",
+                    "fix_summary": retry_result["summary"],
+                    "resolved_at": get_hana_timestamp(),
+                })
+                logger.info("[Agents/fixer] Message retried incident=%s", incident_id)
+                return
+            logger.info("[Agents/fixer] Retry failed — falling through to iFlow fix incident=%s", incident_id)
+
+        # ── Policy / confidence decision ──────────────────────────────────────
+        effective_auto_fix = (
+            RUNTIME_FLAGS["auto_fix_enabled"]
+            and orchestrator.has_actionable_fix(rca)  # type: ignore[union-attr]
+            and _error_type != "UNKNOWN_ERROR"
+        )
+        should_fix = orchestrator.should_auto_fix(dict(incident), rca, policy, confidence) or effective_auto_fix  # type: ignore[union-attr]
+
+        if not should_fix:
+            if confidence >= _runtime_cfg.get("SUGGEST_FIX_CONFIDENCE"):
+                update_incident(incident_id, {
+                    "status":        "AWAITING_APPROVAL",
+                    "pending_since": get_hana_timestamp(),
+                })
+                logger.info("[Agents/fixer] Medium confidence incident=%s → AWAITING_APPROVAL", incident_id)
+            else:
+                ticket_id = await orchestrator._create_external_ticket(dict(incident), rca)  # type: ignore[union-attr]
+                update_incident(incident_id, {
+                    "status":    "TICKET_CREATED",
+                    "ticket_id": ticket_id,
+                })
+                logger.info("[Agents/fixer] Low confidence incident=%s → TICKET_CREATED", incident_id)
+            return
+
+        # ── AUTO-FIX path ─────────────────────────────────────────────────────
+        update_incident(incident_id, {"status": "FIX_IN_PROGRESS"})
+        fix_result  = await orchestrator._fix.apply_fix(dict(incident), rca)  # type: ignore[union-attr]
+        fix_success = fix_result.get("success", False)
+        fix_status  = FixAgent.determine_post_fix_status(
+            fix_success=fix_success,
+            policy=policy,
+            failed_stage=fix_result.get("failed_stage", ""),
+        )
+        update_incident(incident_id, {
+            "status":      fix_status,
+            "fix_summary": fix_result.get("summary", ""),
+            "fix_applied": 1 if fix_success else 0,
+        })
+        logger.info("[Agents/fixer] Fix complete incident=%s status=%s", incident_id, fix_status)
+
+        if not fix_success:
+            logger.warning(
+                "[Agents/fixer] Fix not applied for incident=%s (stage=%s) — halting pipeline",
+                incident_id, fix_result.get("failed_stage", ""),
+            )
+            _auto_create_ticket(incident, fix_result, fix_status, incident_id)
+            return
+
+        # Hand off to verifier — publish to verifier queue topic
+        await event_bus.publish_to_next(event_bus.make_topic("verifier"), {
+            "stage": "verifier", "incident_id": incident_id,
+        })
+        logger.info(
+            "[Pipeline] incident=%s: fixer → verifier (published, fix_status=%s)",
+            incident_id, fix_status,
+        )
+    except Exception as exc:
+        logger.error("[Agents/fixer] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "FIX_FAILED", "error_message": str(exc)[:500]})
+                _inc = get_incident_by_id(incident_id)
+                if _inc:
+                    _auto_create_ticket(_inc, {"summary": str(exc)[:500]}, "FIX_FAILED", incident_id)
+            except Exception:
+                pass
+
+
+@app.post("/agents/fixer")
+async def agent_fixer_webhook(event: Dict[str, Any]):
+    """
+    Receives fix requests from the fixer queue.
+    Applies the proposed fix, deploys the iFlow, then publishes to the verifier queue.
+    """
+    if orchestrator is None:
+        logger.warning("[Agents/fixer] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
+    _record_agent_webhook()
+    asyncio.create_task(_run_fixer_task(event))
+    logger.info("[Agents/fixer] Webhook received incident=%s, dispatched", event.get("incident_id"))
+    return {"status": "accepted"}
+
+
+# ── Stage 5: Verifier (terminal) ─────────────────────────────────────────────
+
+async def _run_verifier_task(event: Dict[str, Any]) -> None:
+    """
+    Verify that the deployed fix actually resolved the error.
+    Writes the final status (FIX_VERIFIED or FIX_FAILED_RUNTIME) to the DB.
+    Terminal stage — no publish_to_next.
+    """
+    incident_id: str = event.get("incident_id", "")
+    try:
+        set_db_source("EVENT_MESH")
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            logger.error("[Agents/verifier] Incident %s not found in DB", incident_id)
+            return
+
+        result      = await orchestrator._verifier.test_iflow_after_fix(dict(incident))  # type: ignore[union-attr]
+        test_passed = result.get("test_passed", False) or result.get("success", False)
+        # skipped=True means verification tools were unavailable — do not downgrade
+        # a FIX_VERIFIED status the fixer already set based on deploy confirmation.
+        if result.get("skipped") and not test_passed:
+            logger.info(
+                "[Agents/verifier] Verification skipped (tools unavailable) incident=%s — keeping fixer status",
+                incident_id,
+            )
+            return
+        final_status = "FIX_VERIFIED" if test_passed else "FIX_FAILED_RUNTIME"
+        update_incident(incident_id, {
+            "status":              final_status,
+            "verification_status": "VERIFIED" if test_passed else "FAILED",
+            "fix_summary":         result.get("summary", ""),
+            "resolved_at":         get_hana_timestamp() if test_passed else None,
+        })
+        logger.info(
+            "[Agents/verifier] Verification complete incident=%s final_status=%s",
+            incident_id, final_status,
+        )
+    except Exception as exc:
+        logger.error("[Agents/verifier] Task failed incident=%s: %s", incident_id, exc)
+        if incident_id:
+            try:
+                update_incident(incident_id, {"status": "FIX_FAILED_RUNTIME", "error_message": str(exc)[:500]})
+            except Exception:
+                pass
+
+
+@app.post("/agents/verifier")
+async def agent_verifier_webhook(request: Request, event: Dict[str, Any]):
+    """
+    Receives verification requests from the verifier queue.
+    Tests the deployed iFlow and writes the final status to the DB.
+    """
+    body_bytes = await request.body()
+    logger.info("[Agents/verifier] RAW PAYLOAD: %s", body_bytes.decode("utf-8", errors="replace")[:500])
+
+    # Fallback: if FastAPI body-parsing silently produced an empty dict (e.g. Event Mesh
+    # delivered with a non-application/json Content-Type), re-parse from raw bytes.
+    if not event and body_bytes:
+        try:
+            event = json.loads(body_bytes)
+        except Exception:
+            pass
+
+    if orchestrator is None:
+        logger.warning("[Agents/verifier] Orchestrator not ready — returning 202 to prevent subscription pause")
+        return {"status": "initializing"}
+    incident_id = event.get("incident_id", "")
+    _record_agent_webhook()
+    asyncio.create_task(_run_verifier_task(event))
+    logger.info("[Agents/verifier] Webhook received incident=%s, dispatched", incident_id)
+    return {"status": "accepted"}
+
+
+@app.options("/agents/{agent_name}")
+async def agents_options_preflight(agent_name: str):
+    """
+    Handles OPTIONS preflight from SAP Event Mesh webhook subscription validation.
+    CORS middleware only intercepts requests that carry an Origin header; SAP Event Mesh sends
+    plain OPTIONS without one, so a dedicated handler is required.
+    """
+    return JSONResponse(status_code=200, content={"status": "ok"})
+
+
+# ─────────────────────────────────────────────
+# DEBUG
+# ─────────────────────────────────────────────
+
+@app.get("/autonomous/db_test")
+async def db_test():
+    import traceback  # noqa: PLC0415
+    test_id = generate_orbit_id()
+    try:
+        create_incident({
+            "incident_id":   test_id,
+            "message_guid":  "TEST-DB",
+            "iflow_id":      "TEST-IFLOW",
+            "status":        "DETECTED",
+            "error_type":    "MAPPING_ERROR",
+            "error_message": "test error",
+            "created_at":    get_hana_timestamp(),
+            "tags":          [],
+        })
+        fetched = get_incident_by_id(test_id)
+        return {"create": "OK" if fetched else "FAILED", "fetch": fetched,
+                "total": get_all_incidents(limit=1)["total"]}
+    except Exception as exc:
+        return {"error": str(exc), "traceback": traceback.format_exc()}
+
+
+@app.get("/autonomous/debug")
+async def autonomous_debug():
+    results: Dict[str, Any] = {
+        "env_vars": {
+            "SAP_HUB_TENANT_URL":    os.getenv("SAP_HUB_TENANT_URL", "NOT SET"),
+            "SAP_HUB_TOKEN_URL":     os.getenv("SAP_HUB_TOKEN_URL",  "NOT SET"),
+            "SAP_HUB_CLIENT_ID":     "SET" if os.getenv("SAP_HUB_CLIENT_ID")     else "NOT SET",
+            "SAP_HUB_CLIENT_SECRET": "SET" if os.getenv("SAP_HUB_CLIENT_SECRET") else "NOT SET",
+        },
+        "webhook_mode": True,
+        "auto_fix_all":       _runtime_cfg.get("AUTO_FIX_ALL_CPI_ERRORS"),
+        "auto_deploy":        _runtime_cfg.get("AUTO_DEPLOY_AFTER_FIX"),
+        "fetch_test":  None,
+        "fetch_error": None,
+    }
+    if observer:
+        try:
+            errors = await observer.error_fetcher.fetch_failed_messages()
+            results["fetch_test"] = f"SUCCESS — {len(errors)} messages"
+        except Exception as exc:
+            results["fetch_error"] = str(exc)
+    return results
+
+
+@app.get("/autonomous/debug2")
+async def autonomous_debug2():
+    results: Dict[str, Any] = {}
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=30) as client:
+            resp = await client.post(
+                os.getenv("SAP_HUB_TOKEN_URL"),
+                data={
+                    "grant_type":    "client_credentials",
+                    "client_id":     os.getenv("SAP_HUB_CLIENT_ID"),
+                    "client_secret": os.getenv("SAP_HUB_CLIENT_SECRET"),
+                },
+            )
+            results["token_status"] = resp.status_code
+            if resp.status_code != 200:
+                results["token_error"] = resp.text
+                return results
+            token = resp.json()["access_token"]
+            results["token"] = "OK"
+    except Exception as exc:
+        results["token_exception"] = str(exc)
+        return results
+    try:
+        base   = os.getenv("SAP_HUB_TENANT_URL", "").rstrip("/")
+        params = {
+            "$filter": "Status eq 'FAILED'", "$orderby": "LogEnd desc",
+            "$top": "5", "$format": "json",
+        }
+        async with httpx.AsyncClient(verify=False, timeout=30) as client:
+            resp = await client.get(
+                f"{base}/api/v1/MessageProcessingLogs",
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            results["api_status"]           = resp.status_code
+            results["api_response_preview"] = resp.text[:500]
+    except Exception as exc:
+        results["api_exception"] = str(exc)
+    return results
+
+
+# ─────────────────────────────────────────────
+# CPI MONITOR DEBUG / VERIFICATION
+# ─────────────────────────────────────────────
+
+@app.get("/cpi-monitor/status")
+async def cpi_monitor_status():
+    """
+    Show the current configuration and dedup-cache state of the CPI monitor.
+    Use this first to confirm env vars and destination names are set correctly.
+    """
+    from cpi_monitor.cpi_poller import (
+        _POLL_INTERVAL, _API_BASE_URL, _API_TOKEN_URL,
+        _API_CLIENT_ID, _API_CLIENT_SECRET,
+    )
+    from cpi_monitor.error_publisher import _EM_DESTINATION_NAME, _published, _em_cache
+
+    return {
+        "cpi_poll": {
+            "auth_mode":           "direct env vars (SAP_HUB_* / API_OAUTH_*)",
+            "poll_interval_secs":  _POLL_INTERVAL,
+            "api_base_url":        _API_BASE_URL or "NOT SET",
+            "api_token_url":       _API_TOKEN_URL or "NOT SET",
+            "api_client_id":       "SET" if _API_CLIENT_ID else "NOT SET",
+            "api_client_secret":   "SET" if _API_CLIENT_SECRET else "NOT SET",
+        },
+        "event_mesh_publish": {
+            "destination_name":    _EM_DESTINATION_NAME,
+            "publish_url":         os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", "NOT SET")),
+            "cached_token":        "present" if _em_cache.get("token") else "not resolved yet",
+        },
+        "dedup_cache": {
+            "tracked_guids":       len(_published),
+            "guids":               list(_published.keys()),
+        },
+        "vcap_services_present":   bool(os.getenv("VCAP_SERVICES")),
+    }
+
+
+@app.post("/cpi-monitor/trigger")
+async def cpi_monitor_trigger():
+    """
+    Manually run one CPI poll + publish cycle immediately.
+    Use this to verify the integration without waiting 10 minutes.
+    Returns what was found in CPI and what was published to Event Mesh.
+    """
+    from cpi_monitor.cpi_poller import poll_failed_messages
+    from cpi_monitor.error_publisher import publish_failed_messages, _published
+
+    result: Dict[str, Any] = {
+        "polled_messages": [],
+        "published_count": 0,
+        "skipped_duplicates": 0,
+        "errors": [],
+    }
+
+    try:
+        messages = await poll_failed_messages()
+        result["polled_messages"] = [
+            {
+                "MessageGuid":         m.get("MessageGuid"),
+                "IntegrationFlowName": m.get("IntegrationFlowName"),
+                "Status":              m.get("Status"),
+                "LogEnd":              m.get("LogEnd"),
+            }
+            for m in messages
+        ]
+
+        before = set(_published.keys())
+        if messages:
+            await publish_failed_messages(messages)
+        after = set(_published.keys())
+
+        newly_published = after - before
+        result["published_count"]    = len(newly_published)
+        result["skipped_duplicates"] = len(messages) - len(newly_published)
+        result["published_guids"]    = list(newly_published)
+
+    except Exception as exc:
+        result["errors"].append(str(exc))
+        logger.error("[CPI_MONITOR] /cpi-monitor/trigger error: %s", exc)
+
+    return result
+
+
+# ─────────────────────────────────────────────
+# ITSM INTEGRATION
+# ─────────────────────────────────────────────
+
+@app.get("/itsm/status")
+async def itsm_status():
+    """
+    Show ITSM-Sierra destination config and in-process cache state.
+    Use this first to confirm env vars and VCAP_SERVICES are set correctly.
+    No real API call is made.
+    """
+    from integrations.itsm_client import _itsm_cache, _DESTINATION_NAME, _TICKETS_ENDPOINT
+    from db.database import get_open_itsm_tickets
+
+    open_tickets = []
+    try:
+        open_tickets = get_open_itsm_tickets()
+    except Exception:
+        pass
+
+    import time
+    cache_expires_in = max(0, round(_itsm_cache["expires_at"] - time.monotonic()))
+
+    return {
+        "destination_name":     _DESTINATION_NAME,
+        "tickets_endpoint":     _TICKETS_ENDPOINT,
+        "poll_interval_secs":   int(os.getenv("ITSM_POLL_INTERVAL", "300")),
+        "requester_id_set":     bool(os.getenv("ITSM_REQUESTER_ID")),
+        "vcap_services_present": bool(os.getenv("VCAP_SERVICES")),
+        "token_cache": {
+            "token_present":    bool(_itsm_cache.get("token")),
+            "base_url":         _itsm_cache.get("base_url") or "not resolved yet",
+            "expires_in_secs":  cache_expires_in if _itsm_cache.get("token") else None,
+        },
+        "open_itsm_tickets": len(open_tickets),
+    }
+
+
+@app.get("/itsm/verify")
+async def itsm_verify():
+    """
+    Step-by-step diagnostic for the ITSM-Sierra SAP Destination.
+    Each step is reported independently so you can see exactly where resolution breaks.
+
+    Steps:
+      1. VCAP_SERVICES present and parseable
+      2. Destination service binding found (key: "destination" or "destination-lite")
+      3. Credentials complete (uri, clientid, clientsecret all non-empty)
+      4. OAuth token fetch from Destination service token URL
+      5. Named destination "ITSM-Sierra" fetched from Destination API
+      6. base URL and authTokens extracted from destination response
+      7. GET /odata/v4/ticket/Tickets?$top=1 — ITSM API reachable
+    """
+    import json as _json
+    import httpx
+    from cpi_monitor.cpi_poller import get_destination_service_creds
+    from integrations.itsm_client import _DESTINATION_NAME, _TICKETS_ENDPOINT
+
+    diag: Dict[str, Any] = {
+        "step1_vcap_present":          False,
+        "step2_dest_binding_found":    False,
+        "step3_creds_complete":        False,
+        "step3_detail": {
+            "uri":          None,
+            "token_url":    None,
+            "client_id":    None,
+            "client_secret": None,
+        },
+        "step4_dest_token_ok":         False,
+        "step4_error":                 None,
+        "step5_named_dest_fetched":    False,
+        "step5_http_status":           None,
+        "step5_error":                 None,
+        "step6_base_url":              None,
+        "step6_auth_tokens_present":   False,
+        "step7_itsm_api_reachable":    False,
+        "step7_http_status":           None,
+        "step7_error":                 None,
+        "overall_ok":                  False,
+    }
+
+    # ── Step 1: VCAP_SERVICES present ────────────────────────────────────────
+    vcap_raw = os.getenv("VCAP_SERVICES", "")
+    if not vcap_raw:
+        diag["step1_vcap_present"] = False
+        diag["step1_error"] = "VCAP_SERVICES env var is empty or not set"
+        return diag
+    try:
+        vcap = _json.loads(vcap_raw)
+        diag["step1_vcap_present"] = True
+        diag["step1_keys"] = list(vcap.keys())
+    except Exception as exc:
+        diag["step1_error"] = f"VCAP_SERVICES is not valid JSON: {exc}"
+        return diag
+
+    # ── Step 2: Destination service binding ──────────────────────────────────
+    creds = get_destination_service_creds()
+    if not creds:
+        diag["step2_dest_binding_found"] = False
+        diag["step2_error"] = (
+            "No 'destination' or 'destination-lite' key found in VCAP_SERVICES. "
+            f"Keys present: {list(vcap.keys())}"
+        )
+        return diag
+    diag["step2_dest_binding_found"] = True
+
+    # ── Step 3: Credentials complete ─────────────────────────────────────────
+    dest_uri   = creds.get("uri", "")
+    token_url  = creds.get("url", "").rstrip("/") + "/oauth/token"
+    client_id  = creds.get("clientid", "")
+    client_sec = creds.get("clientsecret", "")
+
+    diag["step3_detail"] = {
+        "uri":           dest_uri or "MISSING",
+        "token_url":     token_url if creds.get("url") else "MISSING (url field empty)",
+        "client_id":     "SET" if client_id else "MISSING",
+        "client_secret": "SET" if client_sec else "MISSING",
+    }
+
+    if not (dest_uri and client_id and client_sec):
+        diag["step3_creds_complete"] = False
+        diag["step3_error"] = "One or more required credential fields are empty — see step3_detail"
+        return diag
+    diag["step3_creds_complete"] = True
+
+    # ── Step 4: OAuth token from Destination service ──────────────────────────
+    dest_token = None
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            tok_resp = await client.post(
+                token_url,
+                data={
+                    "grant_type":    "client_credentials",
+                    "client_id":     client_id,
+                    "client_secret": client_sec,
+                },
+            )
+        tok_resp.raise_for_status()
+        dest_token = tok_resp.json().get("access_token", "")
+        diag["step4_dest_token_ok"] = bool(dest_token)
+        if not dest_token:
+            diag["step4_error"] = "Token response did not contain access_token"
+            return diag
+    except Exception as exc:
+        diag["step4_error"] = str(exc)
+        return diag
+
+    # ── Step 5: Fetch named destination "ITSM-Sierra" ────────────────────────
+    dest_data = None
+    try:
+        dest_api_url = f"{dest_uri.rstrip('/')}/destination-configuration/v1/destinations/{_DESTINATION_NAME}"
+        async with httpx.AsyncClient(timeout=10) as client:
+            dest_resp = await client.get(
+                dest_api_url,
+                headers={"Authorization": f"Bearer {dest_token}"},
+            )
+        diag["step5_http_status"] = dest_resp.status_code
+        dest_resp.raise_for_status()
+        dest_data = dest_resp.json()
+        diag["step5_named_dest_fetched"] = True
+        diag["step5_dest_keys"] = list(dest_data.keys()) if dest_data else []
+    except Exception as exc:
+        diag["step5_error"] = str(exc)
+        if dest_resp is not None:
+            diag["step5_response_body"] = dest_resp.text[:300]
+        return diag
+
+    # ── Step 6: Extract base URL and authTokens ───────────────────────────────
+    base_url    = dest_data.get("destinationConfiguration", {}).get("URL", "").rstrip("/")
+    auth_tokens = dest_data.get("authTokens", [])
+
+    diag["step6_base_url"]            = base_url or "MISSING — URL field empty in destinationConfiguration"
+    diag["step6_auth_tokens_present"] = bool(auth_tokens)
+    diag["step6_auth_token_count"]    = len(auth_tokens)
+
+    if not base_url:
+        diag["step6_error"] = "destinationConfiguration.URL is empty"
+        return diag
+    if not auth_tokens:
+        diag["step6_error"] = "authTokens array is empty — check the destination's OAuth config in SAP BTP"
+        return diag
+
+    # Expose the full authTokens[0] entry (minus the token value itself) so the
+    # Destination service's own error message is visible in the response.
+    first_token = auth_tokens[0] if auth_tokens else {}
+    diag["step6_auth_token_meta"] = {
+        "type":             first_token.get("type"),
+        "error":            first_token.get("error"),
+        "errorDescription": first_token.get("errorDescription"),
+        "http_status":      first_token.get("http"),
+        "value_empty":      not bool(first_token.get("value", "")),
+    }
+
+    itsm_token = first_token.get("value", "")
+    if not itsm_token:
+        token_err = first_token.get("error") or first_token.get("errorDescription") or "unknown"
+        diag["step6_error"] = (
+            f"authTokens[0].value is empty — Destination service could not fetch the ITSM OAuth token. "
+            f"Destination service error: {token_err}"
+        )
+        return diag
+
+    # ── Step 7: Ping ITSM Tickets endpoint ───────────────────────────────────
+    try:
+        ping_url = f"{base_url}{_TICKETS_ENDPOINT}?$top=1"
+        async with httpx.AsyncClient(timeout=10) as client:
+            ping_resp = await client.get(
+                ping_url,
+                headers={
+                    "Authorization": f"Bearer {itsm_token}",
+                    "Accept":        "application/json",
+                },
+            )
+        diag["step7_http_status"]      = ping_resp.status_code
+        diag["step7_itsm_api_reachable"] = ping_resp.status_code < 400
+        if not diag["step7_itsm_api_reachable"]:
+            diag["step7_error"] = f"HTTP {ping_resp.status_code}: {ping_resp.text[:300]}"
+    except Exception as exc:
+        diag["step7_error"] = str(exc)
+
+    diag["overall_ok"] = (
+        diag["step4_dest_token_ok"]
+        and diag["step5_named_dest_fetched"]
+        and diag["step6_auth_tokens_present"]
+        and diag["step7_itsm_api_reachable"]
+    )
+    return diag
+
+
+@app.get("/itsm/tickets")
+async def itsm_get_tickets(top: int = 20, status: Optional[str] = None):
+    """
+    Fetch tickets directly from the OhZone ITSM API (not local DB).
+    Use this to confirm what tickets exist in ITSM and their current status.
+
+    Query params:
+      top    — max tickets to return (default 20)
+      status — filter by status e.g. ?status=Assigned (optional)
+    """
+    import httpx
+    from integrations.itsm_client import _resolve_itsm_destination, _TICKETS_ENDPOINT
+
+    dest = await _resolve_itsm_destination()
+    if not dest:
+        raise HTTPException(status_code=503, detail="ITSM-sierra destination could not be resolved")
+
+    try:
+        params = f"?$top={top}&$orderby=createdAt desc"
+        if status:
+            params += f"&$filter=status eq '{status}'"
+
+        url = f"{dest['base_url']}{_TICKETS_ENDPOINT}{params}"
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {dest['token']}",
+                    "Accept":        "application/json",
+                },
+            )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # OData v4 returns either a top-level list or {"value": [...]}
+        tickets = data if isinstance(data, list) else data.get("value", data)
+
+        return {
+            "source":       "ITSM OhZone (live)",
+            "total_returned": len(tickets) if isinstance(tickets, list) else 1,
+            "filter_status": status or "all",
+            "tickets":      tickets,
+        }
+    except Exception as exc:
+        logger.error("[ITSM] /itsm/tickets fetch error: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/itsm/test-ticket")
+async def itsm_create_test_ticket():
+    """
+    Create a single test ticket directly in OhZone ITSM — bypasses the full pipeline.
+    Use this to confirm ticket creation works end-to-end without triggering RCA or fix agents.
+    The ticket is clearly marked as a test in its title and description.
+    Delete it from OhZone manually after confirming.
+    """
+    from integrations.itsm_client import create_itsm_ticket
+
+    test_payload = {
+        "title":           "[TEST] Orbit ITSM Integration Verification",
+        "description":     "This is a test ticket created by the Orbit Monitor app to verify the ITSM-sierra SAP Destination integration. Safe to delete.",
+        "iflow_id":        "TEST-IFLOW",
+        "error_type":      "TEST",
+        "priority":        "low",
+        "severity_code":   "low",
+        "impact_code":     "low",
+        "urgency_code":    "low",
+        "category":        "Integration",
+        "subcategory":     "Test",
+        "tags":            "orbit-test,sap-cpi,integration-verification",
+        "businessService": "SAP Integration",
+        "application":     "SAP CPI",
+        "component":       "Orbit Monitor",
+        "environment":     os.getenv("CPI_ENVIRONMENT", "production"),
+        "configItem":      "TEST-IFLOW",
+        "hostName":        "",
+        "errorCode":       "TEST",
+        "requester_id":    os.getenv("ITSM_REQUESTER_ID", ""),
+    }
+
+    itsm_result = await create_itsm_ticket(test_payload)
+    if itsm_result:
+        return {
+            "success":       True,
+            "itsm_id":       itsm_result["itsm_id"],
+            "ticket_number": itsm_result["ticket_number"],
+            "message":       f"Test ticket created. Number={itsm_result['ticket_number']} ID={itsm_result['itsm_id']}. Delete it manually after verifying.",
+        }
+    return {
+        "success":       False,
+        "itsm_id":       None,
+        "ticket_number": None,
+        "message":       "create_itsm_ticket() returned None — check app logs for the error detail.",
+    }
+
+
+@app.post("/itsm/poll")
+async def itsm_poll_now():
+    """
+    Manually trigger one ITSM poll cycle immediately.
+    Checks all open tickets against ITSM and syncs any that have been resolved.
+    Use this to verify the poller logic without waiting for the 5-minute interval.
+    """
+    from jobs.itsm_poller import poll_itsm_tickets_once
+    from db.database import get_open_itsm_tickets
+
+    before = get_open_itsm_tickets()
+    errors: list = []
+
+    try:
+        clf = orchestrator._classifier if orchestrator else None
+        await poll_itsm_tickets_once(classifier=clf)
+    except Exception as exc:
+        errors.append(str(exc))
+        logger.error("[ITSM] /itsm/poll error: %s", exc)
+
+    after = get_open_itsm_tickets()
+    resolved_count = max(0, len(before) - len(after))
+
+    return {
+        "open_before":    len(before),
+        "open_after":     len(after),
+        "resolved_count": resolved_count,
+        "errors":         errors,
+    }
+
+
+# ─────────────────────────────────────────────
+# SYSTEM HEALTH CHECK
+# ─────────────────────────────────────────────
+
+@app.get("/system/health-check")
+async def system_health_check(service: str = "all"):
+    """
+    On-demand liveness probe for the three core subsystems.
+
+    ?service=mcp        — MCP server reachability + tool inventory
+    ?service=db         — Database read probe
+    ?service=event_mesh — SAP Event Mesh configuration + connectivity marker
+    ?service=all        — All three in one call (default)
+    """
+    results: list[dict] = []
+
+    async def _check_mcp() -> dict:
+        try:
+            agents_ready = bool(orchestrator and getattr(orchestrator, "_agents_ready", False))
+            tool_count   = len(mcp.tools) if mcp else 0
+            if mcp is None:
+                return {
+                    "service": "MCP Server",
+                    "status":  "degraded",
+                    "message": "MCP manager not initialised — no servers configured",
+                    "detail":  {"tool_count": 0, "agents_ready": False},
+                }
+            if not agents_ready:
+                return {
+                    "service": "MCP Server",
+                    "status":  "degraded",
+                    "message": "Agents initialising or startup failed",
+                    "detail":  {"tool_count": tool_count, "agents_ready": False},
+                }
+            return {
+                "service": "MCP Server",
+                "status":  "ok",
+                "message": f"Reachable — {tool_count} tool{'s' if tool_count != 1 else ''} registered",
+                "detail":  {"tool_count": tool_count, "agents_ready": True},
+            }
+        except Exception as exc:
+            return {"service": "MCP Server", "status": "error", "message": str(exc), "detail": {}}
+
+    async def _check_db() -> dict:
+        try:
+            n = count_all_incidents()
+            return {
+                "service": "Database",
+                "status":  "ok",
+                "message": f"Connected — {n} incident{'s' if n != 1 else ''} on record",
+                "detail":  {"incident_count": n},
+            }
+        except Exception as exc:
+            return {"service": "Database", "status": "error", "message": str(exc), "detail": {}}
+
+    async def _check_event_mesh() -> dict:
+        em_enabled  = os.getenv("EM_ENABLED", os.getenv("AEM_ENABLED", "false")).lower() == "true"
+        rest_url    = os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", "")).strip()
+        queue_name  = os.getenv("EVENT_MESH_QUEUE", "").strip()
+        dest_name   = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh").strip()
+
+        if not em_enabled:
+            return {
+                "service": "Event Mesh",
+                "status":  "degraded",
+                "message": "Event Mesh disabled (EM_ENABLED=false)",
+                "detail":  {"enabled": False, "rest_url_set": bool(rest_url)},
+            }
+        if not rest_url:
+            return {
+                "service": "Event Mesh",
+                "status":  "error",
+                "message": "EM_REST_URL not configured",
+                "detail":  {"enabled": True, "rest_url_set": False},
+            }
+        # Quick TCP reachability probe — avoids full OAuth flow
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(rest_url)
+            host   = parsed.hostname or ""
+            port   = parsed.port or (443 if parsed.scheme == "https" else 80)
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.head(f"{parsed.scheme}://{host}:{port}", follow_redirects=True)
+            return {
+                "service": "Event Mesh",
+                "status":  "ok",
+                "message": f"Reachable — queue: {queue_name or 'not set'}, dest: {dest_name}",
+                "detail":  {
+                    "enabled":      True,
+                    "rest_url_set": True,
+                    "queue":        queue_name,
+                    "destination":  dest_name,
+                    "webhook_hits": _webhook_counter,
+                },
+            }
+        except Exception as exc:
+            return {
+                "service": "Event Mesh",
+                "status":  "error",
+                "message": f"Endpoint unreachable: {exc}",
+                "detail":  {"enabled": True, "rest_url_set": True, "error": str(exc)},
+            }
+
+    want = service.lower()
+    if want in ("mcp", "all"):
+        results.append(await _check_mcp())
+    if want in ("db", "all"):
+        results.append(await _check_db())
+    if want in ("event_mesh", "all"):
+        results.append(await _check_event_mesh())
+
+    if not results:
+        raise HTTPException(status_code=400, detail=f"Unknown service '{service}'. Use mcp, db, event_mesh, or all.")
+
+    overall = "ok"
+    for r in results:
+        if r["status"] == "error":
+            overall = "error"
+            break
+        if r["status"] == "degraded":
+            overall = "degraded"
+
+    return {"overall": overall, "checks": results}
+
+
+# ─────────────────────────────────────────────
+# ENTRYPOINT
+# ─────────────────────────────────────────────
+if __name__ == "__main__":
+    import uvicorn  # noqa: PLC0415
+    _port = int(os.getenv("PORT", "8080"))   # BTP CF injects $PORT; 8080 for local dev
+    _dev  = os.getenv("APP_ENV", "production").lower() == "development"
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=_port,
+        reload=_dev,
+        reload_excludes=["*.log", "*.db", "logs/*", "__pycache__"] if _dev else [],
+        log_level="info",
+    )
+
+# run this code using UV run

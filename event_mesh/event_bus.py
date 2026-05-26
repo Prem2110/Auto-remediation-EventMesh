@@ -1,0 +1,304 @@
+"""
+event_mesh/event_bus.py
+=======================
+SAP Event Mesh event bus — agent-to-agent messaging via SAP Event Mesh.
+
+Each agent publishes its output to a well-known topic; the next agent in the
+pipeline subscribes to that topic.  When SAP Event Mesh is not configured the
+bus falls back to in-process direct calls (the current behaviour is fully
+preserved).
+
+Topic layout:
+  default/sierra.automation/1/autofix/orbit/observed/{incident_id}
+  default/sierra.automation/1/autofix/orbit/classified/{incident_id}
+  default/sierra.automation/1/autofix/orbit/rca/{incident_id}
+  default/sierra.automation/1/autofix/orbit/fix/{incident_id}
+  default/sierra.automation/1/autofix/orbit/verified/{incident_id}
+
+Configuration (all via .env):
+  EM_ENABLED=false               — master switch; false = in-memory fallback only
+  EM_REST_URL                    — SAP Event Mesh REST Delivery Endpoint base URL
+  EVENT_MESH_DESTINATION_NAME    — SAP BTP Destination name for EventMesh (default: "EventMesh")
+
+Exports:
+  EventBus
+    .publish(topic, event)     → None   (fire-and-forget; logs on failure)
+    .subscribe(topic, handler) → None   (register in-process handler)
+    .publish_to_next(topic, payload) → None  (guaranteed delivery handoff, x-qos: 1)
+    .make_topic(stage, incident_id) → str  (build canonical topic from EM_QUEUE_PREFIX)
+"""
+
+import asyncio
+import json
+import logging
+import os
+import time
+from typing import Any, Callable, Dict, List
+from urllib.parse import quote
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+# Backward-compat: accept both EM_* (new) and AEM_* (legacy) env var names
+_EM_ENABLED          = os.getenv("EM_ENABLED", os.getenv("AEM_ENABLED", "false")).lower() == "true"
+_EM_REST_URL         = os.getenv("EM_REST_URL", os.getenv("AEM_REST_URL", ""))
+_EM_DESTINATION_NAME = os.getenv("EVENT_MESH_DESTINATION_NAME", "EventMesh")
+
+# Module-level token cache shared across all EventBus instances
+_token_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
+
+logger.info(
+    "[EventMesh] mode=%s rest_url=%s destination=%s",
+    "ENABLED (SAP EventMesh REST)" if _EM_ENABLED else "DISABLED (in-process only)",
+    _EM_REST_URL or "<not set>",
+    _EM_DESTINATION_NAME,
+)
+
+
+async def _get_bearer_token() -> str:
+    """
+    Return a cached EventMesh bearer token via the SAP BTP Destination service.
+
+    Requires:
+      1. App bound to the Destination service in CF (manifest.yml services list).
+      2. A destination named EVENT_MESH_DESTINATION_NAME (default: 'EventMesh') created
+         in the BTP cockpit as an OAuth2ClientCredentials destination pointing to the
+         Event Mesh service UAA token URL.
+    """
+    now = time.monotonic()
+    if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
+        return _token_cache["token"]
+
+    from cpi_monitor.cpi_poller import get_destination_service_creds
+    creds = get_destination_service_creds()
+    if not creds:
+        raise RuntimeError(
+            "[EventMesh] VCAP_SERVICES has no Destination service binding — "
+            "ensure the app is bound to destination-service in manifest.yml and restaged."
+        )
+
+    dest_uri   = creds.get("uri", "")
+    token_url  = creds.get("url", "").rstrip("/") + "/oauth/token"
+    client_id  = creds.get("clientid", "")
+    client_sec = creds.get("clientsecret", "")
+
+    if not (dest_uri and client_id and client_sec):
+        raise RuntimeError(
+            f"[EventMesh] Destination service credentials incomplete in VCAP_SERVICES "
+            f"(uri={bool(dest_uri)}, clientid={bool(client_id)}, clientsecret={bool(client_sec)})"
+        )
+
+    logger.info("[EventMesh] Fetching Destination service token from %s", token_url)
+    async with httpx.AsyncClient(timeout=15) as client:
+        tok_resp = await client.post(
+            token_url,
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     client_id,
+                "client_secret": client_sec,
+            },
+        )
+    if tok_resp.status_code != 200:
+        raise RuntimeError(
+            f"[EventMesh] Destination service token request failed: HTTP {tok_resp.status_code} {tok_resp.text[:200]}"
+        )
+    dest_token = tok_resp.json()["access_token"]
+
+    dest_lookup_url = f"{dest_uri.rstrip('/')}/destination-configuration/v1/destinations/{_EM_DESTINATION_NAME}"
+    logger.info("[EventMesh] Looking up destination '%s' at %s", _EM_DESTINATION_NAME, dest_lookup_url)
+    async with httpx.AsyncClient(timeout=10) as client:
+        dest_resp = await client.get(
+            dest_lookup_url,
+            headers={"Authorization": f"Bearer {dest_token}"},
+        )
+    if dest_resp.status_code != 200:
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' lookup failed: "
+            f"HTTP {dest_resp.status_code} {dest_resp.text[:300]}"
+        )
+    dest_data = dest_resp.json()
+
+    auth_tokens = dest_data.get("authTokens", [])
+    if not auth_tokens:
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' returned no authTokens — "
+            f"check the destination type is OAuth2ClientCredentials in BTP cockpit. "
+            f"Destination keys present: {list(dest_data.keys())}"
+        )
+
+    token_entry = auth_tokens[0]
+    if token_entry.get("error"):
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' authToken error: {token_entry['error']}"
+        )
+
+    em_token   = token_entry.get("value", "")
+    expires_in = int(token_entry.get("expires_in", 3600))
+
+    if not em_token:
+        raise RuntimeError(
+            f"[EventMesh] Destination '{_EM_DESTINATION_NAME}' authToken value is empty"
+        )
+
+    _token_cache["token"]      = em_token
+    _token_cache["expires_at"] = now + expires_in
+    logger.info(
+        "[EventMesh] Bearer token resolved via BTP Destination '%s', expires_in=%ds",
+        _EM_DESTINATION_NAME, expires_in,
+    )
+    return em_token
+
+class EventBus:
+    """
+    Lightweight event bus with two modes:
+
+    1. EM_ENABLED=false (default)  — in-memory only.
+       subscribe() registers a Python coroutine as handler.
+       publish() calls registered handlers directly, no network I/O.
+       Zero external dependencies; safe for local dev and unit tests.
+
+    2. EM_ENABLED=true — REST delivery to SAP Event Mesh.
+       publish() POSTs the event JSON to the SAP Event Mesh REST Delivery Endpoint.
+       subscribe() still registers in-process handlers (for the same process
+       to consume its own events during local-mode hybrid testing).
+    """
+
+    def __init__(self):
+        # in-process handler registry: topic_prefix → List[async callable]
+        self._handlers: Dict[str, List[Callable]] = {}
+
+    # ── subscribe ────────────────────────────────────────────────────────────
+
+    def subscribe(self, topic: str, handler: Callable) -> None:
+        """
+        Register an async callable as an in-process handler for messages on
+        topic.  The handler receives a single argument: the decoded event dict.
+
+        Subscribing does NOT require SAP Event Mesh to be enabled — it works in
+        both modes and is the primary mechanism for inter-agent calls when
+        EM_ENABLED=false.
+        """
+        self._handlers.setdefault(topic, []).append(handler)
+        logger.debug("[EventMesh] Handler registered for topic: %s", topic)
+
+    # ── publish ──────────────────────────────────────────────────────────────
+
+    async def publish(self, topic: str, event: Dict[str, Any]) -> None:
+        """
+        Publish an event to the given topic.
+
+        If SAP Event Mesh is enabled, POST to the REST endpoint.
+        Always call any in-process handlers registered for this topic
+        (so the pipeline keeps working even without external SAP Event Mesh connectivity).
+        """
+        if _EM_ENABLED and _EM_REST_URL:
+            await self._publish_rest(topic, event)
+        await self._dispatch_local(topic, event)
+
+    async def _publish_rest(self, topic: str, event: Dict[str, Any]) -> None:
+        encoded_topic = quote(topic, safe="/")
+        url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+        try:
+            token = await _get_bearer_token()
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    url,
+                    content=json.dumps(event),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {token}",
+                        "x-qos": "0",
+                    },
+                )
+            if resp.status_code not in (200, 202, 204):
+                logger.warning(
+                    "[EventMesh] REST publish to '%s' returned HTTP %d: %s",
+                    topic, resp.status_code, resp.text[:200],
+                )
+            else:
+                logger.info("[EventMesh] Published to '%s' (HTTP %d)", topic, resp.status_code)
+        except Exception as exc:
+            logger.warning("[EventMesh] REST publish failed for topic '%s': %s", topic, exc)
+
+    async def _dispatch_local(self, topic: str, event: Dict[str, Any]) -> None:
+        """
+        Call all in-process handlers registered for this topic.
+
+        Supports prefix matching: a handler registered at "sap/cpi/remediation/classified"
+        will also fire for "sap/cpi/remediation/classified/{incident_id}".
+        """
+        matched: list = list(self._handlers.get(topic, []))
+        for reg_topic, reg_handlers in self._handlers.items():
+            if reg_topic != topic and topic.startswith(reg_topic + "/"):
+                matched.extend(reg_handlers)
+        if not matched:
+            logger.debug("[EventMesh] No in-process handlers registered for topic '%s' — skipping local dispatch", topic)
+            return
+        logger.debug("[EventMesh] Dispatching topic '%s' to %d handler(s)", topic, len(matched))
+        for handler in matched:
+            handler_name = getattr(handler, "__name__", repr(handler))
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    await handler(event)
+                else:
+                    handler(event)
+                logger.debug("[EventMesh] Handler '%s' for topic '%s' completed successfully", handler_name, topic)
+            except Exception as exc:
+                logger.error("[EventMesh] Handler '%s' for topic '%s' raised: %s", handler_name, topic, exc)
+
+    # ── convenience helper ───────────────────────────────────────────────────
+
+    def make_topic(self, stage: str, incident_id: str = "") -> str:
+        """Build the canonical topic string for a pipeline stage."""
+        prefix = os.getenv("EM_QUEUE_PREFIX", os.getenv("AEM_QUEUE_PREFIX", ""))
+        if not prefix:
+            raise RuntimeError("EM_QUEUE_PREFIX is not set — cannot build Event Mesh topic")
+        base = f"{prefix}/{stage}"
+        return f"{base}/{incident_id}" if incident_id else base
+
+    async def publish_to_next(self, topic: str, payload: Dict[str, Any]) -> None:
+        """
+        Publish an inter-agent handoff with x-qos: 1 (guaranteed delivery).
+
+        Use this instead of publish() when delivering from one agent endpoint
+        to the next in the event-driven pipeline.  Failures are logged only —
+        the caller must NOT raise so the current agent's response is unaffected.
+        """
+        _rest_ok = False
+        if _EM_ENABLED and _EM_REST_URL:
+            encoded_topic = quote(topic, safe="/")
+            url = f"{_EM_REST_URL.rstrip('/')}/messagingrest/v1/topics/{encoded_topic}/messages"
+            try:
+                token = await _get_bearer_token()
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(
+                        url,
+                        content=json.dumps(payload),
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {token}",
+                            "x-qos": "1",
+                        },
+                    )
+                if resp.status_code not in (200, 202, 204):
+                    logger.warning(
+                        "[EventMesh] publish_to_next '%s' returned HTTP %d: %s",
+                        topic, resp.status_code, resp.text[:200],
+                    )
+                else:
+                    logger.info("[EventMesh] publish_to_next '%s' OK (HTTP %d)", topic, resp.status_code)
+                    _rest_ok = True
+            except Exception as exc:
+                logger.warning("[EventMesh] publish_to_next dead-letter for '%s': %s", topic, exc)
+        # Fall back to in-process dispatch only when EventMesh REST publish did not succeed.
+        # When EventMesh accepted the message, delivery happens via the HTTP webhook push —
+        # calling local handlers here too would cause double-processing.
+        if not _rest_ok:
+            await self._dispatch_local(topic, payload)
+
+
+# ─────────────────────────────────────────────
+# Module-level singleton — shared by all agents
+# ─────────────────────────────────────────────
+event_bus = EventBus()

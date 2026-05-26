@@ -1,0 +1,708 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --orbit-blue:        #2563eb;
+  --orbit-blue-light:  #3b82f6;
+  --orbit-blue-dim:    #dbeafe;
+  --orbit-indigo:      #4f46e5;
+  --orbit-purple:      #7c3aed;
+  --orbit-teal:        #0d9488;
+  --orbit-green:       #16a34a;
+  --orbit-green-light: #dcfce7;
+  --orbit-amber:       #d97706;
+  --orbit-amber-light: #fef3c7;
+  --orbit-red:         #dc2626;
+  --orbit-red-light:   #fee2e2;
+  --orbit-gray-50:     #f9fafb;
+  --orbit-gray-100:    #f3f4f6;
+  --orbit-gray-200:    #e5e7eb;
+  --orbit-gray-300:    #d1d5db;
+  --orbit-gray-600:    #4b5563;
+  --orbit-gray-700:    #374151;
+  --orbit-gray-900:    #111827;
+
+  --orbit-sidebar-bg:        #ffffff;
+  --orbit-sidebar-hover:     #f1f5f9;
+  --orbit-sidebar-active:    #eff6ff;
+  --orbit-sidebar-text:      #64748b;
+  --orbit-sidebar-text-muted:#94a3b8;
+
+  --orbit-shadow-sm:  var(--orbit-card-shadow, 0 1px 3px rgba(0,0,0,0.08));
+  --orbit-shadow-md:  0 4px 12px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.06);
+  --orbit-shadow-lg:  0 10px 30px rgba(0,0,0,0.14), 0 4px 12px rgba(0,0,0,0.08);
+  --orbit-radius:     0.75rem;
+  --orbit-radius-sm:  0.5rem;
+  --orbit-radius-lg:  1rem;
+  --orbit-transition: 0.2s cubic-bezier(0.4,0,0.2,1);
+
+  /* ── Semantic theme tokens — overridden by [data-theme] blocks below ── */
+  --orbit-primary:         #2563eb;
+  --orbit-primary-hover:   #1d4ed8;
+  --orbit-primary-dim:     #eff6ff;
+  --orbit-bg-page:         #f5f4ff;
+  --orbit-bg-surface:      #ffffff;
+  --orbit-bg-hover:        #f1f5f9;
+  --orbit-topbar-bg:       #ffffff;
+  --orbit-nav-text:        #64748b;
+  --orbit-nav-hover-bg:    #f1f5f9;
+  --orbit-nav-hover-text:  #1e293b;
+  --orbit-nav-active-bg:   #eff6ff;
+  --orbit-nav-active-text: #2563eb;
+  --orbit-nav-active-bar:  #2563eb;
+  /* Surface & content tokens */
+  --orbit-card-bg:         #ffffff;
+  --orbit-card-border:     #e5e7eb;
+  --orbit-text-primary:    #111827;
+  --orbit-text-secondary:  #374151;
+  --orbit-text-muted:      #6b7280;
+  --orbit-input-bg:        #ffffff;
+  --orbit-input-border:    #d1d5db;
+  /* Typography */
+  --orbit-font-family:     "Inter", system-ui, -apple-system, sans-serif;
+  --orbit-font-size-base:  0.875rem;
+  /* Chart categorical palette */
+  --orbit-chart-1:         #ff6b6b;
+  --orbit-chart-2:         #4dabf7;
+  --orbit-chart-3:         #ffd43b;
+  --orbit-chart-4:         #69db7c;
+  --orbit-chart-5:         #845ef7;
+  --orbit-chart-6:         #f06595;
+  --orbit-chart-7:         #74c0fc;
+  /* Hero banner */
+  --orbit-hero-bg:         linear-gradient(135deg, #1e2640 0%, #2d3561 55%, #3b2d5a 100%);
+  --orbit-hero-text:       #ffffff;
+  --orbit-hero-text-muted: rgba(255,255,255,0.5);
+  /* Card chrome — overridden per theme */
+  --orbit-card-shadow:       0 1px 4px rgba(0,0,0,0.06);
+  --orbit-card-border-width: 1px;
+  --orbit-radius-card:       10px;
+  /* Topbar chrome — overridden by dark-topbar themes */
+  --orbit-topbar-text:       #374151;
+  --orbit-topbar-text-muted: #94a3b8;
+  --orbit-topbar-border:     #e2e8f0;
+  --orbit-topbar-pill-bg:    #f8fafc;
+  --orbit-topbar-pill-border:#e2e8f0;
+}
+
+/* ── SAP Horizon ─────────────────────────────────────────────────────────── */
+[data-theme="sap"] {
+  --orbit-primary:         #0070f2;
+  --orbit-primary-hover:   #0060d0;
+  --orbit-primary-dim:     #e8f3ff;
+  --orbit-bg-page:         #f5f6f7;
+  --orbit-bg-surface:      #ffffff;
+  --orbit-bg-hover:        #eaecee;
+  --orbit-sidebar-bg:      #354a5e;
+  --orbit-topbar-bg:       #ffffff;
+  --orbit-nav-text:        #8fb0c8;
+  --orbit-nav-hover-bg:    rgba(255,255,255,0.1);
+  --orbit-nav-hover-text:  #ffffff;
+  --orbit-nav-active-bg:   rgba(0,112,242,0.25);
+  --orbit-nav-active-text: #ffffff;
+  --orbit-nav-active-bar:  #0070f2;
+  --orbit-card-bg:         #ffffff;
+  --orbit-card-border:     #d9dbdd;
+  --orbit-text-primary:    #32363a;
+  --orbit-text-secondary:  #515457;
+  --orbit-text-muted:      #8c8c8c;
+  --orbit-input-bg:        #ffffff;
+  --orbit-input-border:    #bdc3c8;
+  --orbit-font-family:     "Segoe UI", "72", system-ui, sans-serif;
+  --orbit-chart-1:         #0070f2;
+  --orbit-chart-2:         #00a3e0;
+  --orbit-chart-3:         #00b4a0;
+  --orbit-chart-4:         #3cb371;
+  --orbit-chart-5:         #f0ab00;
+  --orbit-chart-6:         #e3701a;
+  --orbit-chart-7:         #c87dff;
+  --orbit-hero-bg:         linear-gradient(135deg, #00396a 0%, #0057a8 55%, #0070f2 100%);
+  --orbit-hero-text:       #ffffff;
+  --orbit-hero-text-muted: rgba(255,255,255,0.55);
+}
+
+/* ── SAP Blue ────────────────────────────────────────────────────────────── */
+[data-theme="sap-blue"] {
+  --orbit-primary:           #0070f2;
+  --orbit-primary-hover:     #0057c2;
+  --orbit-primary-dim:       #e8f3ff;
+  --orbit-bg-page:           #f5f7fa;
+  --orbit-bg-surface:        #ffffff;
+  --orbit-bg-hover:          #e8f3ff;
+  --orbit-sidebar-bg:        linear-gradient(180deg, #0057c2 0%, #0070f2 100%);
+  --orbit-topbar-bg:         #0070f2;
+  --orbit-topbar-text:       #ffffff;
+  --orbit-topbar-text-muted: rgba(255,255,255,0.7);
+  --orbit-topbar-border:     rgba(255,255,255,0.15);
+  --orbit-topbar-pill-bg:    rgba(255,255,255,0.15);
+  --orbit-topbar-pill-border:rgba(255,255,255,0.25);
+  --orbit-nav-text:          #93c5fd;
+  --orbit-nav-hover-bg:      rgba(255,255,255,0.1);
+  --orbit-nav-hover-text:    #ffffff;
+  --orbit-nav-active-bg:     rgba(255,255,255,0.18);
+  --orbit-nav-active-text:   #ffffff;
+  --orbit-nav-active-bar:    #7ab8f5;
+  --orbit-card-bg:           #ffffff;
+  --orbit-card-border:       #c5d8f5;
+  --orbit-text-primary:      #32363a;
+  --orbit-text-secondary:    #515457;
+  --orbit-text-muted:        #0070f2;
+  --orbit-input-bg:          #ffffff;
+  --orbit-input-border:      #c5d8f5;
+  --orbit-font-family:       "72", "Segoe UI", system-ui, sans-serif;
+  --orbit-chart-1:           #0070f2;
+  --orbit-chart-2:           #00b4a0;
+  --orbit-chart-3:           #e3701a;
+  --orbit-chart-4:           #3cb371;
+  --orbit-chart-5:           #f0ab00;
+  --orbit-chart-6:           #c87dff;
+  --orbit-chart-7:           #e00000;
+  --orbit-hero-bg:           linear-gradient(135deg, #003d99 0%, #0057c2 55%, #0070f2 100%);
+  --orbit-hero-text:         #ffffff;
+  --orbit-hero-text-muted:   rgba(255,255,255,0.65);
+}
+
+/* ── Aurora Gradient ─────────────────────────────────────────────────────── */
+[data-theme="aurora"] {
+  --orbit-primary:           #3b82f6;
+  --orbit-primary-hover:     #2563eb;
+  --orbit-primary-dim:       #eff6ff;
+  --orbit-bg-page:           #eff6ff;
+  --orbit-bg-surface:        #ffffff;
+  --orbit-bg-hover:          #dbeafe;
+  --orbit-sidebar-bg:        linear-gradient(175deg, #0f1f5c 0%, #1e3a8a 55%, #2563eb 100%);
+  --orbit-topbar-bg:         #1e3a8a;
+  --orbit-topbar-text:       #ffffff;
+  --orbit-topbar-text-muted: rgba(255,255,255,0.65);
+  --orbit-topbar-border:     rgba(255,255,255,0.12);
+  --orbit-topbar-pill-bg:    rgba(255,255,255,0.12);
+  --orbit-topbar-pill-border:rgba(255,255,255,0.22);
+  --orbit-nav-text:          #93c5fd;
+  --orbit-nav-hover-bg:      rgba(255,255,255,0.1);
+  --orbit-nav-hover-text:    #ffffff;
+  --orbit-nav-active-bg:     rgba(255,255,255,0.18);
+  --orbit-nav-active-text:   #ffffff;
+  --orbit-nav-active-bar:    #93c5fd;
+  --orbit-card-bg:           #ffffff;
+  --orbit-card-border:       #bfdbfe;
+  --orbit-text-primary:      #000000;
+  --orbit-text-secondary:    #000000;
+  --orbit-text-muted:        #000000;
+  --orbit-input-bg:          #ffffff;
+  --orbit-input-border:      #bfdbfe;
+  --orbit-font-family:       "DM Sans", system-ui, sans-serif;
+  --orbit-chart-1:           #3b82f6;
+  --orbit-chart-2:           #60a5fa;
+  --orbit-chart-3:           #93c5fd;
+  --orbit-chart-4:           #38bdf8;
+  --orbit-chart-5:           #34d399;
+  --orbit-chart-6:           #fbbf24;
+  --orbit-chart-7:           #a78bfa;
+  --orbit-hero-bg:           linear-gradient(135deg, #0f1f5c 0%, #1e3a8a 55%, #2563eb 100%);
+  --orbit-hero-text:         #ffffff;
+  --orbit-hero-text-muted:   rgba(255,255,255,0.6);
+}
+
+
+
+/* ── Fresh (Mint / Sage) ─────────────────────────────────────────────────── */
+[data-theme="fresh"] {
+  --orbit-primary:         #16a34a;
+  --orbit-primary-hover:   #15803d;
+  --orbit-primary-dim:     #dcfce7;
+  --orbit-bg-page:         #e8f5ee;
+  --orbit-bg-surface:      #f2faf6;
+  --orbit-bg-hover:        #dcfce7;
+  --orbit-sidebar-bg:      #f7fef9;
+  --orbit-topbar-bg:       #ffffff;
+  --orbit-nav-text:        #4b7a5e;
+  --orbit-nav-hover-bg:    #dcfce7;
+  --orbit-nav-hover-text:  #14532d;
+  --orbit-nav-active-bg:   #dcfce7;
+  --orbit-nav-active-text: #16a34a;
+  --orbit-nav-active-bar:  #22c55e;
+  --orbit-card-bg:         #f0fdf4;
+  --orbit-card-border:     #bbf7d0;
+  --orbit-text-primary:    #14532d;
+  --orbit-text-secondary:  #166534;
+  --orbit-text-muted:      #52866a;
+  --orbit-input-bg:        #f0fdf4;
+  --orbit-input-border:    #86efac;
+  --orbit-font-family:     "Inter", system-ui, -apple-system, sans-serif;
+  --orbit-chart-1:         #22c55e;
+  --orbit-chart-2:         #06b6d4;
+  --orbit-chart-3:         #84cc16;
+  --orbit-chart-4:         #10b981;
+  --orbit-chart-5:         #0d9488;
+  --orbit-chart-6:         #4ade80;
+  --orbit-chart-7:         #a3e635;
+  --orbit-hero-bg:         linear-gradient(135deg, #14532d 0%, #166534 55%, #22c55e 100%);
+  --orbit-hero-text:       #ffffff;
+  --orbit-hero-text-muted: rgba(255,255,255,0.55);
+}
+
+/* ── Brutal (Neobrutalism) ───────────────────────────────────────────────── */
+[data-theme="brutal"] {
+  --orbit-primary:           #ffe500;
+  --orbit-primary-hover:     #f5d800;
+  --orbit-primary-dim:       #fffde0;
+  --orbit-bg-page:           #f5f5f5;
+  --orbit-bg-surface:        #fafafa;
+  --orbit-bg-hover:          #eeeeee;
+  --orbit-sidebar-bg:        #ffffff;
+  --orbit-topbar-bg:         #ffffff;
+  --orbit-nav-text:          #444444;
+  --orbit-nav-hover-bg:      #ffe500;
+  --orbit-nav-hover-text:    #000000;
+  --orbit-nav-active-bg:     #ffe500;
+  --orbit-nav-active-text:   #000000;
+  --orbit-nav-active-bar:    #000000;
+  --orbit-card-bg:           #ffffff;
+  --orbit-card-border:       #000000;
+  --orbit-card-border-width: 2px;
+  --orbit-card-shadow:       4px 4px 0 #000000;
+  --orbit-radius-card:       4px;
+  --orbit-text-primary:      #000000;
+  --orbit-text-secondary:    #111111;
+  --orbit-text-muted:        #555555;
+  --orbit-input-bg:          #ffffff;
+  --orbit-input-border:      #000000;
+  --orbit-font-family:       "Space Grotesk", "DM Sans", system-ui, sans-serif;
+  /* yellow + black + teal/coral — matching the neobrutalism card chips */
+  --orbit-chart-1:           #ffe500;
+  --orbit-chart-2:           #111111;
+  --orbit-chart-3:           #00c49a;
+  --orbit-chart-4:           #ff6b6b;
+  --orbit-chart-5:           #a78bfa;
+  --orbit-chart-6:           #f97316;
+  --orbit-chart-7:           #60a5fa;
+  --orbit-hero-bg:           linear-gradient(135deg, #111111 0%, #222222 55%, #1a1a1a 100%);
+  --orbit-hero-text:         #ffe500;
+  --orbit-hero-text-muted:   rgba(255,229,0,0.55);
+}
+
+/* ── Mono (Wireframe / Blueprint) ───────────────────────────────────────── */
+[data-theme="mono"] {
+  --orbit-primary:           #1a1a1a;
+  --orbit-primary-hover:     #000000;
+  --orbit-primary-dim:       #eeeeee;
+  --orbit-bg-page:           #f2f2f2;
+  --orbit-bg-surface:        #f8f8f8;
+  --orbit-bg-hover:          #e8e8e8;
+  --orbit-sidebar-bg:        #efefef;
+  --orbit-topbar-bg:         #ffffff;
+  --orbit-nav-text:          #666666;
+  --orbit-nav-hover-bg:      #e0e0e0;
+  --orbit-nav-hover-text:    #1a1a1a;
+  --orbit-nav-active-bg:     #e0e0e0;
+  --orbit-nav-active-text:   #1a1a1a;
+  --orbit-nav-active-bar:    #1a1a1a;
+  --orbit-card-bg:           #ffffff;
+  --orbit-card-border:       #bbbbbb;
+  --orbit-card-border-width: 1.5px;
+  --orbit-card-shadow:       none;
+  --orbit-text-primary:      #1a1a1a;
+  --orbit-text-secondary:    #444444;
+  --orbit-text-muted:        #888888;
+  --orbit-input-bg:          #ffffff;
+  --orbit-input-border:      #bbbbbb;
+  --orbit-font-family:       "Courier New", Courier, "Lucida Console", monospace;
+  --orbit-chart-1:           #333333;
+  --orbit-chart-2:           #777777;
+  --orbit-chart-3:           #aaaaaa;
+  --orbit-chart-4:           #555555;
+  --orbit-chart-5:           #999999;
+  --orbit-chart-6:           #222222;
+  --orbit-chart-7:           #bbbbbb;
+  --orbit-hero-bg:           linear-gradient(135deg, #111111 0%, #2a2a2a 55%, #1a1a1a 100%);
+  --orbit-hero-text:         #ffffff;
+  --orbit-hero-text-muted:   rgba(255,255,255,0.5);
+}
+
+
+/* ── Prism (Holographic Gradient) ───────────────────────────────────────── */
+[data-theme="prism"] {
+  --orbit-primary:         #9b5de5;
+  --orbit-primary-hover:   #7c3aed;
+  --orbit-primary-dim:     #f5e6ff;
+  --orbit-bg-page:         linear-gradient(135deg, #ffe4ec 0%, #f3e8ff 50%, #fff3e0 100%);
+  --orbit-bg-surface:      #fefaff;
+  --orbit-bg-hover:        #f0e0ff;
+  --orbit-sidebar-bg:      #ffffff;
+  --orbit-topbar-bg:       #ffffff;
+  --orbit-nav-text:        #8b7fa8;
+  --orbit-nav-hover-bg:    rgba(155,93,229,0.08);
+  --orbit-nav-hover-text:  #1a1a2e;
+  --orbit-nav-active-bg:   rgba(155,93,229,0.12);
+  --orbit-nav-active-text: #9b5de5;
+  --orbit-nav-active-bar:  #9b5de5;
+  --orbit-card-bg:         rgba(255,255,255,0.85);
+  --orbit-card-border:     #e9d8ff;
+  --orbit-text-primary:    #1a1a2e;
+  --orbit-text-secondary:  #4a4a6a;
+  --orbit-text-muted:      #8b7fa8;
+  --orbit-input-bg:        rgba(255,255,255,0.9);
+  --orbit-input-border:    #d8b4fe;
+  --orbit-font-family:     "Inter", system-ui, -apple-system, sans-serif;
+  --orbit-chart-1:         #9b5de5;
+  --orbit-chart-2:         #22d3ee;
+  --orbit-chart-3:         #f97316;
+  --orbit-chart-4:         #ec4899;
+  --orbit-chart-5:         #a855f7;
+  --orbit-chart-6:         #06b6d4;
+  --orbit-chart-7:         #fb923c;
+  --orbit-hero-bg:         linear-gradient(135deg, #6b21a8 0%, #9b5de5 50%, #ec4899 100%);
+  --orbit-hero-text:       #ffffff;
+  --orbit-hero-text-muted: rgba(255,255,255,0.6);
+}
+
+
+/* ── Terminal (CRT / Hacker) ─────────────────────────────────────────────── */
+[data-theme="terminal"] {
+  --orbit-primary:           #00ff41;
+  --orbit-primary-hover:     #00cc33;
+  --orbit-primary-dim:       rgba(0,255,65,0.1);
+  --orbit-bg-page:           #0a0a0a;
+  --orbit-bg-surface:        #111111;
+  --orbit-bg-hover:          #1a1a1a;
+  --orbit-sidebar-bg:        #0a0a0a;
+  --orbit-topbar-bg:         #111111;
+  --orbit-topbar-text:       #00ff41;
+  --orbit-topbar-text-muted: rgba(0,255,65,0.5);
+  --orbit-topbar-border:     rgba(0,255,65,0.2);
+  --orbit-topbar-pill-bg:    rgba(0,255,65,0.08);
+  --orbit-topbar-pill-border:rgba(0,255,65,0.3);
+  --orbit-nav-text:          rgba(0,255,65,0.45);
+  --orbit-nav-hover-bg:      rgba(0,255,65,0.08);
+  --orbit-nav-hover-text:    #00ff41;
+  --orbit-nav-active-bg:     rgba(0,255,65,0.13);
+  --orbit-nav-active-text:   #00ff41;
+  --orbit-nav-active-bar:    #00ff41;
+  --orbit-card-bg:           #111111;
+  --orbit-card-border:       rgba(0,255,65,0.22);
+  --orbit-card-border-width: 1px;
+  --orbit-card-shadow:       0 0 12px rgba(0,255,65,0.06);
+  --orbit-text-primary:      #00ff41;
+  --orbit-text-secondary:    rgba(0,255,65,0.8);
+  --orbit-text-muted:        rgba(0,255,65,0.4);
+  --orbit-input-bg:          #111111;
+  --orbit-input-border:      rgba(0,255,65,0.3);
+  --orbit-font-family:       "Courier New", Courier, "Lucida Console", monospace;
+  --orbit-chart-1:           #00ff41;
+  --orbit-chart-2:           #00ccff;
+  --orbit-chart-3:           #ffff00;
+  --orbit-chart-4:           #ff4444;
+  --orbit-chart-5:           #ff88ff;
+  --orbit-chart-6:           #00ffcc;
+  --orbit-chart-7:           #ff8800;
+  --orbit-hero-bg:           linear-gradient(135deg, #001a00 0%, #003300 55%, #004d00 100%);
+  --orbit-hero-text:         #00ff41;
+  --orbit-hero-text-muted:   rgba(0,255,65,0.5);
+}
+
+/* ── Nord (Scandinavian Blue-Grey) ──────────────────────────────────────── */
+[data-theme="nord"] {
+  --orbit-primary:           #88c0d0;
+  --orbit-primary-hover:     #81b0c4;
+  --orbit-primary-dim:       rgba(136,192,208,0.15);
+  --orbit-bg-page:           #e5e9f0;
+  --orbit-bg-surface:        #eceff4;
+  --orbit-bg-hover:          #d8dee9;
+  --orbit-sidebar-bg:        #2e3440;
+  --orbit-topbar-bg:         #3b4252;
+  --orbit-topbar-text:       #d8dee9;
+  --orbit-topbar-text-muted: rgba(216,222,233,0.55);
+  --orbit-topbar-border:     rgba(255,255,255,0.07);
+  --orbit-topbar-pill-bg:    rgba(255,255,255,0.07);
+  --orbit-topbar-pill-border:rgba(255,255,255,0.14);
+  --orbit-nav-text:          #616e88;
+  --orbit-nav-hover-bg:      rgba(255,255,255,0.07);
+  --orbit-nav-hover-text:    #eceff4;
+  --orbit-nav-active-bg:     rgba(136,192,208,0.18);
+  --orbit-nav-active-text:   #88c0d0;
+  --orbit-nav-active-bar:    #88c0d0;
+  --orbit-card-bg:           #ffffff;
+  --orbit-card-border:       #d8dee9;
+  --orbit-text-primary:      #2e3440;
+  --orbit-text-secondary:    #3b4252;
+  --orbit-text-muted:        #7b88a1;
+  --orbit-input-bg:          #ffffff;
+  --orbit-input-border:      #c5cdd9;
+  --orbit-font-family:       "Inter", system-ui, -apple-system, sans-serif;
+  --orbit-chart-1:           #88c0d0;
+  --orbit-chart-2:           #81a1c1;
+  --orbit-chart-3:           #a3be8c;
+  --orbit-chart-4:           #ebcb8b;
+  --orbit-chart-5:           #b48ead;
+  --orbit-chart-6:           #bf616a;
+  --orbit-chart-7:           #d08770;
+  --orbit-hero-bg:           linear-gradient(135deg, #2e3440 0%, #3b4252 55%, #434c5e 100%);
+  --orbit-hero-text:         #eceff4;
+  --orbit-hero-text-muted:   rgba(236,239,244,0.55);
+}
+
+/* ── Copper (Industrial Dark) ───────────────────────────────────────────── */
+[data-theme="copper"] {
+  --orbit-primary:           #b87333;
+  --orbit-primary-hover:     #9e6228;
+  --orbit-primary-dim:       rgba(184,115,51,0.13);
+  --orbit-bg-page:           #1a140e;
+  --orbit-bg-surface:        #221c14;
+  --orbit-bg-hover:          #2c241a;
+  --orbit-sidebar-bg:        #141009;
+  --orbit-topbar-bg:         #221c14;
+  --orbit-topbar-text:       #d4a96a;
+  --orbit-topbar-text-muted: rgba(212,169,106,0.55);
+  --orbit-topbar-border:     rgba(184,115,51,0.22);
+  --orbit-topbar-pill-bg:    rgba(184,115,51,0.1);
+  --orbit-topbar-pill-border:rgba(184,115,51,0.28);
+  --orbit-nav-text:          #6a5030;
+  --orbit-nav-hover-bg:      rgba(184,115,51,0.1);
+  --orbit-nav-hover-text:    #d4a96a;
+  --orbit-nav-active-bg:     rgba(184,115,51,0.2);
+  --orbit-nav-active-text:   #c88840;
+  --orbit-nav-active-bar:    #b87333;
+  --orbit-card-bg:           #221c14;
+  --orbit-card-border:       #3a2e1e;
+  --orbit-text-primary:      #e8d5b0;
+  --orbit-text-secondary:    #c8a870;
+  --orbit-text-muted:        #7a6040;
+  --orbit-input-bg:          #1a140e;
+  --orbit-input-border:      #4a3820;
+  --orbit-font-family:       "Inter", system-ui, -apple-system, sans-serif;
+  --orbit-chart-1:           #b87333;
+  --orbit-chart-2:           #cd7f32;
+  --orbit-chart-3:           #d4a96a;
+  --orbit-chart-4:           #8b5e3c;
+  --orbit-chart-5:           #e8b84b;
+  --orbit-chart-6:           #a0522d;
+  --orbit-chart-7:           #daa520;
+  --orbit-hero-bg:           linear-gradient(135deg, #0a0805 0%, #18130c 55%, #221c14 100%);
+  --orbit-hero-text:         #d4a96a;
+  --orbit-hero-text-muted:   rgba(212,169,106,0.55);
+}
+
+/* ── Dark ────────────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --orbit-primary:           #818cf8;
+  --orbit-primary-hover:     #6366f1;
+  --orbit-primary-dim:       rgba(99,102,241,0.18);
+  --orbit-bg-page:           #0f172a;
+  --orbit-bg-surface:        #1e293b;
+  --orbit-bg-hover:          #334155;
+  --orbit-sidebar-bg:        #0f172a;
+  --orbit-topbar-bg:         #1e293b;
+  --orbit-topbar-text:       #e2e8f0;
+  --orbit-topbar-text-muted: rgba(148,163,184,0.8);
+  --orbit-topbar-border:     rgba(255,255,255,0.07);
+  --orbit-topbar-pill-bg:    rgba(255,255,255,0.06);
+  --orbit-topbar-pill-border:rgba(255,255,255,0.12);
+  --orbit-nav-text:          #475569;
+  --orbit-nav-hover-bg:      rgba(255,255,255,0.06);
+  --orbit-nav-hover-text:    #f1f5f9;
+  --orbit-nav-active-bg:     rgba(129,140,248,0.15);
+  --orbit-nav-active-text:   #818cf8;
+  --orbit-nav-active-bar:    #818cf8;
+  --orbit-card-bg:           #1e293b;
+  --orbit-card-border:       #334155;
+  --orbit-text-primary:      #f1f5f9;
+  --orbit-text-secondary:    #cbd5e1;
+  --orbit-text-muted:        #64748b;
+  --orbit-input-bg:          #1e293b;
+  --orbit-input-border:      #475569;
+  --orbit-font-family:       "Inter", system-ui, -apple-system, sans-serif;
+  --orbit-chart-1:           #818cf8;
+  --orbit-chart-2:           #34d399;
+  --orbit-chart-3:           #fbbf24;
+  --orbit-chart-4:           #f87171;
+  --orbit-chart-5:           #a78bfa;
+  --orbit-chart-6:           #38bdf8;
+  --orbit-chart-7:           #fb923c;
+  --orbit-hero-bg:           linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #1e1b4b 100%);
+  --orbit-hero-text:         #f1f5f9;
+  --orbit-hero-text-muted:   rgba(241,245,249,0.5);
+}
+
+/* ── Resets ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  font-family: var(--orbit-font-family, "Inter", "72", Arial, Helvetica, sans-serif);
+  font-size: var(--orbit-font-size-base, 0.875rem);
+  background: var(--orbit-bg-page, #f5f4ff);
+  color: var(--orbit-text-primary, #111827);
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 5px; height: 5px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--orbit-gray-300); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--orbit-gray-600); }
+
+/* ── Animations ────────────────────────────────────────────────────────────── */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0);    }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0);     }
+}
+
+@keyframes fade-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.75); }
+  50%       { opacity: 1;   transform: scale(1);    }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(37,99,235,0);  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg);   }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+@keyframes status-ping {
+  0%    { transform: scale(1);   opacity: 1; }
+  75%,100% { transform: scale(2); opacity: 0; }
+}
+
+/* ── CSS Tooltips (data-tip attribute) ──────────────────────────────────────── */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: #1e293b;
+  color: #f1f5f9;
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1.45;
+  padding: 0.35rem 0.625rem;
+  border-radius: 0.375rem;
+  white-space: normal;
+  max-width: 240px;
+  width: max-content;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 9000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+  text-align: center;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+[data-tip]::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #1e293b;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 9000;
+  transition: opacity 0.15s ease;
+}
+
+[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+[data-tip]:hover::before {
+  opacity: 1;
+}
+
+/* ── Tooltip right variant (for elements near left edge) ─────────────────── */
+.tooltip-right[data-tip]::after {
+  left: calc(100% + 8px);
+  bottom: auto;
+  top: 50%;
+  transform: translateX(0) translateY(-50%);
+  text-align: left;
+}
+.tooltip-right[data-tip]::before {
+  left: calc(100% + 2px);
+  bottom: auto;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top-color: transparent;
+  border-right-color: #1e293b;
+}
+.tooltip-right[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(0) translateY(-50%);
+}
+.tooltip-right[data-tip]:hover::before {
+  opacity: 1;
+}
+
+/* ── Tooltip below variant (for header / top-of-page elements) ───────────── */
+.tooltip-below[data-tip]::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-4px);
+}
+.tooltip-below[data-tip]::before {
+  bottom: auto;
+  top: calc(100% + 2px);
+  border-top-color: transparent;
+  border-bottom-color: #1e293b;
+}
+.tooltip-below[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.tooltip-below[data-tip]:hover::before {
+  opacity: 1;
+}
+
+/* ── Utility: animate children sequentially ───────────────────────────────── */
+.animate-in { animation: fade-in-up var(--orbit-transition) both; }
+
+/* ── Page containers ───────────────────────────────────────────────────────── */
+.orbit-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 1rem;
+  padding: 1.25rem;
+  animation: fade-in 0.3s ease both;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────────────────── */
+.orbit-card {
+  background: var(--orbit-card-bg, #fff);
+  border-radius: var(--orbit-radius);
+  box-shadow: var(--orbit-shadow-sm);
+  border: 1px solid var(--orbit-card-border, var(--orbit-gray-200));
+}
+
+/* ── Status colours (text + bg) ────────────────────────────────────────────── */
+.status-failed     { color: var(--orbit-red);   background: var(--orbit-red-light); }
+.status-success    { color: var(--orbit-green);  background: var(--orbit-green-light); }
+.status-processing { color: var(--orbit-blue);   background: var(--orbit-blue-dim); }
+.status-retry      { color: var(--orbit-amber);  background: var(--orbit-amber-light); }

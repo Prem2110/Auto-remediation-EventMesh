@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Premortem Report — SAP CPI Self-Healing Agent</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0e1a; color: #c9d1e8; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; line-height: 1.6; padding: 40px 24px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  h1 { font-size: 2rem; color: #e8eaf6; letter-spacing: -0.5px; margin-bottom: 4px; }
+  .subtitle { color: #7986cb; font-size: 0.95rem; margin-bottom: 8px; }
+  .meta { color: #546e9e; font-size: 0.85rem; margin-bottom: 40px; border-bottom: 1px solid #1e2d4a; padding-bottom: 20px; }
+
+  /* SYNTHESIS SECTION */
+  .synthesis { background: #0d1527; border: 1px solid #1e3a6e; border-radius: 12px; padding: 32px; margin-bottom: 48px; }
+  .synthesis h2 { color: #90caf9; font-size: 1.1rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 24px; }
+  .synthesis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+  .synthesis-card { background: #111c35; border-radius: 8px; padding: 20px; }
+  .synthesis-card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; font-weight: 600; }
+  .synthesis-card p { font-size: 0.9rem; color: #b0bec5; }
+  .most-likely .label { color: #ef9a9a; }
+  .most-dangerous .label { color: #ff7043; }
+  .hidden-assumption .label { color: #ffd54f; }
+  .hidden-assumption { grid-column: 1 / -1; }
+
+  .revised-plan { background: #111c35; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+  .revised-plan h3 { color: #80cbc4; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .revised-plan ol { padding-left: 20px; }
+  .revised-plan li { color: #b0bec5; font-size: 0.9rem; margin-bottom: 8px; }
+  .revised-plan li strong { color: #e0e0e0; }
+
+  .checklist { background: #111c35; border-radius: 8px; padding: 20px; }
+  .checklist h3 { color: #80cbc4; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .checklist-item { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .check { width: 18px; height: 18px; border: 2px solid #4caf50; border-radius: 4px; flex-shrink: 0; margin-top: 2px; }
+  .checklist-item span { color: #b0bec5; font-size: 0.9rem; }
+
+  /* AGENT COUNT BANNER */
+  .agent-banner { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; color: #7986cb; font-size: 0.85rem; }
+  .agent-count { background: #1a237e; border-radius: 20px; padding: 4px 14px; color: #90caf9; font-weight: 600; font-size: 1rem; }
+
+  /* FAILURE CARDS */
+  .section-title { color: #546e9e; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 20px; }
+  .cards-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .failure-card { border-radius: 10px; padding: 24px; border: 1px solid; }
+  .failure-card h3 { font-size: 1rem; margin-bottom: 4px; }
+  .failure-card .failure-num { font-size: 0.75rem; opacity: 0.6; margin-bottom: 12px; }
+  .failure-card .section { margin-top: 16px; }
+  .failure-card .section-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; margin-bottom: 6px; font-weight: 600; }
+  .failure-card p { font-size: 0.85rem; color: #b0bec5; }
+  .assumption-box { background: rgba(0,0,0,0.2); border-radius: 6px; padding: 10px 12px; margin-top: 4px; font-size: 0.85rem; font-style: italic; }
+  .warning-signs li { font-size: 0.85rem; color: #b0bec5; margin-left: 16px; margin-bottom: 4px; }
+
+  /* Card color themes */
+  .card-1 { background: #1a0e1e; border-color: #7b1fa2; } .card-1 h3 { color: #ce93d8; }
+  .card-2 { background: #0e1a1a; border-color: #00695c; } .card-2 h3 { color: #80cbc4; }
+  .card-3 { background: #1a1200; border-color: #e65100; } .card-3 h3 { color: #ffcc80; }
+  .card-4 { background: #0e1520; border-color: #1565c0; } .card-4 h3 { color: #90caf9; }
+  .card-5 { background: #1a0a0a; border-color: #c62828; } .card-5 h3 { color: #ef9a9a; }
+  .card-6 { background: #0e1a0e; border-color: #2e7d32; } .card-6 h3 { color: #a5d6a7; }
+  .card-7 { background: #1a1800; border-color: #f57f17; } .card-7 h3 { color: #fff176; }
+  .card-8 { background: #1a0e14; border-color: #ad1457; } .card-8 h3 { color: #f48fb1; }
+
+  /* Severity badges */
+  .badge { display: inline-block; font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-left: 8px; vertical-align: middle; }
+  .badge-critical { background: #b71c1c; color: #ffcdd2; }
+  .badge-high { background: #e65100; color: #ffe0b2; }
+  .badge-medium { background: #1565c0; color: #bbdefb; }
+
+  footer { margin-top: 60px; border-top: 1px solid #1e2d4a; padding-top: 20px; color: #37474f; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Premortem Report</h1>
+  <div class="subtitle">SAP CPI Self-Healing Agent — Sierra Digital</div>
+  <div class="meta">Frame: 6 months from now, the project has failed. Working backward to find every reason why. &nbsp;|&nbsp; Generated: 2026-05-26</div>
+
+  <!-- SYNTHESIS -->
+  <div class="synthesis">
+    <h2>Synthesis</h2>
+    <div class="synthesis-grid">
+      <div class="synthesis-card most-likely">
+        <div class="label">Most Likely Failure</div>
+        <p><strong>The async deploy gap (Failure #5).</strong> Every fix the agent "applies" may not actually deploy. HTTP 202 is not deployment confirmation — it's a queue acknowledgment. This is already a known open gap (in project memory) and still unresolved. Until post-deploy status polling is implemented, the fix history is untrustworthy and any client audit will expose the discrepancy.</p>
+      </div>
+      <div class="synthesis-card most-dangerous">
+        <div class="label">Most Dangerous Failure</div>
+        <p><strong>The settings page without guardrails (Failure #8).</strong> A single misconfigured confidence threshold causes the agent to auto-deploy incorrect fixes to production iFlows, corrupting live business transactions. This is the failure most likely to trigger contract termination and reputational damage — the client has no audit trail and Sierra Digital can't reconstruct what happened.</p>
+      </div>
+      <div class="synthesis-card hidden-assumption">
+        <div class="label">The Hidden Assumption (across all 8 failures)</div>
+        <p><strong>"If the pipeline completes without throwing an exception, the fix was applied correctly."</strong> This assumption underlies 5 of the 8 failures: the SAP API surface change (the pipeline completed, nothing was actually fixed), the async deploy (202 accepted, deployment failed silently), the silent DB write failure (no exception, status never persisted), the OAuth expiry (update succeeded, deploy failed, no rollback), and the confidence score mismatch (high score, wrong fix). The system has no end-to-end verification that the intended outcome was actually achieved. It only verifies that each step didn't crash.</p>
+      </div>
+    </div>
+
+    <div class="revised-plan">
+      <h3>The Revised Plan — Concrete changes this week</h3>
+      <ol>
+        <li><strong>Add post-deploy status polling before claiming success.</strong> After deploy-iflow returns 202, poll get-iflow (or get-deploy-status) every 10s for up to 3 minutes. Only mark "Fix Applied" when iFlow reaches STARTED state. On FAILED, call get-deploy-error and rotate strategy. This closes the most likely failure and the hidden assumption at once.</li>
+        <li><strong>Add a minimum floor and audit log to the settings page.</strong> Reject any confidence threshold below 0.75 with a validation error. Log every settings change with timestamp, user, old value, and new value to the incidents database. Show the audit log in the UI. This closes the most dangerous failure.</li>
+        <li><strong>Add an idempotency lock on incident processing.</strong> Add a <code>processing_at</code> / <code>processing_by</code> column to the incidents table. The loop only picks up incidents where this is null or stale (>10 min). This prevents double-processing after HANA outages.</li>
+        <li><strong>Add a pre-emptive unlock call at fix pipeline start.</strong> Call unlock-iflow unconditionally before get-iflow in execute_incident_fix. This was already identified in project memory as a one-liner improvement — it prevents OAuth expiry mid-fix from leaving iFlows permanently locked.</li>
+        <li><strong>Show scope limitations explicitly in the dashboard.</strong> When an incident is Groovy/XSLT/mmap and the system can't fix it, display "Outside remediation scope — manual review required" rather than a generic low-confidence message. Clients need to know this is by design, not a malfunction.</li>
+      </ol>
+    </div>
+
+    <div class="checklist">
+      <h3>Pre-Delivery Checklist</h3>
+      <div class="checklist-item"><div class="check"></div><span>Post-deploy status polling implemented and verified against a real SAP CPI deployment (not just mocked)</span></div>
+      <div class="checklist-item"><div class="check"></div><span>Settings page: minimum threshold floor (0.75) enforced server-side, change audit log persisted to DB</span></div>
+      <div class="checklist-item"><div class="check"></div><span>Incident idempotency: processing lock column added, loop eligibility query updated</span></div>
+      <div class="checklist-item"><div class="check"></div><span>Dashboard clearly distinguishes "outside remediation scope" from "low confidence" for Groovy/XSLT errors</span></div>
+      <div class="checklist-item"><div class="check"></div><span>HANA connection loss test: simulate outage, verify loop recovers cleanly without double-processing on restart</span></div>
+    </div>
+  </div>
+
+  <!-- AGENT COUNT -->
+  <div class="agent-banner">
+    <span class="agent-count">8 agents</span>
+    ran in parallel — one deep-dive per failure reason
+  </div>
+
+  <div class="section-title">Failure Deep-Dives</div>
+
+  <div class="cards-grid">
+
+    <!-- Card 1 -->
+    <div class="failure-card card-1">
+      <div class="failure-num">Failure #1 <span class="badge badge-high">High</span></div>
+      <h3>Fix rate stays too low to be trusted</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>The value-search fallback was a patch on a misdiagnosis. The real problem was that LLM RCA produced structurally plausible but semantically wrong fixes for the majority of error types. The +0.10 confidence boost pushed borderline cases (0.82 → 0.92) into auto-fix — but those were the cases that previously routed correctly to manual review. They now deployed in a broken state. The client saw actively broken deployments, not just unresolved alerts. By month 3, they had a rule: flag every agent-touched iFlow for manual review. By month 5, the agent was generating more work, not less. The confidence score measured RCA completeness (all 4 fields present), not fix correctness. A confidently wrong answer scored 0.95.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">A high RCA confidence score correlates with a correct fix, when it only measures structural completeness of the LLM's output.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>Deploy success rate drops while RCA confidence scores trend upward — the two metrics diverge in logs within the first 2 weeks of the boost going live.</li>
+          <li>The same iFlow error type reappears in the incident table on consecutive days — the agent "fixed" it, it was redeployed, and it broke again.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 2 -->
+    <div class="failure-card card-2">
+      <div class="failure-num">Failure #2 <span class="badge badge-critical">Critical</span></div>
+      <h3>SAP API surface change breaks pipeline silently</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>SAP's Q1 quarterly update moved iFlow XML from the <code>iflowContent</code> key to <code>artifactContent</code>. The <code>_unwrap_getiflow_response</code> function checked only the old key; when absent, it returned the raw JSON blob. The LLM received outer JSON, not XML, and generated patches against phantom nodes. <code>update-iflow</code> accepted the payload. <code>deploy-iflow</code> changed from 202 to 200 with <code>"status":"queued"</code> — the keyword matcher didn't match, but the orchestrator's LLM-evaluation path overrode and marked success anyway. For 3 weeks, every "Fix Applied" record was fiction. A client escalation revealed zero successful deployments since the platform update date.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">HTTP status codes and keyword-matched strings in MCP tool responses are a reliable, stable proxy for actual SAP platform behavior.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>get-iflow output length dropped sharply in logs — <code>&lt;XML len=~400&gt;</code> instead of <code>&lt;XML len=~8000+&gt;</code>. A size threshold alert would fire within the first hour.</li>
+          <li>fix_applied=True with deploy_success=False across consecutive incidents — trivially detectable with a daily SQL query, but no monitoring existed.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 3 -->
+    <div class="failure-card card-3">
+      <div class="failure-num">Failure #3 <span class="badge badge-high">High</span></div>
+      <h3>HANA outage causes double-processing and data corruption</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>HANA entered a 45-minute maintenance window during business hours. The autonomous loop hit <code>HDBException: connection refused</code>, retried in a tight loop, exhausted its stack, and crashed. CF's health check (HTTP endpoint only, no HANA dependency) declared the app healthy — the loop stayed dead for 4 hours with no alert. When HANA came back, the loop restarted and found 23 open incidents, including several already manually resolved. With no idempotency key and no processing lock, it re-ran the full fix pipeline on all of them. Three iFlows were redeployed mid-message. Two corrupted in-flight payloads. The client pulled the agent's credentials that afternoon.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">HANA Cloud would always be available when the loop ran, so incident state transitions never needed to be idempotent or recoverable.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>The incident table had no <code>processing_at</code> column — any engineer reading the schema could see concurrent replay was structurally impossible to prevent.</li>
+          <li>Integration test re-runs against a shared dev database occasionally produced duplicate fix attempts, closed as "test harness issues" rather than missing idempotency.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 4 -->
+    <div class="failure-card card-4">
+      <div class="failure-num">Failure #4 <span class="badge badge-high">High</span></div>
+      <h3>System can't fix what clients actually break (Groovy/XSLT)</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>In the client's production environment, 65% of iFlow failures originated in Groovy scripts and XSLT transformations — not property/config errors. The system classified these correctly (MAPPING_ERROR, RUNTIME_EXCEPTION), ran full RCA, then stalled at the confidence gate every time with "insufficient confidence to auto-fix." This happened hundreds of times a month. The dashboard showed high incident volume with a 4% resolution rate. The client concluded the agent was malfunctioning — not that it was operating as designed for a problem that didn't match their environment. The limitation was never surfaced in the UI. There was only a low confidence score where clients expected action.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">The errors reachable by the fix engine represented the majority of errors the target client actually experienced.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>During pilot, message log analysis consistently showed Groovy-originated stack traces — the team focused on incidents that resolved, not on those that didn't.</li>
+          <li>Confidence score distribution skewed heavily below threshold from week one. Nobody asked why the median was so low.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 5 -->
+    <div class="failure-card card-5">
+      <div class="failure-num">Failure #5 <span class="badge badge-critical">Critical</span></div>
+      <h3>Async deploy creates false "Fix Applied" history</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>The agent treated HTTP 202 from deploy-iflow as deployment success. Quota exceeded errors, XML schema violations, and dependency conflicts all returned 202 and then failed asynchronously. The agent closed these incidents as fixed. No polling loop, no status check, no reconciliation. Fixed iFlows reappeared as new incidents with identical error signatures 24–48 hours later — the system re-opened what it had never closed. Six months in, a client compliance audit cross-referenced the agent's fix history against SAP CPI deployment logs. 23% of "Fix Applied" records had no corresponding STARTED state in SAP. The client concluded the agent was fabricating success records. No technical explanation of the 202 async gap recovered the trust.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">HTTP 202 from SAP CPI is a reliable proxy for eventual deployment success, rather than merely an acknowledgment that the request was queued.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>iFlows marked "Fix Applied" reappearing as new incidents within 24–48 hours with identical error signatures.</li>
+          <li>SAP CPI cockpit showing iFlows in persistent STARTING or ERROR state that the agent's database listed as STARTED — visible to any engineer who checked both systems side by side.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 6 -->
+    <div class="failure-card card-6">
+      <div class="failure-num">Failure #6 <span class="badge badge-medium">Medium</span></div>
+      <h3>OAuth expiry leaves iFlows locked mid-fix</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>During a long overnight session, OAuth tokens (4-hour TTL) expired between update-iflow and deploy-iflow on 3 consecutive fixes. update-iflow had already succeeded — iFlows were checked out and modified. deploy-iflow returned 401. The error handler logged the 401 and moved on without rollback or unlock. The pipeline's cleanup logic only handled "locked" errors on <em>entry</em>, not on exit after partial success. By morning, 3 production iFlows were locked in a modified-but-undeployed state. Subsequent fix attempts hit the locked state and skipped. The client's integration team spent half a day manually unlocking and reverting.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">Token refresh failure would only ever occur before a pipeline started, never between an already-committed write and its mandatory follow-on deploy.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>In staging, deploy-iflow occasionally logged a 401 on first attempt followed by a silent retry — nobody verified whether the retry was fetching a fresh token or reusing the expired one.</li>
+          <li>A small count of "unresolved" incidents after sessions longer than 3.5 hours — treated as noise, not as a locked-state signal.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 7 -->
+    <div class="failure-card card-7">
+      <div class="failure-num">Failure #7 <span class="badge badge-high">High</span></div>
+      <h3>Zero test coverage makes every refactor a gamble</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>A HANA schema refactor changed the physical column naming convention. <code>update_incident(incident_id, {"status": "AUTO_FIXED"})</code> silently skipped the write when the column lookup returned None — the function returned without exception. The logger emitted a warning that nobody was watching. On the next loop iteration, the incident was still <code>FIX_IN_PROGRESS</code> and was picked up again. The loop began re-fixing the same 5 iFlows in parallel across multiple ticks. Within 12 hours, SAP AI Core token consumption triggered rate limiting (429s). All remediation capability went down for 48 hours across the shared tenant — affecting every client. No tests existed for <code>update_incident</code> verifying persistence. The CLAUDE.md 80% coverage standard was never enforced by CI.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">Because update_incident never raised an exception, it had successfully written to the database.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>Structured logs showing <code>update_incident: skipping unknown column 'status'</code> warnings after the schema migration — no alert was wired to this pattern.</li>
+          <li>The FIX_IN_PROGRESS incident count on the dashboard plateaued and grew instead of resolving — status transitions were clearly not completing.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 8 -->
+    <div class="failure-card card-8">
+      <div class="failure-num">Failure #8 <span class="badge badge-critical">Critical</span></div>
+      <h3>Settings page is an unguarded kill switch</h3>
+      <div class="section">
+        <div class="section-label">The Story</div>
+        <p>A junior IT admin at the client lowered the auto-fix confidence threshold from 0.90 to 0.50, thinking he was tuning sensitivity like a spam filter. No warning, no role check, no confirmation dialog, no audit entry. The system accepted it silently. Within 48 hours, the agent was deploying fixes that previously would have gone to manual review. Weak RCA swapped credential aliases on 3 iFlows. Wrong endpoint URLs were substituted on 2 more (from low-confidence web search results now acceptable under the new threshold). All 5 deployed successfully. Business process failures surfaced 2 days later. The incident response team needed to reconstruct who changed the threshold, when, and which fixes ran under degraded confidence. None of that data existed.</p>
+      </div>
+      <div class="section">
+        <div class="section-label">Underlying Assumption</div>
+        <div class="assumption-box">Settings page access would be self-regulating because only technical staff would use it.</div>
+      </div>
+      <div class="section">
+        <div class="section-label">Early Warning Signs</div>
+        <ul class="warning-signs">
+          <li>UAT sign-off never tested what happened when the confidence threshold was set below a safe floor — no validation rule was written and nobody noticed.</li>
+          <li>The first production deploy had no change log for <code>_runtime_cfg</code> values — if anyone had asked "what were the settings when this fix ran?", there was already no answer.</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    Premortem of: SAP CPI Self-Healing Agent (Sierra Digital) &nbsp;|&nbsp; 8 parallel investigator agents &nbsp;|&nbsp; Generated 2026-05-26 &nbsp;|&nbsp; Frame: 6 months from now, the project has failed
+  </footer>
+
+</div>
+</body>
+</html>

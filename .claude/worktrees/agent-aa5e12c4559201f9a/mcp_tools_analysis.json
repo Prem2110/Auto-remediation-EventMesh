@@ -1,0 +1,357 @@
+{
+  "servers": {
+    "documentation_mcp": [
+      {
+        "agent_tool_name": "documentation_mcp__getcpiadapterdoctemplate",
+        "mcp_tool_name": "getCpiAdapterDocTemplate",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: getCpiAdapterDocTemplate. Returns the reference CPI adapter documentation template in Markdown. Takes optional adapter_name to replace placeholder text.",
+        "fields": [
+          "adapter_name"
+        ]
+      },
+      {
+        "agent_tool_name": "documentation_mcp__getgenerationprompt",
+        "mcp_tool_name": "getGenerationPrompt",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: getGenerationPrompt. Returns the CPI adapter generation prompt with adapter name substitution",
+        "fields": [
+          "adapter_name"
+        ]
+      },
+      {
+        "agent_tool_name": "documentation_mcp__gett412adapterdocreference",
+        "mcp_tool_name": "getT412AdapterDocReference",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: getT412AdapterDocReference. Returns the T412 product documentation reference in Markdown. Takes optional adapter_name to adapt product name mentions.",
+        "fields": [
+          "adapter_name"
+        ]
+      },
+      {
+        "agent_tool_name": "documentation_mcp__generate_t412_adapter_doc_instructions",
+        "mcp_tool_name": "generate-t412-adapter-doc_Instructions",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: generate-t412-adapter-doc_Instructions. Generate adapter documentation using the T412 product documentation as a structural and content reference.",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "documentation_mcp__generate_cpi_adapter_doc",
+        "mcp_tool_name": "generate-cpi-adapter-doc",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: generate-cpi-adapter-doc. Generate CPI adapter documentation using reference template",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "documentation_mcp__getadapterdoccreationinstructions",
+        "mcp_tool_name": "getAdapterDocCreationInstructions",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: getAdapterDocCreationInstructions. Returns step-by-step instructions to generate an adapter documentation PDF and obtain an S3 download link, using either the standard CPI template or the T412 reference.",
+        "fields": [
+          "use_t412_reference"
+        ]
+      },
+      {
+        "agent_tool_name": "documentation_mcp__savepdfdocument",
+        "mcp_tool_name": "savePdfDocument",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: savePdfDocument. Generates a PDF document from markdown content and returns it as base64 with metadata",
+        "fields": [
+          "adapter_name",
+          "content"
+        ]
+      },
+      {
+        "agent_tool_name": "documentation_mcp__uploaddocumenttos3",
+        "mcp_tool_name": "uploadDocumentToS3",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: uploadDocumentToS3. Uploads a PDF document to S3 storage and returns the object key",
+        "fields": [
+          "adapter_name",
+          "pdf_base64"
+        ]
+      },
+      {
+        "agent_tool_name": "documentation_mcp__generatedownloadlink",
+        "mcp_tool_name": "generateDownloadLink",
+        "description": "[server=documentation_mcp] Use for SAP-standard documentation/specification/template generation. Original tool: generateDownloadLink. Generates a download link for a document",
+        "fields": [
+          "adapter_name"
+        ]
+      }
+    ],
+    "mcp_testing": [
+      {
+        "agent_tool_name": "mcp_testing__get_integration_package_by_id",
+        "mcp_tool_name": "get_integration_package_by_id",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: get_integration_package_by_id. Fetch an SAP CPI Integration Package by its ID.",
+        "fields": [
+          "integration_package_id"
+        ]
+      },
+      {
+        "agent_tool_name": "mcp_testing__get_all_integration_packages",
+        "mcp_tool_name": "get_all_integration_packages",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: get_all_integration_packages. List all SAP CPI Integration Packages.",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "mcp_testing__download_iflow",
+        "mcp_tool_name": "download-iflow",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: download-iflow. Download an SAP CPI integration flow as a ZIP file and extract its structure.\n\nArgs:\n    integration_flow_id: The ID of the integration flow to download\n    version: Version to download (default: \"active\")\n\nReturns:\n    Dictionary containing iFlow metadata and structure",
+        "fields": [
+          "integration_flow_id",
+          "version"
+        ]
+      },
+      {
+        "agent_tool_name": "mcp_testing__get_iflow_endpoint",
+        "mcp_tool_name": "get-iflow-endpoint",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: get-iflow-endpoint. Get the runtime endpoints for a deployed integration flow using the OData API.\n\nArgs:\n    integration_flow_id: The ID or Name of the integration flow\n\nReturns:\n    Dictionary containing endpoint information",
+        "fields": [
+          "integration_flow_id"
+        ]
+      },
+      {
+        "agent_tool_name": "mcp_testing__generate_sample_payload_with_llm",
+        "mcp_tool_name": "generate-sample-payload-with-llm",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: generate-sample-payload-with-llm. Use an LLM to generate a realistic sample payload for an SAP CPI iFlow.\n\nThis tool analyzes the iFlow structure and asks the LLM (via the calling agent)\nto generate an appropriate test payload based on the iFlow's characteristics.\n\nArgs:\n    integration_flow_id: The ID of the integration flow\n    llm_prompt: Optional custom prompt for the LLM\n    version: Version to analyze (default: \"active\")\n\nReturns:\n    Dictionary with analysis and instructions for payload generation",
+        "fields": [
+          "integration_flow_id",
+          "llm_prompt",
+          "version"
+        ]
+      },
+      {
+        "agent_tool_name": "mcp_testing__test_iflow_with_payload",
+        "mcp_tool_name": "test-iflow-with-payload",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: test-iflow-with-payload. \nTest an SAP CPI Integration Flow endpoint using a payload.\n\nUse this tool to send HTTP requests to CPI iFlow endpoints and validate responses.\n\nParameters:\n- integration_flow_id: ID or name of the integration flow\n- endpoint_path: Relative endpoint path of the iFlow\n- payload: Request payload to send\n- content_type: Payload content type (default: application/json)\n- http_method: HTTP method (POST/GET/PUT/DELETE)\n- csrf_endpoint_path: Optional alternate path for fetching CSRF token\n- entity: Optional entity name (use when iFlow expects entity such as OData entity set, file entity, or custom header/query entity)\n\nProvide 'entity' only if the target iFlow requires it. \nIf not required, you can ignore it.",
+        "fields": [
+          "integration_flow_id",
+          "payload",
+          "endpoint_path",
+          "content_type",
+          "http_method",
+          "csrf_endpoint_path",
+          "header"
+        ]
+      },
+      {
+        "agent_tool_name": "mcp_testing__get_iflow_configuration",
+        "mcp_tool_name": "get-iflow-configuration",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: get-iflow-configuration. Get configuration parameters (key/value pairs) of an SAP CPI integration flow.\n\nArgs:\n    integration_flow_id: The ID of the integration flow\n    version: Version to query (default: \"active\")\n\nReturns:\n    Dictionary containing configuration parameters",
+        "fields": [
+          "integration_flow_id",
+          "version"
+        ]
+      },
+      {
+        "agent_tool_name": "mcp_testing__get_message_logs",
+        "mcp_tool_name": "get-message-logs",
+        "description": "[server=mcp_testing] Use for validation, test execution, and test-report related tasks. Original tool: get-message-logs. Fetch SAP CPI message processing error/log details using message ID",
+        "fields": [
+          "message_id"
+        ]
+      }
+    ],
+    "integration_suite": [
+      {
+        "agent_tool_name": "integration_suite__packages",
+        "mcp_tool_name": "packages",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: packages. Get all integration packages",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "integration_suite__package",
+        "mcp_tool_name": "package",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: package. Get Content of a integration package by name",
+        "fields": [
+          "name"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__create_package",
+        "mcp_tool_name": "create-package",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: create-package. Create a new integration package",
+        "fields": [
+          "id",
+          "name",
+          "shortText"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_iflow",
+        "mcp_tool_name": "get-iflow",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-iflow. Get the data of an iflow and the contained ressources. \nSome ressources might relay on other package artefacts which are not included but reffrenced",
+        "fields": [
+          "id"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__create_empty_iflow",
+        "mcp_tool_name": "create-empty-iflow",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: create-empty-iflow. Create an empty iflow without functionality. You probably want to add content to it afterwards with tool get-iflow and then update-iflow",
+        "fields": [
+          "packageId",
+          "id"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__update_iflow",
+        "mcp_tool_name": "update-iflow",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: update-iflow. Update or create files/content of an iflow\nYou only have to provide files that need to be updated but allways send the full file\n\nIf you encounter prolems updating/deploying iflows consider taking a look at the available templates where you can learn from\nTemplates for complex iflows and message mappings are avialagle\n\nIflows can contain message mappings, datatypes (XSDs) and scripts\nMessage mappings can also be standalone objects, but most of the time will be featured within an iflow\n\nMake sure you ONLY change the things the user instructs you to and keep all other things\nFolder structure is like this:\nsrc/main/resources/ is the root\nsrc/main/resources/mapping contains message mappings in format <mappingname>.mmap with xml structure\nsrc/main/resources/xsd contains all xsd file in format <filename>.xsd\nsrc/main/resources/scripts contains groovy and javascript scripts that can be used within iflow\nsrc/main/resources/scenarioflows/integrationflow/<iflow id>.iflw contains the iflow in xml structure",
+        "fields": [
+          "id",
+          "files",
+          "autoDeploy"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_iflow_endpoints",
+        "mcp_tool_name": "get-iflow-endpoints",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-iflow-endpoints. \nGet endpoint(s) of iflow and its URLs and Protocols\nIsn't very reliable unfourtunately.\nIf you receive <host>/http/endpointlink the endpoint could also be <host>/http/endpoint/link\n\nThe URI path will allways be prefixed with protocol\n\nIf you use the error and it gives you 404 try getting the iflow and parsing the actual endpint\nBut keep in mind that the path in the iflow is missing a prefix\nThese are the prefixes based on protocol. So if you get /some/endpoint from get-iflow actual path is /http/some/endpoint for REST\n    \"REST\": '/http/',\n    \n    \"AS2\": '/as2/as2/'\n    \n    \"SOAP\": '/cfx/soapapi/'",
+        "fields": [
+          "iflowId"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__iflow_image",
+        "mcp_tool_name": "iflow-image",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: iflow-image. Get the iflow logic shown as a image/diagram",
+        "fields": [
+          "iflowId"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_deploy_error",
+        "mcp_tool_name": "get-deploy-error",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-deploy-error. \nIf you tried to deploy an Artifact like Iflow or mapping and got an error use this too to get the error message and context\nIf the response is empty it means there is no deployment error and it was successful\n\nIf you have errors consider checking the available examples to resolve them",
+        "fields": [
+          "id"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__deploy_iflow",
+        "mcp_tool_name": "deploy-iflow",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: deploy-iflow. \ndeploy a iflow\nIf the deployment status is unsuccessful try getting information from get-deploy-error",
+        "fields": [
+          "iflowId"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_iflow_configurations",
+        "mcp_tool_name": "get-iflow-configurations",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-iflow-configurations. Get all configurations of an IFlow\nConfiguration is used to dynamically set values within an iflow. For example a username could be stored in a configuration instead of the iflow directly\nNot every iflow is using configurations tho. most of the time configuration is made in iflow directly",
+        "fields": [
+          "iflowId"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_all_iflows",
+        "mcp_tool_name": "get-all-iflows",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-all-iflows. Get a list of all available iflows in a Package\nIf the user asks for all iflows, get all packages first and then query for each package",
+        "fields": [
+          "pkgId"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__generate_groovyscript",
+        "mcp_tool_name": "generate-GroovyScript",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: generate-GroovyScript. Generate groovy script",
+        "fields": [
+          "user_query"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__discover_packages",
+        "mcp_tool_name": "discover-packages",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: discover-packages. Get information about Packages from discover center",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "integration_suite__list_iflow_examples",
+        "mcp_tool_name": "list-iflow-examples",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: list-iflow-examples. \nGet a list of available iflow examples.\nYou can use these examples to query get-iflow-example",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "integration_suite__get_iflow_example",
+        "mcp_tool_name": "get-iflow-example",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-iflow-example. \nGet an existing iflow as an example to use to create or update other iflows\nCall list-iflow-examples to show available examples",
+        "fields": [
+          "name"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_messagemapping",
+        "mcp_tool_name": "get-messagemapping",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-messagemapping. Get the data of an Message Mapping and the contained ressources. \n    Some ressources might relay on other package artefacts which are not included but reffrenced",
+        "fields": [
+          "id"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__update_message_mapping",
+        "mcp_tool_name": "update-message-mapping",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: update-message-mapping. Update or create files/content of an message mapping\n    You only have to provide files that need to be updated but allways send the full file\n    Make sure you ONLY change the things the user instructs you to and keep all other things\n\n\tIf you encounter problems updating/deploying mappings consider looking at the available examples\n\n    Folder structure is like this:\n    src/main/resources/ is the root\n    src/main/resources/mapping contains message mappings in format <mappingname>.mmap with xml structure\n    src/main/resources/xsd contains all xsd file in format <filename>.xsd\n    src/main/resources/scripts contains groovy and javascript scripts that can be used within message mapping\n    src/main/resources/mapping/<message mapping id>.mmap contains the mapping in xml structure",
+        "fields": [
+          "id",
+          "files",
+          "autoDeploy"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__deploy_message_mapping",
+        "mcp_tool_name": "deploy-message-mapping",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: deploy-message-mapping. \n        deploy a message-mapping\n        If the deployment status is unsuccessful try getting information from get-deploy-error",
+        "fields": [
+          "mappingId"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__create_empty_mapping",
+        "mcp_tool_name": "create-empty-mapping",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: create-empty-mapping. Create an empty message mapping without functionality. You probably want to add content to it afterwards with tool get-mapping and then update-mapping\n\t\tBe aware that most of the time you don't need to create an extra mapping. Most scenarios have a mapping within the iflow. Consider looking at iflow examples",
+        "fields": [
+          "packageId",
+          "id"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_all_messagemappings",
+        "mcp_tool_name": "get-all-messagemappings",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-all-messagemappings. Get all available message mappings",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "integration_suite__list_mapping_examples",
+        "mcp_tool_name": "list-mapping-examples",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: list-mapping-examples. Get all available message mapping examples.\nThis is useful to edit existing or develope new message mappings\nA message mapping is a folder with contains one .mmap file which is the actual mapping.\nIt can also include datatypes, scripts and other dependencies\nsrc/main/resources/ is the root\nsrc/main/resources/mapping contains message mappings in format <mappingname>.mmap with xml structure\nsrc/main/resources/xsd contains all xsd file in format <filename>.xsd\nsrc/main/resources/scripts contains groovy and javascript scripts that can be used within iflow\nsrc/main/resources/scenarioflows/mapping/<mapping id>.mmap contains the mapping in xml structure",
+        "fields": []
+      },
+      {
+        "agent_tool_name": "integration_suite__get_mapping_example",
+        "mcp_tool_name": "get-mapping-example",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-mapping-example. Get an example provided by list-mapping-examples",
+        "fields": [
+          "name"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__get_docs",
+        "mcp_tool_name": "get-docs",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: get-docs. Get indexed documentation parts. From the index of the SAP integration Suite documentation jump to any part of the documentation you want",
+        "fields": [
+          "docPath"
+        ]
+      },
+      {
+        "agent_tool_name": "integration_suite__search_docs",
+        "mcp_tool_name": "search-docs",
+        "description": "[server=integration_suite] Use for iFlow and SAP Integration Suite design/creation/deployment tasks. Original tool: search-docs. Search for docs based on keywords",
+        "fields": [
+          "keywords",
+          "matchAll"
+        ]
+      }
+    ]
+  },
+  "counts": {
+    "documentation_mcp": 9,
+    "mcp_testing": 8,
+    "integration_suite": 25
+  },
+  "total": 42
+}

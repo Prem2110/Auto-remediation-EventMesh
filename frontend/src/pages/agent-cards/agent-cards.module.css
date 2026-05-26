@@ -1,0 +1,269 @@
+﻿.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  animation: fade-in 0.3s ease both;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.pageTitle {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--orbit-text-primary, #111827);
+  line-height: 1.2;
+}
+
+.pageSubtitle {
+  font-size: 0.8rem;
+  color: var(--orbit-text-muted, #4b5563);
+  margin-top: 0.25rem;
+}
+
+/* ── Grid ────────────────────────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 1.25rem;
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--orbit-card-bg, #fff);
+  border-radius: var(--orbit-radius-lg, 1rem);
+  box-shadow: var(--orbit-shadow-sm);
+  border: var(--orbit-card-border-width, 1px) solid var(--orbit-card-border, #e5e7eb);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: fade-in-up 0.4s ease both;
+  transition: transform var(--orbit-transition), box-shadow var(--orbit-transition);
+  cursor: default;
+}
+.cardHovered {
+  transform: translateY(-4px);
+  box-shadow: var(--orbit-shadow-lg);
+}
+
+/* Gradient banner */
+.cardBanner {
+  position: relative;
+  padding: 1.25rem 1rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  overflow: hidden;
+  min-height: 5.5rem;
+}
+.cardBanner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+.cardEmoji {
+  font-size: 2.5rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+  z-index: 1;
+}
+
+.cardHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  z-index: 1;
+  background: rgba(0,0,0,0.25);
+  border-radius: 2rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-online  { background: #4ade80; }
+.status-offline { background: #94a3b8; }
+
+.statusText {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: rgba(255,255,255,0.9);
+}
+
+/* Body */
+.cardBody {
+  padding: 1rem;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cardTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--orbit-text-primary, #111827);
+  line-height: 1.2;
+}
+
+.cardVersion {
+  font-size: 0.65rem;
+  color: var(--orbit-text-muted, #4b5563);
+  background: var(--orbit-bg-hover, #f3f4f6);
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+  flex-shrink: 0;
+}
+
+.cardDesc {
+  font-size: 0.8rem;
+  color: var(--orbit-text-muted, #4b5563);
+  line-height: 1.5;
+}
+
+/* Footer */
+.cardFooter {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--orbit-card-border, #f3f4f6);
+}
+
+.launchBtn {
+  width: 100%;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: opacity var(--orbit-transition), transform var(--orbit-transition);
+}
+.launchBtn:hover:not(:disabled) { opacity: 0.88; transform: scale(0.98); }
+.launchBtn:disabled {
+  background: var(--orbit-card-border, #e5e7eb) !important;
+  color: var(--orbit-text-muted, #4b5563);
+  cursor: not-allowed;
+}
+
+/* ── Section label ───────────────────────────────────────────────────────── */
+.sectionLabel {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--orbit-text-muted, #4b5563);
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--orbit-card-border, #e5e7eb);
+}
+
+/* ── Pipeline strip ──────────────────────────────────────────────────────── */
+.pipelineStrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  background: #0f172a;
+  border-radius: 0.75rem;
+  padding: 0.875rem 1.25rem;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.pipelineStripLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.pipelineStripRight {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pipelineStripTitle {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: 0.01em;
+}
+
+.pipelineBadge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.65rem;
+  border-radius: 2rem;
+}
+
+.pipelineBadgeOn {
+  background: rgba(52,211,153,0.18);
+  color: #34d399;
+  border: 1px solid rgba(52,211,153,0.35);
+}
+
+.pipelineBadgeOff {
+  background: rgba(148,163,184,0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148,163,184,0.25);
+}
+
+.pipelineToggleBtn {
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.45rem 1rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+  letter-spacing: 0.02em;
+}
+.pipelineToggleBtn:hover:not(:disabled) { opacity: 0.85; transform: scale(0.97); }
+.pipelineToggleBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.pipelineToggleBtnStart {
+  background: linear-gradient(135deg,#064e3b 0%,#059669 100%);
+  color: #fff;
+}
+
+.pipelineToggleBtnStop {
+  background: linear-gradient(135deg,#7f1d1d 0%,#dc2626 100%);
+  color: #fff;
+}
+
+.pipelineDetailsBtn {
+  border: 1px solid rgba(255,255,255,0.15);
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.875rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pipelineDetailsBtn:hover {
+  background: rgba(255,255,255,0.08);
+  color: #e2e8f0;
+}
+
