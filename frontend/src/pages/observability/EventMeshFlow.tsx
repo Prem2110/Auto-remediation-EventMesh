@@ -45,7 +45,7 @@ const SVG_H = 178;
 const SVG_W = 900;
 
 const NODES: NodeDef[] = [
-  { id: "cpi",          label: "SAP CPI",      sub: "Source",   abbr: "CPI", cx: 75  },
+  { id: "cpi",          label: "Cloud ALM",     sub: "Source",   abbr: "ALM", cx: 75  },
   { id: "orchestrator", label: "Orchestrator",  sub: "Dispatch", abbr: "ORC", cx: 225 },
   { id: "observer",     label: "Observer",      sub: "Detect",   abbr: "OBS", cx: 375 },
   { id: "rca",          label: "RCA Agent",     sub: "Analyze",  abbr: "RCA", cx: 525 },
@@ -234,16 +234,16 @@ function PipelineDiagram({ incidents, emEnabled, messagesRetrieved }: PipelineDi
   return (
     <div className={styles.diagramCard}>
       <div className={styles.diagramHeader}>
-        <span className={styles.diagramTitle}>Event Mesh Pipeline Flow</span>
+        <span className={styles.diagramTitle}>Cloud ALM Pipeline Flow</span>
         <span className={styles.emStatus} data-enabled={String(emEnabled)}>
           <span className={styles.emDot} />
-          {emEnabled ? "Event Mesh Connected" : "Event Mesh Disconnected"}
+          {emEnabled ? "Cloud ALM Connected" : "Cloud ALM Disconnected"}
         </span>
       </div>
       {!emEnabled && (
         <div className={styles.disconnectedBanner}>
           <SvgIcon name="warning" size={14} style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />
-          Event Mesh is disconnected — the pipeline is not receiving events
+          Cloud ALM is disconnected — the pipeline is not receiving events
         </div>
       )}
       <div className={styles.svgWrapper}>
@@ -251,7 +251,7 @@ function PipelineDiagram({ incidents, emEnabled, messagesRetrieved }: PipelineDi
           viewBox={`0 0 ${SVG_W} ${SVG_H}`}
           preserveAspectRatio="xMidYMid meet"
           style={{ width: "100%", display: "block" }}
-          aria-label="SAP Event Mesh pipeline diagram"
+          aria-label="SAP Cloud ALM pipeline diagram"
         >
           <defs>
             <marker id="em-arrow-idle" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
@@ -387,12 +387,12 @@ function StatsRow({
   }, [mcpOpen]);
 
   const CARDS: Array<{ label: string; value: number | string; accent: string }> = [
-    { label: "Webhooks Received", value: emStatus?.messages_retrieved ?? 0, accent: "#3b82f6" },
-    { label: "Total Incidents",   value: emStatus?.total_incidents ?? incidents.length, accent: "#6366f1" },
-    { label: "Fixed & Verified",  value: fixedCount,  accent: "#22c55e" },
-    { label: "In Progress",       value: inProgress,  accent: "#f59e0b" },
-    { label: "Failed",            value: failedCount, accent: "#ef4444" },
-    { label: "Queue Depth",       value: emStatus?.queue_depth ?? 0, accent: "#8b5cf6" },
+    { label: "CALM Events",      value: emStatus?.messages_retrieved ?? 0, accent: "#3b82f6" },
+    { label: "Total Incidents",  value: emStatus?.total_incidents ?? incidents.length, accent: "#6366f1" },
+    { label: "Fixed & Verified", value: fixedCount,  accent: "#22c55e" },
+    { label: "In Progress",      value: inProgress,  accent: "#f59e0b" },
+    { label: "Failed",           value: failedCount, accent: "#ef4444" },
+    { label: "Pending Feedback", value: emStatus?.queue_depth ?? 0, accent: "#8b5cf6" },
   ];
 
   const serverEntries = Object.entries(mcpTools?.servers ?? {});
@@ -570,9 +570,9 @@ export default function EventMeshFlow() {
   const prevMapRef = useRef<Map<string, string>>(new Map());
 
   const { data: emStatus } = useQuery({
-    queryKey: ["event-mesh-status"],
-    queryFn: fetchAemStatus,
-    refetchInterval: 3_000,
+    queryKey: ["calm-pipeline-status"],
+    queryFn: fetchAemStatus,   // hits /event-mesh/status — updated backend returns CALM info
+    refetchInterval: 5_000,
     retry: false,
     staleTime: 0,
   });

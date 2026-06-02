@@ -1,0 +1,1 @@
+"""CALM-based error ingestion module — replaces SAP Event Mesh ingestion."""

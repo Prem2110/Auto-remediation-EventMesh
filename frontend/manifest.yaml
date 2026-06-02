@@ -1,6 +1,6 @@
 ---
 applications:
-  - name: ND-ORBIT-EventMesh-FE
+  - name: ND-ORBIT-EventMesh-FE-a
     memory: 2G
     disk_quota: 2G
     instances: 1

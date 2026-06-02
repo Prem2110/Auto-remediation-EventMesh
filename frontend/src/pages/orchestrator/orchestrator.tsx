@@ -124,7 +124,7 @@ export default function Orchestrator() {
       <div className={styles.emBar} data-connected={String(pipelineOn)}>
         <span className={styles.emBarDot} />
         <span className={styles.emBarLabel}>
-          Event Mesh Pipeline
+          Cloud ALM Pipeline
         </span>
         <span className={styles.emBarSep}>·</span>
         <span className={styles.emBarItem}>

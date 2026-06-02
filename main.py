@@ -173,33 +173,12 @@ def _agent_webhook_count() -> int:
 # ─────────────────────────────────────────────
 
 async def _run_cpi_monitor() -> None:
-    """
-    Background polling loop: query CPI for FAILED messages every
-    CPI_POLL_INTERVAL_SECONDS (default 600) and publish each new failure
-    to the Event Mesh topic default/sierra.automation/1/autofix/in.
-
-    All errors are caught and logged — this loop must never crash the app.
-    """
-    try:
-        from cpi_monitor.cpi_poller import poll_failed_messages, _POLL_INTERVAL
-        from cpi_monitor.error_publisher import publish_failed_messages
-    except Exception as exc:
-        logger.error("[CPI_MONITOR] Module import failed — poller disabled: %s", exc)
-        return
-
-    while True:
-        try:
-            messages = await poll_failed_messages()
-            if messages:
-                logger.info("[CPI_MONITOR] Found %d failed messages", len(messages))
-                await publish_failed_messages(messages)
-            await asyncio.sleep(_POLL_INTERVAL)
-        except asyncio.CancelledError:
-            logger.info("[CPI_MONITOR] Poller cancelled - stopping.")
-            raise
-        except Exception as exc:
-            logger.error("[CPI_MONITOR] Unhandled poller error: %s", exc)
-            await asyncio.sleep(_POLL_INTERVAL)
+    """DEPRECATED: CPI monitor replaced by Cloud ALM poller (ingestion/calm_poller.py)."""
+    logger.warning(
+        "[CPI_MONITOR] _run_cpi_monitor is DEPRECATED. "
+        "Error ingestion now uses SAP Cloud ALM via ingestion/calm_poller.py. "
+        "This function does nothing. Remove it after verifying CALM integration."
+    )
 
 
 async def _run_pending_deploy_sweeper() -> None:
@@ -346,15 +325,20 @@ async def lifespan(app: FastAPI):
             )
 
     from jobs.itsm_poller import run_itsm_poller
+    from ingestion.calm_poller import run_calm_poller
+    from jobs.calm_feedback_job import run_calm_feedback_job
+    app.state.orchestrator = orchestrator
     _bg_tasks = [
         asyncio.create_task(_init_background(), name="init_background"),
         asyncio.create_task(_run_cpi_monitor(), name="cpi_monitor"),
         asyncio.create_task(_run_pending_deploy_sweeper(), name="pending_deploy_sweeper"),
         asyncio.create_task(run_itsm_poller(classifier=orchestrator._classifier), name="itsm_poller"),
+        asyncio.create_task(run_calm_poller(orchestrator), name="calm_poller"),
+        asyncio.create_task(run_calm_feedback_job(), name="calm_feedback"),
     ]
     logger.info("[CPI_MONITOR] Poller started, interval=%ds", int(os.getenv("CPI_POLL_INTERVAL_SECONDS", "600")))
     logger.info("[Startup] FastAPI ready — agents initialising in background.")
-    logger.info("[Startup] Event-driven mode active — waiting for SAP Event Mesh webhooks")
+    logger.info("[Startup] Cloud ALM mode active — CALM poller + webhook receiver started")
     yield
 
     # Shutdown: cancel background loops so Ctrl+C exits promptly (esp. on Windows).
@@ -378,6 +362,8 @@ from smart_monitoring import router as _sm_router          # noqa: E402
 from smart_monitoring_dashboard import router as _sm_dash  # noqa: E402
 app.include_router(_sm_router)
 app.include_router(_sm_dash)
+from ingestion.webhook_receiver import calm_webhook_router
+app.include_router(calm_webhook_router, prefix="/calm")
 
 
 # ─────────────────────────────────────────────
@@ -1288,19 +1274,34 @@ async def inject_test_incident(background_tasks: BackgroundTasks):
 
 @app.get("/event-mesh/status")
 async def event_mesh_status():
-    """Return SAP Event Mesh connectivity info and pipeline stage counts."""
-    queue_name = os.getenv("EVENT_MESH_QUEUE", "")
-
+    """
+    Pipeline status endpoint — kept at /event-mesh/status for frontend compatibility.
+    Returns Cloud ALM ingestion status now that Event Mesh has been replaced.
+    """
     total_incidents      = count_all_incidents()
     stage_counts         = get_stage_counts()
     webhook_events_count = _agent_webhook_count()
 
+    # Determine if Cloud ALM is reachable (non-empty base URL = credentials configured)
+    calm_api_url    = os.getenv("CALM_API_BASE_URL", "")
+    calm_configured = bool(calm_api_url)
+
     return {
-        "event_mesh_queue":      queue_name,
-        "delivery_mode":         "webhook_push",
+        # ── Cloud ALM source fields ───────────────────────────────────────────
+        "source":                "CLOUD_ALM",
+        "calm_connected":        calm_configured,
+        "calm_managed_object":   os.getenv("CALM_MANAGED_OBJECT_ID", ""),
+        "calm_poll_interval_s":  int(os.getenv("CALM_POLL_INTERVAL_SECONDS", "120")),
+
+        # ── Legacy fields (kept for frontend backward compat) ────────────────
+        # event_mesh_enabled is False — Event Mesh is no longer the error source.
+        # webhook_active is True — CALM pushes errors via /calm/webhook.
+        "event_mesh_enabled":    False,
         "webhook_active":        True,
-        "event_mesh_enabled":    True,
-        "messages_retrieved":    _webhook_counter,
+        "delivery_mode":         "cloud_alm_poll_and_webhook",
+
+        # ── Pipeline metrics ─────────────────────────────────────────────────
+        "messages_retrieved":    _webhook_counter,   # counts /agents/* webhook hits
         "webhook_events_count":  webhook_events_count,
         "queue_depth":           0,
         "stage_counts":          stage_counts,

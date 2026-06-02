@@ -185,6 +185,9 @@ def ensure_autonomous_incident_schema():
         "auto_escalated":        "INTEGER",
         "source_type":           "NVARCHAR(64)",
         "designtime_artifact_id": "NVARCHAR(500)",
+        "calm_exception_id":  "NVARCHAR(256)",
+        "calm_alert_id":      "NVARCHAR(256)",
+        "calm_feedback_sent": "INTEGER DEFAULT 0",
     }
     try:
         conn = get_connection()
@@ -482,6 +485,24 @@ def ensure_em_schema():
                 TOKENS_OUT     INTEGER DEFAULT 0
             )""")
             logger.info("[DB] Created table %s", _EVENT_LOG_TABLE)
+
+        # ── CALM_DEDUP_SEEN ──────────────────────────────────────────────────
+        cur.execute(check, ("CALM_DEDUP_SEEN", schema_q) if schema_q else ("CALM_DEDUP_SEEN",))
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute("""CREATE TABLE "CALM_DEDUP_SEEN" (
+                EXCEPTION_ID  NVARCHAR(256) PRIMARY KEY,
+                SEEN_AT       NVARCHAR(64)  NOT NULL
+            )""")
+            logger.info("[DB] Created table CALM_DEDUP_SEEN")
+
+        # ── CALM_POLL_CHECKPOINT ─────────────────────────────────────────────
+        cur.execute(check, ("CALM_POLL_CHECKPOINT", schema_q) if schema_q else ("CALM_POLL_CHECKPOINT",))
+        if int(cur.fetchone()[0]) == 0:
+            cur.execute("""CREATE TABLE "CALM_POLL_CHECKPOINT" (
+                ID           INTEGER PRIMARY KEY,
+                LAST_POLLED  NVARCHAR(64) NOT NULL
+            )""")
+            logger.info("[DB] Created table CALM_POLL_CHECKPOINT")
 
         conn.commit()
         conn.close()

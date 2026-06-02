@@ -275,7 +275,7 @@ const HEALTH_SERVICES = [
   { id: "all",        label: "All Services"  },
   { id: "mcp",        label: "MCP Server"    },
   { id: "db",         label: "Database"      },
-  { id: "event_mesh", label: "Event Mesh"    },
+  { id: "event_mesh", label: "Cloud ALM"     },
 ] as const;
 
 type HealthServiceId = (typeof HEALTH_SERVICES)[number]["id"];
@@ -366,7 +366,7 @@ function HealthCheckPanel() {
       {open && (
         <div className={styles.healthBody}>
           <p className={styles.healthDesc}>
-            Run an on-demand liveness probe for MCP, the database, and SAP Event Mesh.
+            Run an on-demand liveness probe for MCP, the database, and SAP Cloud ALM.
           </p>
 
           <div className={styles.healthControls}>

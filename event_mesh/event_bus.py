@@ -250,10 +250,27 @@ class EventBus:
     # ── convenience helper ───────────────────────────────────────────────────
 
     def make_topic(self, stage: str, incident_id: str = "") -> str:
-        """Build the canonical topic string for a pipeline stage."""
+        """
+        Build the canonical topic string for a pipeline stage.
+
+        When SAP Event Mesh is DISABLED (AEM_ENABLED=false / EM_ENABLED=false),
+        the topic string is used purely as a Python dict key for in-process
+        dispatch (_dispatch_local).  No network call is made and EM_QUEUE_PREFIX
+        is not required — a hardcoded internal prefix is used automatically.
+
+        When SAP Event Mesh is ENABLED, EM_QUEUE_PREFIX must be set so the topic
+        matches the real queue path in the Event Mesh service.
+        """
         prefix = os.getenv("EM_QUEUE_PREFIX", os.getenv("AEM_QUEUE_PREFIX", ""))
         if not prefix:
-            raise RuntimeError("EM_QUEUE_PREFIX is not set — cannot build Event Mesh topic")
+            if _EM_ENABLED:
+                raise RuntimeError(
+                    "EM_QUEUE_PREFIX is not set — required when AEM_ENABLED=true. "
+                    "Set it to the Event Mesh queue prefix (e.g. default/sierra.automation/1/autofix/orbit)."
+                )
+            # In-process only mode (AEM_ENABLED=false / Cloud ALM mode):
+            # use a stable local prefix — never sent to any external service.
+            prefix = "orbit/internal"
         base = f"{prefix}/{stage}"
         return f"{base}/{incident_id}" if incident_id else base
 

@@ -368,7 +368,7 @@ export interface PaginatedMessagesResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Event Mesh status
+// Pipeline status (formerly "Event Mesh status" — now Cloud ALM mode)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface EventMeshStatusResponse {
@@ -379,13 +379,35 @@ export interface EventMeshStatusResponse {
   stage_counts?: Record<string, number>;
   event_mesh_enabled?: boolean;
   webhook_active?: boolean;
+  // Cloud ALM fields (added after migration)
+  source?: string;           // "CLOUD_ALM"
+  calm_connected?: boolean;  // true when CALM poller is active
 }
 
 /** @deprecated Use EventMeshStatusResponse */
 export type AemStatusResponse = EventMeshStatusResponse;
 
+/** Fetches pipeline status from /event-mesh/status (backend updated to return CALM info). */
 export async function fetchAemStatus(): Promise<EventMeshStatusResponse | null> {
   return requestMaybe<EventMeshStatusResponse>(`${_BASE}/event-mesh/status`);
+}
+
+// ── Cloud ALM specific status ──────────────────────────────────────────────
+
+export interface CalmStatusResponse {
+  source: string;
+  destination_name: string;
+  api_base_url: string;
+  managed_object_id: string;
+  poll_interval_s: number;
+  lookback_minutes: number;
+  webhook_secret_set: boolean;
+  filter_style: string;
+}
+
+/** Fetches Cloud ALM integration config from /calm/status */
+export async function fetchCalmStatus(): Promise<CalmStatusResponse | null> {
+  return requestMaybe<CalmStatusResponse>(`${_BASE}/calm/status`);
 }
 
 export async function fetchAemIncidents(
