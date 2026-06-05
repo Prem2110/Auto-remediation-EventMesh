@@ -17,12 +17,13 @@ Mount in main.py:
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 
-from calm.models import CALMWebhookPayload
+from calm.models import CALMEventSituationPayload, CALMWebhookPayload
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,43 @@ async def _process_webhook_background(
             logger.error("[CALM_WEBHOOK] Failed to process exception %s: %s", exc_id, exc)
 
 
+async def _process_event_situation_background(
+    payload:     CALMEventSituationPayload,
+    orchestrator,
+) -> None:
+    """
+    Background task for EVENT-SITUATION.CREATED payloads.
+    All data is in resource.body — no CALM API call needed.
+    """
+    from calm.incident_adapter import calm_event_situation_to_normalized
+    from ingestion.dedup import filter_new, mark_seen
+
+    resource_id = payload.resourceId
+    if not resource_id:
+        logger.warning("[CALM_WEBHOOK] EVENT-SITUATION payload missing resourceId — skipping")
+        return
+
+    if not filter_new([resource_id]):
+        logger.debug("[CALM_WEBHOOK] resourceId %s already seen — skipping", resource_id)
+        return
+
+    mark_seen(resource_id)
+
+    if orchestrator is None:
+        logger.warning("[CALM_WEBHOOK] Orchestrator not available for resourceId %s", resource_id)
+        return
+
+    try:
+        normalized = calm_event_situation_to_normalized(payload)
+        result     = await orchestrator.process_detected_error(normalized)
+        logger.info(
+            "[CALM_WEBHOOK] EVENT-SITUATION %s → iflow=%s result=%s",
+            resource_id, normalized.get("iflow_id", "?"), result,
+        )
+    except Exception as exc:
+        logger.error("[CALM_WEBHOOK] Failed to process EVENT-SITUATION %s: %s", resource_id, exc)
+
+
 @calm_webhook_router.post(
     "/webhook",
     status_code=202,
@@ -140,20 +178,33 @@ async def receive_calm_webhook(
         raise HTTPException(status_code=403, detail="Invalid signature")
 
     try:
-        payload = CALMWebhookPayload.model_validate_json(raw_body)
+        raw_data   = json.loads(raw_body)
+        event_type = raw_data.get("eventType", "")
     except Exception as exc:
-        logger.warning("[CALM_WEBHOOK] Payload parse failed: %s | body=%s", exc, raw_body[:200])
+        logger.warning("[CALM_WEBHOOK] JSON parse failed: %s | body=%s", exc, raw_body[:200])
         raise HTTPException(status_code=422, detail="Invalid payload shape")
 
     orchestrator = getattr(request.app.state, "orchestrator", None)
 
-    background_tasks.add_task(_process_webhook_background, payload, orchestrator)
+    if event_type == "EVENT-SITUATION.CREATED":
+        try:
+            payload = CALMEventSituationPayload.model_validate(raw_data)
+        except Exception as exc:
+            logger.warning("[CALM_WEBHOOK] EVENT-SITUATION parse failed: %s", exc)
+            raise HTTPException(status_code=422, detail="Invalid payload shape")
+        background_tasks.add_task(_process_event_situation_background, payload, orchestrator)
+        resource_id = payload.resourceId
+    else:
+        try:
+            payload = CALMWebhookPayload.model_validate(raw_data)
+        except Exception as exc:
+            logger.warning("[CALM_WEBHOOK] Payload parse failed: %s | body=%s", exc, raw_body[:200])
+            raise HTTPException(status_code=422, detail="Invalid payload shape")
+        background_tasks.add_task(_process_webhook_background, payload, orchestrator)
+        resource_id = payload.alertId
 
-    logger.info(
-        "[CALM_WEBHOOK] Accepted alert=%s event=%s",
-        payload.alertId, payload.eventType,
-    )
-    return {"status": "accepted", "alertId": payload.alertId}
+    logger.info("[CALM_WEBHOOK] Accepted eventType=%s resourceId=%s", event_type, resource_id)
+    return {"status": "accepted", "alertId": resource_id}
 
 
 @calm_webhook_router.get(

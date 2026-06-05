@@ -85,6 +85,39 @@ class CALMWebhookPayload(BaseModel):
     model_config = {"extra": "allow"}             # accept any extra fields CALM sends
 
 
+class CALMEventSituationResource(BaseModel):
+    """Nested resource block inside EVENT-SITUATION.CREATED webhook payload."""
+    serviceType:    str            = ""
+    eventSubType:   str            = ""
+    subject:        str            = ""
+    rating:         str            = ""
+    body:           str            = ""
+    serviceName:    str            = ""
+    updateTime:     Optional[datetime] = None
+    resolutionCode: Optional[str]  = None
+    externalId:     Optional[str]  = None
+    priority:       Optional[str]  = None
+    eventType:      str            = ""
+    tags:           dict           = Field(default_factory=dict)
+
+    model_config = {"extra": "allow"}
+
+
+class CALMEventSituationPayload(BaseModel):
+    """
+    Payload Cloud ALM sends to External API webhooks (Create Ticket action).
+    eventType = "EVENT-SITUATION.CREATED"
+    The iFlow name, error, and MPL ID are in resource.body as pipe-separated text.
+    """
+    subscriptionId: str            = ""
+    resourceId:     str            = ""
+    eventType:      str            = ""
+    resourceType:   str            = ""
+    resource:       Optional[CALMEventSituationResource] = None
+
+    model_config = {"extra": "allow"}
+
+
 class CALMAlertPatch(BaseModel):
     """PATCH body for /api/calm-alert/v1/alerts/{id}."""
     status:     Optional[CALMAlertStatus] = None

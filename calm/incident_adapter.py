@@ -15,7 +15,7 @@ so the feedback job can update CALM after remediation.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from calm.models import CALMException
+    from calm.models import CALMException, CALMEventSituationPayload
 
 # Map CALM errorCategory → Orbit error_type
 # These are hints only — the Classifier will refine/override via rule engine + LLM
@@ -29,6 +29,55 @@ _CATEGORY_MAP: dict[str, str] = {
     "AUTHORIZATION":  "AuthenticationError",
     "INTEGRATION":    "ProcessingError",
 }
+
+
+def _parse_event_body(body: str) -> dict[str, str]:
+    """
+    Parse pipe-separated body from EVENT-SITUATION.CREATED payload.
+
+    Format (line 1): Key = Value | Key = Value | ...
+    Format (line 2): The MPL ID for the failed message is = <id>
+    """
+    parsed: dict[str, str] = {}
+    lines = body.split("\n")
+    for part in lines[0].split(" | "):
+        if " = " in part:
+            key, _, value = part.partition(" = ")
+            parsed[key.strip()] = value.strip()
+    for line in lines[1:]:
+        if "MPL ID" in line and " = " in line:
+            _, _, value = line.partition(" = ")
+            parsed["mpl_id"] = value.strip()
+    return parsed
+
+
+def calm_event_situation_to_normalized(payload: "CALMEventSituationPayload") -> dict:
+    """
+    Convert a CALMEventSituationPayload (EVENT-SITUATION.CREATED) to the
+    normalized incident dict that orchestrator.process_detected_error() expects.
+    All needed data is extracted from resource.body — no CALM API call required.
+    """
+    res    = payload.resource
+    body   = _parse_event_body(res.body if res else "")
+    ts_iso = res.updateTime.isoformat() if (res and res.updateTime) else ""
+
+    return {
+        "source_type":         "CLOUD_ALM",
+        "message_guid":        body.get("mpl_id") or payload.resourceId,
+        "iflow_id":            body.get("Artifact Name", ""),
+        "artifact_id":         "",
+        "sender":              body.get("Sender", ""),
+        "receiver":            "",
+        "status":              "FAILED",
+        "log_start":           ts_iso,
+        "log_end":             ts_iso,
+        "error_message":       body.get("Status Text", ""),
+        "correlation_id":      body.get("Correlation ID", payload.resourceId),
+        "error_type":          "",
+        "calm_exception_id":   payload.resourceId,
+        "calm_alert_id":       "",
+        "calm_managed_object": res.serviceName if res else "",
+    }
 
 
 def calm_exception_to_normalized(exc: "CALMException") -> dict:

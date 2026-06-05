@@ -69,8 +69,8 @@ from core.state import FIX_PROGRESS, RUNTIME_FLAGS, get_fix_progress
 
 # ─────────────────────────────────────────────
 # AGENT IMPORTS
-# ─────────────────────────────────────────────
 from agents.base import ApprovalRequest, DirectFixRequest, QueryRequest, QueryResponse
+# ─────────────────────────────────────────────
 from agents.classifier_agent import ClassifierAgent
 from agents.fix_agent import FixAgent
 from agents.observer_agent import ObserverAgent, SAPErrorFetcher
