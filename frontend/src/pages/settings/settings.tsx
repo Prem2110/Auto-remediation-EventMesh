@@ -243,6 +243,7 @@ const THEMES = [
   { id: "terminal", label: "Terminal",         sidebar: "#0a0a0a",                                        primary: "#00ff41", bg: "#0a0a0a" },
   { id: "nord",     label: "Nord",             sidebar: "#2e3440",                                        primary: "#88c0d0", bg: "#e5e9f0" },
   { id: "copper",   label: "Copper",           sidebar: "#141009",                                        primary: "#b87333", bg: "#1a140e" },
+  { id: "cosmic",   label: "Cosmic Nebula",    sidebar: "linear-gradient(180deg,#09090e,#131325)",        primary: "#d946ef", bg: "#09090e" },
 ] as const;
 
 type ThemeId = (typeof THEMES)[number]["id"];

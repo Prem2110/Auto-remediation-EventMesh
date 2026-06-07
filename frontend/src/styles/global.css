@@ -521,6 +521,49 @@
   --orbit-hero-text-muted:   rgba(241,245,249,0.5);
 }
 
+/* ── Cosmic Nebula (Neon Space Purple) ──────────────────────────────────── */
+[data-theme="cosmic"] {
+  --orbit-primary:           #d946ef;
+  --orbit-primary-hover:     #c026d3;
+  --orbit-primary-dim:       rgba(217, 70, 239, 0.15);
+  --orbit-bg-page:           #09090e;
+  --orbit-bg-surface:        #121225;
+  --orbit-bg-hover:          #1e1b4b;
+  --orbit-sidebar-bg:        linear-gradient(180deg, #09090e 0%, #131325 100%);
+  --orbit-topbar-bg:         #121225;
+  --orbit-topbar-text:       #f5f3ff;
+  --orbit-topbar-text-muted: rgba(245, 243, 255, 0.6);
+  --orbit-topbar-border:     rgba(217, 70, 239, 0.15);
+  --orbit-topbar-pill-bg:    rgba(217, 70, 239, 0.08);
+  --orbit-topbar-pill-border:rgba(217, 70, 239, 0.25);
+  --orbit-nav-text:          #9d9dae;
+  --orbit-nav-hover-bg:      rgba(217, 70, 239, 0.08);
+  --orbit-nav-hover-text:    #f5f3ff;
+  --orbit-nav-active-bg:     rgba(217, 70, 239, 0.18);
+  --orbit-nav-active-text:   #d946ef;
+  --orbit-nav-active-bar:    #d946ef;
+  --orbit-card-bg:           #121225;
+  --orbit-card-border:       rgba(217, 70, 239, 0.18);
+  --orbit-card-border-width: 1px;
+  --orbit-card-shadow:       0 0 15px rgba(217, 70, 239, 0.08);
+  --orbit-text-primary:      #f5f3ff;
+  --orbit-text-secondary:    #e2e8f0;
+  --orbit-text-muted:        #94a3b8;
+  --orbit-input-bg:          #09090e;
+  --orbit-input-border:      rgba(217, 70, 239, 0.25);
+  --orbit-font-family:       "Space Grotesk", "Inter", system-ui, sans-serif;
+  --orbit-chart-1:           #d946ef;
+  --orbit-chart-2:           #06b6d4;
+  --orbit-chart-3:           #6366f1;
+  --orbit-chart-4:           #14b8a6;
+  --orbit-chart-5:           #ec4899;
+  --orbit-chart-6:           #a855f7;
+  --orbit-chart-7:           #e11d48;
+  --orbit-hero-bg:           linear-gradient(135deg, #09090e 0%, #1e1b4b 55%, #311042 100%);
+  --orbit-hero-text:         #f5f3ff;
+  --orbit-hero-text-muted:   rgba(245, 243, 255, 0.5);
+}
+
 /* ── Resets ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

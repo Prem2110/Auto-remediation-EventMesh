@@ -29,7 +29,6 @@ import type {
   IErrorExplanation,
 } from "../../types/index.ts";
 import styles from "./observability.module.css";
-import EventMeshFlow from "./EventMeshFlow.tsx";
 
 /* ── Strip raw agent noise from fix_summary strings ──────────────────── */
 function cleanFixSummary(raw: string): string {
@@ -59,7 +58,7 @@ function cleanFixSummary(raw: string): string {
 }
 
 /* ── Top-level tab type ───────────────────────────────────────────────── */
-type MainTabKey = "errortypeguide" | "messages" | "tickets" | "approvals" | "eventmesh";
+type MainTabKey = "errortypeguide" | "messages" | "tickets" | "approvals";
 
 /* ── Ticket and Approval interfaces ───────────────────────────────────── */
 interface Ticket {
@@ -1870,10 +1869,7 @@ export default function Observability() {
       {/* ══════════════════════════════════════════════════════════════════
           APPROVALS TAB
           ══════════════════════════════════════════════════════════════════ */}
-      {/* ══════════════════════════════════════════════════════════════════
-          EVENT MESH TAB
-          ══════════════════════════════════════════════════════════════════ */}
-      {mainTab === "eventmesh" && <EventMeshFlow />}
+
 
       {mainTab === "approvals" && (
         <div className={styles.approvalsContainer}>
