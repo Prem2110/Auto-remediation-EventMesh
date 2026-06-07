@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from typing import Any, Optional
 
 import httpx
@@ -108,15 +109,39 @@ async def _post(call_type: str, model_name: str, metadata_str: str) -> None:
         logger.debug("[LLMMonitor] post failed (non-fatal): %s", exc)
 
 
+def _post_sync(call_type: str, model_name: str, metadata_str: str) -> None:
+    """Synchronous HTTP post — used when called from a non-async thread (e.g. LangChain callbacks)."""
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            client.post(
+                f"{_BASE_URL}/log-metadata/",
+                params={
+                    "app_id":     _APP_ID,
+                    "call_type":  call_type,
+                    "model_name": model_name or _DEFAULT_MODEL,
+                },
+                headers={"Authorization": f"Bearer {_API_KEY}"},
+                json={"metadata": metadata_str},
+            )
+    except Exception as exc:
+        logger.debug("[LLMMonitor] sync post failed (non-fatal): %s", exc)
+
+
 def _fire(call_type: str, model_name: str, metadata_str: str) -> None:
-    """Schedule _post as a fire-and-forget asyncio Task on the running loop."""
+    """Fire-and-forget — works from both async context and LangChain callback threads."""
     if not _BASE_URL:
         return
     try:
         loop = asyncio.get_running_loop()
+        # Running inside an async coroutine — schedule as a Task (non-blocking)
         loop.create_task(_post(call_type, model_name or _DEFAULT_MODEL, metadata_str))
     except RuntimeError:
-        pass  # no running loop (e.g. sync test context) — skip silently
+        # LangChain callbacks run in a thread pool with no event loop — use sync httpx
+        threading.Thread(
+            target=_post_sync,
+            args=(call_type, model_name, metadata_str),
+            daemon=True,
+        ).start()
     except Exception as exc:
         logger.debug("[LLMMonitor] _fire failed: %s", exc)
 
