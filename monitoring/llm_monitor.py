@@ -94,7 +94,7 @@ def _resolve_model(deployment_id: Optional[str], response: Any = None) -> str:
 
 async def _post(call_type: str, model_name: str, metadata_str: str) -> None:
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             await client.post(
                 f"{_BASE_URL}/log-metadata/",
                 params={
@@ -112,7 +112,7 @@ async def _post(call_type: str, model_name: str, metadata_str: str) -> None:
 def _post_sync(call_type: str, model_name: str, metadata_str: str) -> None:
     """Synchronous HTTP post — used when called from a non-async thread (e.g. LangChain callbacks)."""
     try:
-        with httpx.Client(timeout=5.0) as client:
+        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
             client.post(
                 f"{_BASE_URL}/log-metadata/",
                 params={
