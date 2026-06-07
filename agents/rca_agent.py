@@ -723,7 +723,10 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
 
         timestamp = get_hana_timestamp()
         tracker   = TestExecutionTracker("system_rca", prompt, timestamp)
-        logger_cb = StepLogger(tracker)
+        logger_cb = StepLogger(
+            tracker,
+            deployment_id=os.getenv("LLM_DEPLOYMENT_ID_RCA") or os.getenv("LLM_DEPLOYMENT_ID"),
+        )
         messages  = [{"role": "user", "content": prompt}]
 
         rca: Dict[str, Any] = {}

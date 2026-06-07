@@ -168,10 +168,12 @@ class OrchestratorAgent:
                 return lc_agent
             return None
 
-        async def _call_agent(lc_agent, content: str) -> str:
+        async def _call_agent(lc_agent, content: str, deployment_id: str = "") -> str:
+            from monitoring.llm_monitor import log_agent_invoke  # noqa: PLC0415
             result    = await lc_agent.ainvoke(
                 {"messages": [{"role": "user", "content": content}]}
             )
+            log_agent_invoke(result, deployment_id=deployment_id or os.getenv("LLM_DEPLOYMENT_ID"))
             final_msg = result["messages"][-1]
             return final_msg.content if hasattr(final_msg, "content") else str(final_msg)
 
@@ -183,7 +185,7 @@ class OrchestratorAgent:
             """
             lc = _ainvoke_or_method(_obs, "")
             if lc:
-                return await _call_agent(lc, task)
+                return await _call_agent(lc, task, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
             return "WARNING: Observer agent not available."
 
         @_tool
@@ -195,7 +197,7 @@ class OrchestratorAgent:
             """
             lc = _ainvoke_or_method(_clf, "")
             if lc:
-                return await _call_agent(lc, incident_json)
+                return await _call_agent(lc, incident_json, deployment_id=os.getenv("LLM_DEPLOYMENT_ID_RCA") or os.getenv("LLM_DEPLOYMENT_ID"))
             # Fallback: rule-based
             try:
                 inc = _json.loads(incident_json) if isinstance(incident_json, str) else {}
@@ -213,7 +215,7 @@ class OrchestratorAgent:
             """
             lc = _ainvoke_or_method(_rca, "")
             if lc:
-                return await _call_agent(lc, incident_json)
+                return await _call_agent(lc, incident_json, deployment_id=os.getenv("LLM_DEPLOYMENT_ID_RCA") or os.getenv("LLM_DEPLOYMENT_ID"))
             try:
                 incident = _json.loads(incident_json) if isinstance(incident_json, str) else {}
             except Exception:
@@ -231,7 +233,7 @@ class OrchestratorAgent:
             """
             lc = _ainvoke_or_method(_fix, "")
             if lc:
-                return await _call_agent(lc, rca_json)
+                return await _call_agent(lc, rca_json, deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or os.getenv("LLM_DEPLOYMENT_ID"))
             try:
                 ctx = _json.loads(rca_json) if isinstance(rca_json, str) else {}
             except Exception:
@@ -249,7 +251,7 @@ class OrchestratorAgent:
             """
             lc = _ainvoke_or_method(_verifier, "")
             if lc:
-                return await _call_agent(lc, fix_json)
+                return await _call_agent(lc, fix_json, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
             try:
                 incident = _json.loads(fix_json) if isinstance(fix_json, str) else {}
             except Exception:
@@ -1693,7 +1695,7 @@ Rules:
         self._mcp.cleanup_memory()
         user_memory = self._mcp.memory.setdefault(session_id, [])
         tracker     = TestExecutionTracker(user_id, query, timestamp)
-        logger_cb   = StepLogger(tracker)
+        logger_cb   = StepLogger(tracker, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
 
         guidance = ""
         route_server = self._routing_hint_for_query(query)
@@ -1717,6 +1719,8 @@ Rules:
                     {"messages": messages},
                     config={"callbacks": [logger_cb]},
                 )
+                from monitoring.llm_monitor import log_agent_invoke  # noqa: PLC0415
+                log_agent_invoke(result, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
                 break
             except Exception as exc:
                 if attempt < 2 and "model produced invalid content" in str(exc).lower():

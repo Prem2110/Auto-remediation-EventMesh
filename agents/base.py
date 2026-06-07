@@ -22,6 +22,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
+from monitoring.llm_monitor import log_llm_invoke
 from pydantic import BaseModel
 
 from db.database import (
@@ -221,11 +222,13 @@ class StepLogger(BaseCallbackHandler):
         self,
         tracker: TestExecutionTracker,
         progress_fn=None,
+        deployment_id: Optional[str] = None,
     ):
         self.steps:            List[Dict[str, Any]]  = []
         self.tracker           = tracker
         self._tool_names:      Dict[str, str]         = {}   # run_id → tool_name
         self._progress_fn      = progress_fn  # Optional[Callable[[str], None]]
+        self._deployment_id    = deployment_id
 
     def on_tool_start(self, serialized, input_str, run_id=None, **kw):
         tool_name    = serialized.get("name", "unknown")
@@ -296,3 +299,9 @@ class StepLogger(BaseCallbackHandler):
                     pass
 
         logger.info("[TOOL_RESULT] tool=%s | output=%.2000s", tool_name, str(output))
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        try:
+            log_llm_invoke(response, deployment_id=self._deployment_id)
+        except Exception:
+            pass

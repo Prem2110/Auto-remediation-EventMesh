@@ -16,6 +16,7 @@ Exports:
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Dict, List
 
 from agents.base import StepLogger, TestExecutionTracker
@@ -181,7 +182,7 @@ Rules:
 """
         timestamp = get_hana_timestamp()
         tracker   = TestExecutionTracker("system_retry", prompt, timestamp)
-        logger_cb = StepLogger(tracker)
+        logger_cb = StepLogger(tracker, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
         try:
             result    = await agent.ainvoke(
                 {"messages": [{"role": "user", "content": prompt}]},
@@ -303,7 +304,7 @@ Maximum 6 tool calls total.
             f"test_after_fix:{iflow_id}",
             timestamp,
         )
-        logger_cb = StepLogger(tracker)
+        logger_cb = StepLogger(tracker, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
         try:
             result    = await asyncio.wait_for(
                 agent.ainvoke(

@@ -41,6 +41,9 @@ from db.database import (
     update_escalation_ticket,
     clear_all_em_tables,
 )
+import os
+
+from monitoring.llm_monitor import log_agent_invoke, log_llm_invoke
 from utils.utils import get_hana_timestamp
 
 logger = logging.getLogger(__name__)
@@ -775,6 +778,7 @@ Requirements:
         from langchain_core.messages import HumanMessage  # noqa: PLC0415
 
         response = await mcp.llm.ainvoke([HumanMessage(content=prompt)])
+        log_llm_invoke(response, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
         answer = response.content if hasattr(response, "content") else str(response)
         clean = re.sub(r"```(?:json)?|```", "", answer).strip()
         parsed = json.loads(clean)
@@ -1321,6 +1325,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
     try:
         from langchain_core.messages import HumanMessage  # noqa: PLC0415
         response = await mcp.llm.ainvoke([HumanMessage(content=prompt)])
+        log_llm_invoke(response, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
         answer   = response.content if hasattr(response, "content") else str(response)
         clean    = re.sub(r"```(?:json)?|```", "", answer).strip()
         parsed   = json.loads(clean)
@@ -1799,6 +1804,7 @@ async def rollback_fix(
                 {"messages": [{"role": "user", "content": prompt}]},
                 config={"recursion_limit": 8},
             )
+            log_agent_invoke(result, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
             final_msg = result["messages"][-1]
             answer = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
             from agents.fix_applier import FixApplier as _FixApplier  # noqa: PLC0415

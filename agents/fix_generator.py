@@ -531,7 +531,11 @@ If any step failed, set failed_stage to: "get" | "update" | "locked" | "deploy" 
 
         messages  = [{"role": "user", "content": prompt}]
         tracker   = TestExecutionTracker(ctx.user_id, f"fix:{ctx.iflow_id}", ctx.timestamp)
-        logger_cb = StepLogger(tracker, progress_fn=progress_fn)
+        logger_cb = StepLogger(
+            tracker,
+            progress_fn=progress_fn,
+            deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or os.getenv("LLM_DEPLOYMENT_ID"),
+        )
 
         _xml_len   = len(ctx.original_xml or "")
         # Lower threshold: 20 KB already takes 300+ s on SAP AI Core for complex fixes.

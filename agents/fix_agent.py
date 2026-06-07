@@ -581,6 +581,7 @@ class FixAgent:
                 _logger_cb_val = StepLogger(
                     TestExecutionTracker(user_id, f"fix:{iflow_id}:val_retry", timestamp),
                     progress_fn=progress_fn,
+                    deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or os.getenv("LLM_DEPLOYMENT_ID"),
                 )
                 _original_messages = [{"role": "user", "content": answer.split("\n\n__TOOLS_INVOKED__")[0]}]
                 try:
@@ -660,7 +661,11 @@ class FixAgent:
                     iflow_xml_patterns=CPI_IFLOW_XML_PATTERNS if _et in {"MAPPING_ERROR","DATA_VALIDATION","UNKNOWN_ERROR","AUTH_CONFIG_ERROR"} else "",
                 )
                 tracker2   = TestExecutionTracker(user_id, f"fix_retry:{iflow_id}", timestamp)
-                logger_cb2 = StepLogger(tracker2, progress_fn=progress_fn)
+                logger_cb2 = StepLogger(
+                    tracker2,
+                    progress_fn=progress_fn,
+                    deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or os.getenv("LLM_DEPLOYMENT_ID"),
+                )
                 try:
                     result2 = await asyncio.wait_for(
                         agent.ainvoke(
@@ -741,7 +746,11 @@ class FixAgent:
                         f'"summary": "<what was corrected and deploy outcome>"}}'
                     )
                     tracker_c   = TestExecutionTracker(user_id, f"fix_correction_p{_pass}:{iflow_id}", timestamp)
-                    logger_cb_c = StepLogger(tracker_c, progress_fn=progress_fn)
+                    logger_cb_c = StepLogger(
+                        tracker_c,
+                        progress_fn=progress_fn,
+                        deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or os.getenv("LLM_DEPLOYMENT_ID"),
+                    )
                     try:
                         result_c = await asyncio.wait_for(
                             agent.ainvoke(
@@ -831,7 +840,10 @@ class FixAgent:
                 "steps": [],
             }
         tracker   = TestExecutionTracker(user_id, f"deploy_only:{iflow_id}", timestamp)
-        logger_cb = StepLogger(tracker)
+        logger_cb = StepLogger(
+            tracker,
+            deployment_id=os.getenv("LLM_DEPLOYMENT_ID_FIX") or os.getenv("LLM_DEPLOYMENT_ID"),
+        )
         prompt = (
             f"DEPLOY ONLY — the iFlow '{iflow_id}' was already updated successfully.\n"
             f"Call deploy-iflow tool ONCE with iFlow ID: \"{iflow_id}\".\n"
