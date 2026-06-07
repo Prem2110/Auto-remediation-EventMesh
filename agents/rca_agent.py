@@ -455,7 +455,12 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
                 return ""
             try:
                 r = await self._mcp.execute_integration_tool("get-iflow", {"id": iflow_id})
-                return str(r.get("output", "")).strip() if r.get("success") else ""
+                if r.get("success"):
+                    return str(r.get("output", "")).strip()
+                output = str(r.get("output", ""))
+                if "404" in output or "Not Found" in output or "not found" in output.lower():
+                    return "PREFETCH_404"
+                return ""
             except Exception as exc:
                 logger.warning("[RCA] iFlow XML pre-fetch failed for %s: %s", iflow_id, exc)
                 return ""
@@ -576,10 +581,23 @@ CRITICAL — XPath namespace fix format (applies to MAPPING_ERROR with XPathExce
                 )
 
         # Sections injected into the prompt so the LLM skips redundant tool calls
+        _iflow_prefetch_404 = iflow_xml == "PREFETCH_404"
+        if _iflow_prefetch_404:
+            iflow_xml = ""
+            logger.warning(
+                "[RCA] iFlow '%s' returned 404 on pre-fetch — injecting not-found hint, "
+                "agent will not retry get-iflow", iflow_id,
+            )
         _iflow_section = (
             f"\n=== iFlow XML (pre-fetched — do NOT call get-iflow again) ===\n{iflow_xml}\n"
             if iflow_xml and not iflow_xml.startswith("ERROR")
-            else ""
+            else (
+                f"\n=== iFlow Lookup (pre-fetched) ===\n"
+                f"ERROR: iFlow '{iflow_id}' does not exist in SAP CPI (404 Not Found).\n"
+                f"Do NOT call get-iflow again — it will return the same 404.\n"
+                if _iflow_prefetch_404
+                else ""
+            )
         )
         _logs_section = (
             f"\n=== Message Processing Log (pre-fetched — do NOT call get_message_logs again) ===\n{raw_message_logs}\n"

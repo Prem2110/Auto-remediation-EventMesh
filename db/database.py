@@ -35,6 +35,7 @@ def set_db_source(source: str) -> None:
 
 _pool_queue: "queue.Queue | None" = None
 _pool_lock  = threading.Lock()
+_column_lookup_cache: "Dict[str, str] | None" = None
 
 
 def _open_raw_connection():
@@ -119,7 +120,7 @@ def _get_pool() -> "queue.Queue":
     with _pool_lock:
         if _pool_queue is not None:
             return _pool_queue
-        size = int(os.getenv("HANA_POOL_SIZE", "5"))
+        size = int(os.getenv("HANA_POOL_SIZE", "10"))
         q: queue.Queue = queue.Queue(maxsize=size)
         for _ in range(size):
             q.put(_open_raw_connection())
@@ -204,11 +205,16 @@ def ensure_autonomous_incident_schema():
                 cur.execute(f'ALTER TABLE "{_INCIDENTS_TABLE}" ADD ("{column_name}" {column_type})')
         conn.commit()
         conn.close()
+        global _column_lookup_cache
+        _column_lookup_cache = None
     except Exception as e:
         logger.warning(f"ensure_autonomous_incident_schema: {e}")
 
 
 def _get_autonomous_incident_column_lookup() -> Dict[str, str]:
+    global _column_lookup_cache
+    if _column_lookup_cache:
+        return _column_lookup_cache
     lookup: Dict[str, str] = {}
     try:
         conn   = get_connection()
@@ -226,6 +232,8 @@ def _get_autonomous_incident_column_lookup() -> Dict[str, str]:
             name = str(row[0])
             lookup[name.lower()] = name
         conn.close()
+        if lookup:
+            _column_lookup_cache = lookup
     except Exception as e:
         logger.error(f"_get_autonomous_incident_column_lookup: {e}")
     return lookup
@@ -905,6 +913,11 @@ def update_incident(incident_id: str, updates: Dict):
         conn          = get_connection()
         cur           = conn.cursor()
         column_lookup = _get_autonomous_incident_column_lookup()
+        if not column_lookup:
+            conn.close()
+            raise RuntimeError(
+                "update_incident: column lookup returned empty schema — HANA schema unavailable"
+            )
         assignments, values = [], []
         for logical_name, value in updates.items():
             actual_name = column_lookup.get(logical_name.lower())

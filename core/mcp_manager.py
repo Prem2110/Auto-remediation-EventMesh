@@ -397,7 +397,7 @@ class MultiMCP:
         - system_prompt=None → use standard routing prompt
         """
         agent_tools = tools if tools is not None else self.tools
-        if not agent_tools:
+        if tools is None and not agent_tools:
             raise RuntimeError("No MCP tools available — call discover_tools() first.")
 
         if system_prompt is None:
