@@ -113,7 +113,17 @@ def create_llm(deployment_id: Optional[str] = None) -> ChatOpenAI:
     dep = deployment_id or os.getenv("LLM_DEPLOYMENT_ID")
     if not dep:
         raise RuntimeError("LLM_DEPLOYMENT_ID missing in .env")
-    return ChatOpenAI(deployment_id=dep, temperature=0)
+    
+    # Configure production resilience parameters (default 5 retries, 60s timeout)
+    max_retries = int(os.getenv("LLM_MAX_RETRIES", "5"))
+    timeout = float(os.getenv("LLM_REQUEST_TIMEOUT", "60.0"))
+    
+    return ChatOpenAI(
+        deployment_id=dep,
+        temperature=0,
+        max_retries=max_retries,
+        timeout=timeout,
+    )
 
 
 # ─────────────────────────────────────────────
