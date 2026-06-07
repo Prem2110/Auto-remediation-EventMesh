@@ -95,7 +95,7 @@ async def _post(call_type: str, model_name: str, metadata_str: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{_BASE_URL}/",
+                f"{_BASE_URL}/log-metadata/",
                 params={
                     "app_id":     _APP_ID,
                     "call_type":  call_type,
