@@ -946,7 +946,7 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
         # likely property from the error type and seed a partial FixStep so the
         # fix agent has a concrete XML target to work with.
         if not all_fixes and _iflow_xml_raw:
-            ac = rca.get("affected_component", "").strip()
+            ac = (rca.get("affected_component") or "").strip()
             if ac and ac.lower() not in ("unknown", ""):
                 for prop in _ERROR_TYPE_LIKELY_PROPERTIES.get(final_error_type, []):
                     extracted = _extract_prop_from_xml(_iflow_xml_raw, ac, prop)
