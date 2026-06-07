@@ -17,12 +17,13 @@ all without human intervention.
 5. [SAP Event Mesh Setup](#5-sap-event-mesh-setup)
 6. [Environment Variables](#6-environment-variables)
 7. [API Endpoints](#7-api-endpoints)
-8. [Local Development Setup](#8-local-development-setup)
-9. [Deployment (Cloud Foundry)](#9-deployment-cloud-foundry)
-10. [Database](#10-database)
-11. [Frontend](#11-frontend)
-12. [What's New](#12-whats-new)
-13. [ITSM Integration](#13-itsm-integration)
+8. [Git & Source Control](#8-git--source-control)
+9. [Local Development Setup](#9-local-development-setup)
+10. [Deployment (Cloud Foundry)](#10-deployment-cloud-foundry)
+11. [Database](#11-database)
+12. [Frontend](#12-frontend)
+13. [What's New](#13-whats-new)
+14. [ITSM Integration](#14-itsm-integration)
 
 ---
 
@@ -685,7 +686,61 @@ All return `{"status": "accepted"}` immediately; work runs in a background task.
 
 ---
 
-## 8. Local Development Setup
+## 8. Git & Source Control
+
+### Remotes
+
+The repository is mirrored to two remotes:
+
+| Remote name | URL | Purpose |
+|---|---|---|
+| `origin` | `https://dev.azure.com/sierradigitalinc/Orbit%20Autonomous%20Integration%20Monitor/_git/Orbit%20Autonomous%20Integration%20Monitor` | Primary — Azure DevOps (Sierra Digital) |
+| `github` | `https://github.com/Prem2110/Auto-remediation-EventMesh.git` | Mirror — GitHub public repo |
+
+Both remotes track the `master` branch (`origin`) and `main` branch (`github`).
+
+### Cloning
+
+```bash
+# Clone from Azure DevOps (primary)
+git clone https://sierradigitalinc@dev.azure.com/sierradigitalinc/Orbit%20Autonomous%20Integration%20Monitor/_git/Orbit%20Autonomous%20Integration%20Monitor "auto-remediation - EventMesh"
+
+# Add GitHub as a second remote
+cd "auto-remediation - EventMesh"
+git remote add github https://github.com/Prem2110/Auto-remediation-EventMesh.git
+```
+
+### Pushing to both remotes
+
+Always push to `origin` (Azure) first, then mirror to GitHub `main`:
+
+```bash
+# Push to Azure DevOps
+git push origin master
+
+# Mirror to GitHub main
+git push github master:main
+```
+
+Or push to both in one go:
+
+```bash
+git push origin master && git push github master:main
+```
+
+### Branch strategy
+
+| Branch | Remote | Purpose |
+|---|---|---|
+| `master` | `origin` (Azure) | Main development branch |
+| `main` | `github` | Mirror of `master` |
+
+> Never push directly to `github/main` from a local `main` branch — always push
+> `master:main` to keep the branches in sync.
+
+---
+
+## 9. Local Development Setup
 
 ### Prerequisites
 
@@ -786,7 +841,7 @@ VITE_API_PRIMARY=http://localhost:8080
 
 ---
 
-## 9. Deployment (Cloud Foundry)
+## 10. Deployment (Cloud Foundry)
 
 ### manifest.yml
 
@@ -868,7 +923,7 @@ cf push nd-orbit-eventmesh-fe \
 
 ---
 
-## 10. Database
+## 11. Database
 
 ### Technology
 
@@ -953,7 +1008,7 @@ CIRCUIT_BREAKER_ESCALATED     too many consecutive failures; auto-escalated
 
 ---
 
-## 11. Frontend
+## 12. Frontend
 
 ### Location
 
@@ -984,7 +1039,62 @@ backend application.
 
 ---
 
-## 12. What's New
+## 13. What's New
+
+### LLM usage monitor integration
+
+Every LLM and agent invocation is now reported to a central usage-monitoring service
+(`/log-metadata/`) as a fire-and-forget async POST, so token spend, call frequency,
+and model usage can be tracked across all three specialist models.
+
+**How it works:**
+
+- `monitoring/llm_monitor.py` — new module that handles all posting. Reads config from
+  env vars at startup; if `LLM_USAGE_MONITOR_BASE_URL` is not set all calls are no-ops.
+- `StepLogger` (in `agents/base.py`) gains a new `on_llm_end` callback. Because every
+  agent already attaches a `StepLogger`, every LLM step inside any agent is automatically
+  logged — no per-call code needed.
+- Model name resolution order per call:
+  1. Extracted from the LangChain response object (`response_metadata["model_name"]`)
+  2. Deployment-ID → model-name env var map (`LLM_MODEL_NAME*`)
+  3. `LLM_USAGE_MONITOR_MODEL_NAME` fallback
+- Explicit `log_agent_invoke` / `log_llm_invoke` calls added at direct `mcp.llm.ainvoke`
+  call sites in `smart_monitoring.py` and the orchestrator's `ask()` and `_call_agent()`.
+
+**New env vars (add to `.env`):**
+
+| Variable | Description |
+|---|---|
+| `LLM_USAGE_MONITOR_BASE_URL` | Monitor service root URL — disabled when empty |
+| `LLM_USAGE_MONITOR_API_KEY` | Bearer token for the monitor service |
+| `LLM_USAGE_MONITOR_APP_ID` | App identifier sent as `app_id` query param |
+| `LLM_USAGE_MONITOR_MODEL_NAME` | Fallback model name |
+| `LLM_USAGE_MONITOR_CALL_TYPE_L_INVOKE` | call_type for direct LLM calls (default `l_invoke`) |
+| `LLM_USAGE_MONITOR_CALL_TYPE_A_INVOKE` | call_type for agent invocations (default `a_invoke`) |
+| `LLM_MODEL_NAME` | Human-readable model name for `LLM_DEPLOYMENT_ID` |
+| `LLM_MODEL_NAME_RCA` | Human-readable model name for `LLM_DEPLOYMENT_ID_RCA` |
+| `LLM_MODEL_NAME_FIX` | Human-readable model name for `LLM_DEPLOYMENT_ID_FIX` |
+
+**Coverage:**
+
+| What is logged | call_type | model_name sent |
+|---|---|---|
+| Direct `mcp.llm.ainvoke()` (smart_monitoring) | `l_invoke` | extracted from response → `LLM_MODEL_NAME` |
+| Any LLM step inside RCA / Classifier agent | `l_invoke` | extracted from response → `LLM_MODEL_NAME_RCA` |
+| Any LLM step inside Fix / Planner agent | `l_invoke` | extracted from response → `LLM_MODEL_NAME_FIX` |
+| Any LLM step inside Verifier / Orchestrator | `l_invoke` | extracted from response → `LLM_MODEL_NAME` |
+| Sub-agent dispatches in orchestrator `_call_agent` | `a_invoke` | per-tool model name |
+| Top-level orchestrator `ask()` | `a_invoke` | `LLM_MODEL_NAME` |
+
+---
+
+### Approval buttons resized in Observability page
+
+The Approve and Reject buttons in the Approvals tab were stretching to fill the full
+card width. They are now compact inline buttons, right-aligned, with tighter padding
+and a smaller font.
+
+---
 
 ### Agent execution event log — token tracking per pipeline run
 
@@ -1197,7 +1307,7 @@ After each poll cycle the result count is also logged:
 
 ---
 
-## 13. ITSM Integration
+## 14. ITSM Integration
 
 Orbit integrates with an in-house ITSM system (OhZone) via its OData v4 REST API,
 accessed through an SAP BTP Destination named **`ITSM-sierra`**.  The integration
@@ -1469,6 +1579,12 @@ auto-remediation - EventMesh/
 │   ├── fix_xml_analyst.py           # Static XML component map injected into LLM prompts
 │   ├── verifier_agent.py            # Post-fix test execution + runtime check
 │   └── orchestrator_agent.py        # Pipeline coordinator, dedup logic, chatbot
+│
+├── monitoring/
+│   ├── __init__.py
+│   └── llm_monitor.py               # Fire-and-forget LLM usage reporter — posts every
+│                                    #   LLM/agent invocation to central monitor service;
+│                                    #   resolves model name from response → env var map → fallback
 │
 ├── event_mesh/
 │   └── event_bus.py                 # SAP Event Mesh publisher — bearer token via SAP
