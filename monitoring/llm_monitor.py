@@ -92,19 +92,28 @@ def _resolve_model(deployment_id: Optional[str], response: Any = None) -> str:
 
 # ── async sender ──────────────────────────────────────────────────────────────
 
+def _build_request_kwargs(call_type: str, model_name: str, metadata_str: str) -> dict:
+    return {
+        "url": f"{_BASE_URL}/log-metadata",
+        "params": {
+            "app_id":     _APP_ID,
+            "call_type":  call_type,
+            "model_name": model_name or _DEFAULT_MODEL,
+        },
+        "headers": {"Authorization": f"Bearer {_API_KEY}"},
+        "json": {"metadata": metadata_str},
+    }
+
+
 async def _post(call_type: str, model_name: str, metadata_str: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            await client.post(
-                f"{_BASE_URL}/log-metadata",
-                params={
-                    "app_id":     _APP_ID,
-                    "call_type":  call_type,
-                    "model_name": model_name or _DEFAULT_MODEL,
-                },
-                headers={"Authorization": f"Bearer {_API_KEY}"},
-                json={"metadata": metadata_str},
-            )
+            r = await client.post(**_build_request_kwargs(call_type, model_name, metadata_str))
+            if r.status_code >= 400:
+                logger.warning(
+                    "[LLMMonitor] POST /log-metadata status=%d body=%s",
+                    r.status_code, r.text[:300],
+                )
     except Exception as exc:
         logger.debug("[LLMMonitor] post failed (non-fatal): %s", exc)
 
@@ -113,16 +122,12 @@ def _post_sync(call_type: str, model_name: str, metadata_str: str) -> None:
     """Synchronous HTTP post — used when called from a non-async thread (e.g. LangChain callbacks)."""
     try:
         with httpx.Client(timeout=5.0, follow_redirects=True) as client:
-            client.post(
-                f"{_BASE_URL}/log-metadata",
-                params={
-                    "app_id":     _APP_ID,
-                    "call_type":  call_type,
-                    "model_name": model_name or _DEFAULT_MODEL,
-                },
-                headers={"Authorization": f"Bearer {_API_KEY}"},
-                json={"metadata": metadata_str},
-            )
+            r = client.post(**_build_request_kwargs(call_type, model_name, metadata_str))
+            if r.status_code >= 400:
+                logger.warning(
+                    "[LLMMonitor] POST /log-metadata status=%d body=%s",
+                    r.status_code, r.text[:300],
+                )
     except Exception as exc:
         logger.debug("[LLMMonitor] sync post failed (non-fatal): %s", exc)
 
