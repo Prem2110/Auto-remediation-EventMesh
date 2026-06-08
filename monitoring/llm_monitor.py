@@ -103,8 +103,7 @@ def _build_request_kwargs(call_type: str, model_name: str, metadata_str: str) ->
             "call_type":  call_type,
             "model_name": model_name or _DEFAULT_MODEL,
         },
-        # Spec shows plain string header, not "Bearer <token>"
-        "headers": {"authorization": _API_KEY},
+        "headers": {"Authorization": f"Bearer {_API_KEY}"},
         "json": {"metadata": metadata_str},
     }
 
