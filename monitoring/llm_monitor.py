@@ -78,14 +78,14 @@ def _extract_model_from_response(response: Any) -> str:
 
 def _resolve_model(deployment_id: Optional[str], response: Any = None) -> str:
     """Return the model name to send to the monitor service."""
-    # 1. Extract from the response object (most accurate — comes from the API)
+    # 1. Map deployment_id → configured model name (operator-controlled, matches rates table)
+    if deployment_id and deployment_id in _DEPLOYMENT_MODEL_MAP:
+        return _DEPLOYMENT_MODEL_MAP[deployment_id]
+    # 2. Extract from the response object (versioned name — only if not in map)
     if response is not None:
         name = _extract_model_from_response(response)
         if name:
             return name
-    # 2. Map deployment_id → configured model name
-    if deployment_id and deployment_id in _DEPLOYMENT_MODEL_MAP:
-        return _DEPLOYMENT_MODEL_MAP[deployment_id]
     # 3. Fall back to the static env var
     return _DEFAULT_MODEL
 
