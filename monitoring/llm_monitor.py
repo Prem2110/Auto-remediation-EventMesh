@@ -189,9 +189,27 @@ def log_llm_invoke(response: Any, deployment_id: Optional[str] = None) -> None:
     try:
         if hasattr(response, "generations"):
             # LLMResult from on_llm_end callback
+            # Extract usage_metadata from the first generation's AIMessage
+            usage_metadata = None
+            try:
+                first_gen = (response.generations or [[]])[0][0] if response.generations else None
+                if first_gen is not None and hasattr(first_gen, "message"):
+                    usage_metadata = getattr(first_gen.message, "usage_metadata", None)
+            except (IndexError, AttributeError):
+                pass
+            # Fallback: build from llm_output token_usage
+            if usage_metadata is None and response.llm_output:
+                tu = response.llm_output.get("token_usage", {})
+                if tu:
+                    usage_metadata = {
+                        "input_tokens": tu.get("prompt_tokens", 0),
+                        "output_tokens": tu.get("completion_tokens", 0),
+                        "total_tokens": tu.get("total_tokens", 0),
+                    }
             metadata_str = json.dumps(
                 {
                     "llm_output": response.llm_output,
+                    "usage_metadata": usage_metadata,
                     "generations": [
                         [
                             g.text if hasattr(g, "text") else str(g)
