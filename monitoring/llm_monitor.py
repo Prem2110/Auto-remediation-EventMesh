@@ -189,37 +189,35 @@ def log_llm_invoke(response: Any, deployment_id: Optional[str] = None) -> None:
     try:
         if hasattr(response, "generations"):
             # LLMResult from on_llm_end callback
-            # Extract usage_metadata from the first generation's AIMessage
-            usage_metadata = None
+            # Use the first generation's AIMessage.model_dump() — it includes all fields
+            # the monitor expects (usage_metadata, response_metadata, content, etc.)
+            first_gen = None
             try:
                 first_gen = (response.generations or [[]])[0][0] if response.generations else None
-                if first_gen is not None and hasattr(first_gen, "message"):
-                    usage_metadata = getattr(first_gen.message, "usage_metadata", None)
             except (IndexError, AttributeError):
                 pass
-            # Fallback: build from llm_output token_usage
-            if usage_metadata is None and response.llm_output:
-                tu = response.llm_output.get("token_usage", {})
-                if tu:
-                    usage_metadata = {
-                        "input_tokens": tu.get("prompt_tokens", 0),
-                        "output_tokens": tu.get("completion_tokens", 0),
-                        "total_tokens": tu.get("total_tokens", 0),
-                    }
-            metadata_str = json.dumps(
-                {
-                    "llm_output": response.llm_output,
-                    "usage_metadata": usage_metadata,
-                    "generations": [
-                        [
-                            g.text if hasattr(g, "text") else str(g)
-                            for g in gen_list
-                        ]
-                        for gen_list in response.generations
-                    ],
-                },
-                default=str,
-            )
+            if first_gen is not None and hasattr(first_gen, "message") and hasattr(first_gen.message, "model_dump"):
+                metadata_str = json.dumps(first_gen.message.model_dump(), default=str)
+            else:
+                # Fallback: build minimal payload with required fields from llm_output
+                tu = (response.llm_output or {}).get("token_usage", {})
+                usage_metadata = {
+                    "input_tokens": tu.get("prompt_tokens", 0),
+                    "output_tokens": tu.get("completion_tokens", 0),
+                    "total_tokens": tu.get("total_tokens", 0),
+                } if tu else None
+                metadata_str = json.dumps(
+                    {
+                        "llm_output": response.llm_output,
+                        "usage_metadata": usage_metadata,
+                        "response_metadata": response.llm_output,
+                        "generations": [
+                            [g.text if hasattr(g, "text") else str(g) for g in gen_list]
+                            for gen_list in response.generations
+                        ],
+                    },
+                    default=str,
+                )
         elif hasattr(response, "model_dump"):
             # AIMessage from direct llm.ainvoke()
             metadata_str = json.dumps(response.model_dump(), default=str)
