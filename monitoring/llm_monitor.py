@@ -93,6 +93,9 @@ def _resolve_model(deployment_id: Optional[str], response: Any = None) -> str:
 # ── async sender ──────────────────────────────────────────────────────────────
 
 def _build_request_kwargs(call_type: str, model_name: str, metadata_str: str) -> dict:
+    # Truncate to avoid 400s from oversized bodies (monitor stores for analytics, not replay)
+    if len(metadata_str) > 8000:
+        metadata_str = metadata_str[:8000] + "...[truncated]"
     return {
         "url": f"{_BASE_URL}/log-metadata",
         "params": {
@@ -100,7 +103,8 @@ def _build_request_kwargs(call_type: str, model_name: str, metadata_str: str) ->
             "call_type":  call_type,
             "model_name": model_name or _DEFAULT_MODEL,
         },
-        "headers": {"Authorization": f"Bearer {_API_KEY}"},
+        # Spec shows plain string header, not "Bearer <token>"
+        "headers": {"authorization": _API_KEY},
         "json": {"metadata": metadata_str},
     }
 
