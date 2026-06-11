@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from agents.base import StepLogger, TestExecutionTracker, extract_token_counts
+from agents.base import StepLogger, TestExecutionTracker, extract_token_counts, extract_text_content
 from agents.classifier_agent import ClassifierAgent
 from core.constants import FALLBACK_FIX_BY_ERROR_TYPE
 from db.database import get_similar_patterns, log_agent_event
@@ -758,7 +758,7 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                     timeout=180.0,
                 )
                 final_msg = result["messages"][-1]
-                answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+                answer    = extract_text_content(final_msg.content if hasattr(final_msg, "content") else str(final_msg))
                 rca = _extract_rca_json(answer)
                 _ti, _to = extract_token_counts(result.get("messages", []))
                 log_agent_event(message_guid, "rca_agent", _ti, _to)
@@ -789,10 +789,11 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                     "agent_steps":        logger_cb.steps,
                 }
             except Exception as exc:
+                import traceback as _tb  # noqa: PLC0415
+                logger.error("[RCA] agent error (attempt %d): %s\n%s", attempt + 1, exc, _tb.format_exc())
                 if attempt < 2:
                     await asyncio.sleep(2)
                     continue
-                logger.error("[RCA] agent error: %s", exc)
                 log_agent_event(message_guid, "rca_agent", 0, 0)
                 return {
                     "root_cause":   str(exc),
@@ -908,7 +909,7 @@ scalar fields for backwards compatibility. For structural changes set `fixes: []
                         timeout=120.0,
                     )
                     _retry_final = _retry_result["messages"][-1]
-                    _retry_ans   = _retry_final.content if hasattr(_retry_final, "content") else str(_retry_final)
+                    _retry_ans   = extract_text_content(_retry_final.content if hasattr(_retry_final, "content") else str(_retry_final))
                     _retry_clean = re.sub(r"```(?:json)?|```", "", _retry_ans).strip()
                     _retry_rca   = json.loads(_retry_clean)
                     _retry_fixes = get_all_fixes(_retry_rca)

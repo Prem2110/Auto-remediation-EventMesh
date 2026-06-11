@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from agents.base import extract_token_counts
+from agents.base import extract_token_counts, extract_text_content
 from agents.fix_context import FixContext
 from core.constants import FIX_OPERATION_PROMPT_TEMPLATE
 from db.database import log_agent_event
@@ -598,7 +598,7 @@ class FixPlanner:
                 timeout=float(os.getenv("FIX_PLANNER_TIMEOUT", "360.0")),
             )
             final_msg = result["messages"][-1]
-            answer    = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+            answer    = extract_text_content(final_msg.content if hasattr(final_msg, "content") else str(final_msg))
             clean     = re.sub(r"```(?:json)?|```", "", answer).strip()
             parsed    = json.loads(clean)
             ops: List[Dict] = parsed if isinstance(parsed, list) else [parsed]

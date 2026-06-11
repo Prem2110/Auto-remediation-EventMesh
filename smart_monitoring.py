@@ -45,6 +45,7 @@ import os
 
 from monitoring.llm_monitor import log_agent_invoke, log_llm_invoke
 from utils.utils import get_hana_timestamp
+from agents.base import extract_text_content
 
 logger = logging.getLogger(__name__)
 
@@ -779,7 +780,7 @@ Requirements:
 
         response = await mcp.llm.ainvoke([HumanMessage(content=prompt)])
         log_llm_invoke(response, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
-        answer = response.content if hasattr(response, "content") else str(response)
+        answer = extract_text_content(response.content if hasattr(response, "content") else str(response))
         clean = re.sub(r"```(?:json)?|```", "", answer).strip()
         parsed = json.loads(clean)
         steps = parsed.get("steps", [])
@@ -1326,7 +1327,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
         from langchain_core.messages import HumanMessage  # noqa: PLC0415
         response = await mcp.llm.ainvoke([HumanMessage(content=prompt)])
         log_llm_invoke(response, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
-        answer   = response.content if hasattr(response, "content") else str(response)
+        answer   = extract_text_content(response.content if hasattr(response, "content") else str(response))
         clean    = re.sub(r"```(?:json)?|```", "", answer).strip()
         parsed   = json.loads(clean)
         return {
@@ -1806,7 +1807,7 @@ async def rollback_fix(
             )
             log_agent_invoke(result, deployment_id=os.getenv("LLM_DEPLOYMENT_ID"))
             final_msg = result["messages"][-1]
-            answer = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+            answer = extract_text_content(final_msg.content if hasattr(final_msg, "content") else str(final_msg))
             from agents.fix_applier import FixApplier as _FixApplier  # noqa: PLC0415
             _rb_steps = [
                 {"tool": tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", ""),

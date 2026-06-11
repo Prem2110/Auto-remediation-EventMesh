@@ -35,7 +35,7 @@ import uuid
 
 from typing import Any, Dict, List, Optional
 
-from agents.base import StepLogger, TestExecutionTracker
+from agents.base import StepLogger, TestExecutionTracker, extract_text_content
 from agents.classifier_agent import ClassifierAgent
 from agents.fix_agent import FixAgent
 from agents.rca_agent import RCAAgent
@@ -175,7 +175,7 @@ class OrchestratorAgent:
             )
             log_agent_invoke(result, deployment_id=deployment_id or os.getenv("LLM_DEPLOYMENT_ID"))
             final_msg = result["messages"][-1]
-            return final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+            return extract_text_content(final_msg.content if hasattr(final_msg, "content") else str(final_msg))
 
         @_tool
         async def run_observer(task: str) -> str:
@@ -1744,7 +1744,7 @@ Rules:
             structured_messages.append(msg_dict)
 
         final_msg   = result["messages"][-1]
-        answer_text = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+        answer_text = extract_text_content(final_msg.content if hasattr(final_msg, "content") else str(final_msg))
 
         self._mcp.update_memory(session_id, query, answer_text)
         try:

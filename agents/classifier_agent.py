@@ -26,6 +26,7 @@ import re
 from typing import Any, Dict, List
 
 from langchain_core.tools import tool
+from agents.base import extract_text_content
 
 logger = logging.getLogger(__name__)
 
@@ -371,7 +372,7 @@ class ClassifierAgent:
                     timeout=60.0,
                 )
                 final    = result["messages"][-1]
-                answer   = final.content if hasattr(final, "content") else str(final)
+                answer   = extract_text_content(final.content if hasattr(final, "content") else str(final))
             else:
                 result = await asyncio.wait_for(
                     _agent.ainvoke({"input": prompt}), timeout=60.0

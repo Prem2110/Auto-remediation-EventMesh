@@ -26,7 +26,8 @@ import httpx
 from pydantic import BaseModel, create_model
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
-from gen_ai_hub.proxy.langchain.openai import ChatOpenAI
+from gen_ai_hub.proxy.langchain.openai import ChatOpenAI as _SAPChatOpenAI
+from gen_ai_hub.proxy.native.openai.clients import set_deployment
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -47,6 +48,68 @@ from core.validators import validate_before_update_iflow
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+# gen_ai_hub injects SAP-specific routing params (deployment_id, config_id, etc.)
+# and n=1 into _default_params. These are needed for the Chat Completions proxy
+# but AsyncResponses.create() rejects all of them. Strip at the payload level so
+# Chat Completions path (non-codex models) is unaffected.
+_RESPONSES_API_STRIP = frozenset({"n", "deployment_id", "config_id", "config_name", "model_name"})
+
+
+class ChatOpenAI(_SAPChatOpenAI):
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        # Responses API payload has "input"; Chat Completions has "messages".
+        if "input" in payload:
+            for key in _RESPONSES_API_STRIP:
+                payload.pop(key, None)
+        return payload
+
+    @staticmethod
+    def _coerce_content(content):
+        """Normalise a message content value to a plain str."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(item.get("text") or item.get("content") or "")
+            return "".join(parts)
+        return str(content) if content is not None else ""
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        # Chat Completions path sets _current_deployment inside AsyncChatCompletions.create().
+        # The Responses API path bypasses that wrapper, so _current_deployment is None and
+        # gen_ai_hub's request()/prepare_url() crash. Set it here so both paths work.
+        deployment = self.proxy_client.select_deployment(
+            deployment_id=self.deployment_id,
+            config_id=self.config_id,
+            config_name=self.config_name,
+            model_name=self.proxy_model_name,
+        )
+        # Normalise any incoming AIMessage content that may still be a list from a prior
+        # Responses-API turn (e.g. during multi-turn agent loops where history is replayed).
+        # The Chat-Completions API rejects list content in assistant messages, and LangChain
+        # internals also pass such content to re.sub/json.loads, causing 'expected string'.
+        from langchain_core.messages import AIMessage as _AI  # noqa: PLC0415
+        for m in (messages or []):
+            if isinstance(m, _AI) and isinstance(getattr(m, "content", None), list):
+                m.content = self._coerce_content(m.content)
+        with set_deployment(deployment):
+            result = await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        # Also normalise the freshly generated output — Responses-API models return content as a
+        # list of {"type": "output_text", "text": "..."} parts.  LangGraph processes the message
+        # further (routing, tool-call checks) before our extract_text_content wrapper runs, so
+        # the normalisation must happen here at the LLM layer.
+        for gen in result.generations:
+            msg = gen.message
+            if isinstance(getattr(msg, "content", None), list):
+                msg.content = self._coerce_content(msg.content)
+        return result
 
 
 # ─────────────────────────────────────────────
@@ -123,10 +186,6 @@ def create_llm(deployment_id: Optional[str] = None) -> ChatOpenAI:
         temperature=0,
         max_retries=max_retries,
         timeout=timeout,
-        # langchain-openai 1.x routes models with "codex" in the name through the
-        # Responses API, but gen_ai_hub always passes n=1 which that API rejects.
-        # SAP AI Core is a Chat Completions proxy, so force that path.
-        use_responses_api=False,
     )
 
 

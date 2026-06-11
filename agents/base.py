@@ -82,6 +82,29 @@ def formatjson(input: Any) -> Any:
         return {}
 
 
+def extract_text_content(content: Any) -> str:
+    """
+    Normalise LLM message content to a plain string.
+
+    Chat Completions path → content is already a str.
+    Responses API path (codex models) → content is a list such as:
+        [{"type": "output_text", "text": "..."}]
+    Passing the raw list to re.sub / json.loads raises
+    "expected string or bytes-like object, got 'list'".
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(item.get("text") or item.get("content") or "")
+        return "".join(parts)
+    return str(content)
+
+
 def extract_token_counts(messages: list) -> tuple[int, int]:
     """Return (tokens_in, tokens_out) summed across all AI messages in a LangChain agent result."""
     tokens_in = tokens_out = 0
