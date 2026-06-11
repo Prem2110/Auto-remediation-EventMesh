@@ -123,6 +123,10 @@ def create_llm(deployment_id: Optional[str] = None) -> ChatOpenAI:
         temperature=0,
         max_retries=max_retries,
         timeout=timeout,
+        # langchain-openai 1.x routes models with "codex" in the name through the
+        # Responses API, but gen_ai_hub always passes n=1 which that API rejects.
+        # SAP AI Core is a Chat Completions proxy, so force that path.
+        use_responses_api=False,
     )
 
 
